@@ -7,7 +7,7 @@
  * - Platform and board selection with search
  * - WiFi and security configuration
  */
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css, nothing, PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { classMap } from "lit/directives/class-map.js";
 import { consume } from "@lit/context";
@@ -250,10 +250,6 @@ export class ESPHomePageWizard extends LitElement {
         gap: 12px;
       }
 
-      .action-link {
-        text-decoration: none;
-      }
-
       .step-description {
         font-size: 0.85rem;
         color: var(--wa-color-neutral-500, #6c757d);
@@ -262,8 +258,8 @@ export class ESPHomePageWizard extends LitElement {
     `,
   ];
 
-  connectedCallback() {
-    super.connectedCallback();
+  firstUpdated(changedProperties: PropertyValues) {
+    super.firstUpdated(changedProperties);
     this._loadBoards();
   }
 
@@ -376,9 +372,7 @@ export class ESPHomePageWizard extends LitElement {
 
       <div class="form-actions">
         <div class="left">
-          <a href="/" class="action-link">
-            <wa-button variant="neutral">Cancel</wa-button>
-          </a>
+          <wa-button href="/" variant="neutral">Cancel</wa-button>
         </div>
         <div class="right">
           <wa-button

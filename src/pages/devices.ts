@@ -326,10 +326,10 @@ export class ESPHomePageDevices extends LitElement {
                   </wa-input>
                 `
               : nothing}
-              <wa-button href="/wizard" variant="brand" size="small">
-                <wa-icon slot="start" library="mdi" name="plus"></wa-icon>
-                New Device
-              </wa-button>
+            <wa-button href="/wizard" variant="brand" size="small">
+              <wa-icon slot="start" library="mdi" name="plus"></wa-icon>
+              New Device
+            </wa-button>
           </div>
         </div>
 
@@ -366,7 +366,7 @@ export class ESPHomePageDevices extends LitElement {
         <h2>No devices configured yet</h2>
         <p>Create your first ESPHome device to get started.</p>
         <wa-button href="/wizard" variant="brand">
-          <wa-icon slot="start" library="mdi" name="plus" size=></wa-icon>
+          <wa-icon slot="start" library="mdi" name="plus" size=""></wa-icon>
           Create Device
         </wa-button>
       </div>
@@ -412,18 +412,18 @@ export class ESPHomePageDevices extends LitElement {
               : nothing}
           </div>
           <div class="device-actions" @click=${this._stopPropagation}>
-              <wa-button size="small" variant="neutral" href="${devicePath}/compile">
-                <wa-icon slot="start" library="mdi" name="code-braces"></wa-icon>
-                Compile
-              </wa-button>
+            <wa-button size="small" variant="neutral" href="${devicePath}/compile">
+              <wa-icon slot="start" library="mdi" name="code-braces"></wa-icon>
+              Compile
+            </wa-button>
             <wa-button size="small" variant="neutral" href="${devicePath}/upload">
-                <wa-icon slot="start" library="mdi" name="upload"></wa-icon>
-                Upload
-              </wa-button>
+              <wa-icon slot="start" library="mdi" name="upload"></wa-icon>
+              Upload
+            </wa-button>
             <wa-button size="small" variant="neutral" href="${devicePath}/logs">
-                <wa-icon slot="start" library="mdi" name="text-box-outline"></wa-icon>
-                Logs
-              </wa-button>
+              <wa-icon slot="start" library="mdi" name="text-box-outline"></wa-icon>
+              Logs
+            </wa-button>
           </div>
         </wa-card>
       </a>

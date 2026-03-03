@@ -34,7 +34,7 @@ export class ESPHomeAPI {
     options?: {
       params?: Record<string, string>;
       body?: unknown;
-    },
+    }
   ): Promise<T> {
     let url = `${this._baseUrl}/${path}`;
 
@@ -181,7 +181,7 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = this._baseUrl
@@ -218,13 +218,9 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
-    return this.streamCommand(
-      "compile",
-      { type: "spawn", configuration },
-      callbacks,
-    );
+    return this.streamCommand("compile", { type: "spawn", configuration }, callbacks);
   }
 
   /** Upload firmware to a device. */
@@ -235,12 +231,12 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
     return this.streamCommand(
       "upload",
       { type: "spawn", configuration, port },
-      callbacks,
+      callbacks
     );
   }
 
@@ -252,13 +248,9 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
-    return this.streamCommand(
-      "logs",
-      { type: "spawn", configuration, port },
-      callbacks,
-    );
+    return this.streamCommand("logs", { type: "spawn", configuration, port }, callbacks);
   }
 
   /** Validate a device configuration. */
@@ -268,13 +260,9 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
-    return this.streamCommand(
-      "validate",
-      { type: "spawn", configuration },
-      callbacks,
-    );
+    return this.streamCommand("validate", { type: "spawn", configuration }, callbacks);
   }
 
   /** Rename a device. */
@@ -285,12 +273,12 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
     return this.streamCommand(
       "rename",
       { type: "spawn", configuration, newName },
-      callbacks,
+      callbacks
     );
   }
 
@@ -301,13 +289,9 @@ export class ESPHomeAPI {
       onLine?: (line: string) => void;
       onExit?: (code: number) => void;
       onError?: (error: Event) => void;
-    },
+    }
   ): WebSocket {
-    return this.streamCommand(
-      "clean",
-      { type: "spawn", configuration },
-      callbacks,
-    );
+    return this.streamCommand("clean", { type: "spawn", configuration }, callbacks);
   }
 
   // ─── Dashboard Events WebSocket ────────────────────────────
