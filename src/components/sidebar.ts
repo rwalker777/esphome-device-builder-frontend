@@ -149,7 +149,7 @@ export class ESPHomeSidebar extends LitElement {
       .version {
         padding: 4px 12px;
         font-size: 0.75rem;
-        color: var(--wa-color-neutral-400, #adb5bd);
+        color: var(--wa-color-text-quiet, #adb5bd);
       }
     `,
   ];

@@ -109,11 +109,11 @@ export class ESPHomePageDevice extends LitElement {
         gap: 4px;
         margin-bottom: 20px;
         font-size: 0.85rem;
-        color: var(--wa-color-neutral-500, #6c757d);
+        color: var(--wa-color-text-quiet, #6c757d);
       }
 
       .breadcrumb a {
-        color: var(--wa-color-neutral-500, #6c757d);
+        color: var(--wa-color-text-quiet, #6c757d);
         text-decoration: none;
         display: flex;
         align-items: center;
@@ -125,7 +125,7 @@ export class ESPHomePageDevice extends LitElement {
       }
 
       .breadcrumb .current {
-        color: var(--wa-color-neutral-900, #212529);
+        color: var(--wa-color-text-normal, #212529);
         font-weight: 500;
       }
 
@@ -147,7 +147,7 @@ export class ESPHomePageDevice extends LitElement {
         font-size: 1.5rem;
         font-weight: 600;
         flex: 1;
-        color: var(--wa-color-neutral-900, #212529);
+        color: var(--wa-color-text-normal, #212529);
       }
 
       .header-actions {
@@ -163,9 +163,9 @@ export class ESPHomePageDevice extends LitElement {
         gap: 20px;
         margin-bottom: 24px;
         padding: 14px 20px;
-        background: var(--wa-color-neutral-0, #ffffff);
+        background: var(--wa-color-surface-raised, #ffffff);
         border-radius: 10px;
-        border: 1px solid var(--wa-color-neutral-200, #dee2e6);
+        border: 1px solid var(--wa-color-surface-border, #dee2e6);
         flex-wrap: wrap;
       }
 
@@ -174,16 +174,16 @@ export class ESPHomePageDevice extends LitElement {
         align-items: center;
         gap: 6px;
         font-size: 0.85rem;
-        color: var(--wa-color-neutral-600, #495057);
+        color: var(--wa-color-text-normal, #495057);
       }
 
       .status-item wa-icon {
         font-size: 1rem;
-        color: var(--wa-color-neutral-400, #adb5bd);
+        color: var(--wa-color-text-quiet, #adb5bd);
       }
 
       .status-item strong {
-        color: var(--wa-color-neutral-900, #212529);
+        color: var(--wa-color-text-normal, #212529);
       }
 
       /* ─── Tabs ─── */
@@ -235,11 +235,11 @@ export class ESPHomePageDevice extends LitElement {
         min-height: 450px;
         font-family: "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", monospace;
         font-size: 0.85rem;
-        border: 1px solid var(--wa-color-neutral-300, #ced4da);
+        border: 1px solid var(--wa-color-surface-border, #ced4da);
         border-radius: 8px;
         padding: 16px;
-        background: var(--wa-color-neutral-0, #ffffff);
-        color: var(--wa-color-neutral-900, #212529);
+        background: var(--wa-color-surface-raised, #ffffff);
+        color: var(--wa-color-text-normal, #212529);
         resize: vertical;
         tab-size: 2;
         line-height: 1.6;
@@ -257,11 +257,11 @@ export class ESPHomePageDevice extends LitElement {
       .not-found {
         text-align: center;
         padding: 64px;
-        color: var(--wa-color-neutral-500);
+        color: var(--wa-color-text-quiet);
       }
 
       .not-found h2 {
-        color: var(--wa-color-neutral-700, #495057);
+        color: var(--wa-color-text-normal, #495057);
       }
 
       .loading-state {
@@ -309,12 +309,10 @@ export class ESPHomePageDevice extends LitElement {
         <div class="page-content not-found">
           <h2>Device not found</h2>
           <p>Configuration "${this.configuration}" was not found.</p>
-          <a href="/">
-            <wa-button>
-              <wa-icon slot="start" library="mdi" name="arrow-left"></wa-icon>
-              Back to Devices
-            </wa-button>
-          </a>
+          <wa-button href="/">
+            <wa-icon slot="start" library="mdi" name="arrow-left"></wa-icon>
+            Back to Devices
+          </wa-button>
         </div>
       `;
     }

@@ -200,7 +200,7 @@ export class ESPHomePageWizard extends LitElement {
       .step-connector {
         width: 40px;
         height: 2px;
-        background: var(--wa-color-neutral-200, #dee2e6);
+        background: var(--wa-color-surface-border, #dee2e6);
         flex-shrink: 0;
       }
 
@@ -252,7 +252,7 @@ export class ESPHomePageWizard extends LitElement {
 
       .step-description {
         font-size: 0.85rem;
-        color: var(--wa-color-neutral-500, #6c757d);
+        color: var(--wa-color-text-quiet, #6c757d);
         margin-bottom: 24px;
       }
     `,
