@@ -1,9 +1,26 @@
 {
-  "devices.title": "Devices",
-  "devices.new_device": "New Device",
-  "devices.search_placeholder": "Search devices...",
-  "devices.no_devices": "No devices configured yet",
-  "devices.get_started": "Create your first ESPHome device to get started.",
-  "devices.create_device": "Create Device",
-  "devices.discovered": "Discovered Devices"
+  "dashboard": {
+    "title": "ESPHome - create and edit",
+    "subtitle": "Create and make your smart devices and automations",
+    "discovered_count": "Discovered {count} device",
+    "show": "Show",
+    "add_new_device": "Add new device",
+    "esphome_web": "ESPHome web",
+    "update": "Update",
+    "edit": "Edit",
+    "logs": "Logs",
+    "create_device": "Create device",
+    "offline": "Offline",
+    "online": "Online"
+  },
+  "wizard": {
+    "title_create": "Create configuration",
+    "title_board": "Select your board",
+    "title_setup": "Set up your ESPHome board",
+    "how_create": "How would you like to create your project?",
+    "create_new": "Create new project",
+    "create_new_desc": "A guided process to get you started with a starter kit or any other ESP boards",
+    "advanced_options": "Advanced set up options",
+    "drop_yaml": "You can also drag and drop a .yaml file here"
+  }
 }

@@ -1,9 +1,27 @@
 {
-  "devices.title": "Apparaten",
-  "devices.new_device": "Nieuw apparaat",
-  "devices.search_placeholder": "Apparaten zoeken...",
-  "devices.no_devices": "Nog geen apparaten geconfigureerd",
-  "devices.get_started": "Maak uw eerste ESPHome-apparaat aan om te beginnen.",
-  "devices.create_device": "Apparaat aanmaken",
-  "devices.discovered": "Gevonden apparaten"
+  "dashboard": {
+    "title": "ESPHome - aanmaken en bewerken",
+    "subtitle": "Maak en bouw uw slimme apparaten en automatiseringen",
+    "discovered_count": "{count} apparaat gevonden",
+    "show": "Tonen",
+    "add_new_device": "Nieuw apparaat toevoegen",
+    "create_configuration": "Configuratie aanmaken",
+    "esphome_web": "ESPHome web",
+    "update": "Bijwerken",
+    "edit": "Bewerken",
+    "logs": "Logboek",
+    "create_device": "Apparaat aanmaken",
+    "offline": "Offline",
+    "online": "Online"
+  },
+  "wizard": {
+    "title_create": "Configuratie aanmaken",
+    "title_board": "Selecteer uw bord",
+    "title_setup": "Stel uw ESPHome-bord in",
+    "how_create": "Hoe wilt u uw project aanmaken?",
+    "create_new": "Nieuw project aanmaken",
+    "create_new_desc": "Een begeleid proces om aan de slag te gaan met een starterkit of andere ESP-borden",
+    "advanced_options": "Geavanceerde instellingen",
+    "drop_yaml": "U kunt ook een .yaml-bestand hierheen slepen"
+  }
 }

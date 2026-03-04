@@ -4,32 +4,29 @@
  * - Provides Lit context for API, devices, state, and dark mode to all children
  * - Sets up the @lit-labs/router for page navigation
  * - Connects to the /events WebSocket for real-time updates
- * - Manages dark mode toggle and persistence
- * - Renders sidebar + routed page content
+ * - Auto-detects dark mode from system preference
  */
-import { LitElement, html, css } from "lit";
-import { customElement, state } from "lit/decorators.js";
-import { provide } from "@lit/context";
 import { Router } from "@lit-labs/router";
+import { provide } from "@lit/context";
+import { css, html, LitElement } from "lit";
+import { customElement, state } from "lit/decorators.js";
 import { ESPHomeAPI } from "../api/index.js";
-import type { ConfiguredDevice, AdoptableDevice, DashboardEvent } from "../api/types.js";
+import type { AdoptableDevice, ConfiguredDevice, DashboardEvent } from "../api/types.js";
+import { defaultLocalize, loadLocalize, type LocalizeFunc } from "../common/localize.js";
 import {
   apiContext,
+  darkModeContext,
   devicesContext,
   deviceStatesContext,
   importableDevicesContext,
-  versionContext,
-  darkModeContext,
   localizeContext,
+  versionContext,
 } from "../context/index.js";
-import { defaultLocalize, loadLocalize, type LocalizeFunc } from "../common/localize.js";
 import { espHomeStyles } from "../styles/shared.js";
 
 // Import child components
-import "./sidebar.js";
-import "../pages/devices.js";
-
-const DARK_MODE_KEY = "esphome-dark-mode";
+import "../pages/dashboard.js";
+import "./wizard/esphome-layout.js";
 
 @customElement("esphome-app")
 export class ESPHomeApp extends LitElement {
@@ -67,39 +64,31 @@ export class ESPHomeApp extends LitElement {
   private _router = new Router(this, [
     {
       path: "/",
-      render: () => html`<esphome-page-devices></esphome-page-devices>`,
+      render: () => html`<esphome-page-dashboard></esphome-page-dashboard>`,
     },
-    {
-      path: "/device/add",
-      enter: async () => {
-        await import("../pages/add-device.js");
-        return true;
-      },
-      render: () => html`<esphome-page-add-device></esphome-page-add-device>`,
-    },
-    {
-      path: "/device/:configuration",
-      enter: async () => {
-        await import("../pages/device.js");
-        return true;
-      },
-      render: ({ configuration }) =>
-        html`<esphome-page-device
-          .configuration=${configuration ?? ""}
-        ></esphome-page-device>`,
-    },
-    {
-      path: "/device/:configuration/:action",
-      enter: async () => {
-        await import("../pages/device.js");
-        return true;
-      },
-      render: ({ configuration, action }) =>
-        html`<esphome-page-device
-          .configuration=${configuration ?? ""}
-          .action=${action ?? ""}
-        ></esphome-page-device>`,
-    },
+    // {
+    //   path: "/device/:configuration",
+    //   enter: async () => {
+    //     await import("../pages/device.js");
+    //     return true;
+    //   },
+    //   render: ({ configuration }) =>
+    //     html`<esphome-page-device
+    //       .configuration=${configuration ?? ""}
+    //     ></esphome-page-device>`,
+    // },
+    // {
+    //   path: "/device/:configuration/:action",
+    //   enter: async () => {
+    //     await import("../pages/device.js");
+    //     return true;
+    //   },
+    //   render: ({ configuration, action }) =>
+    //     html`<esphome-page-device
+    //       .configuration=${configuration ?? ""}
+    //       .action=${action ?? ""}
+    //     ></esphome-page-device>`,
+    // },
   ]);
 
   // ─── State ───────────────────────────────────────────────
@@ -110,14 +99,9 @@ export class ESPHomeApp extends LitElement {
     espHomeStyles,
     css`
       :host {
-        display: flex;
+        display: block;
         height: 100vh;
         width: 100vw;
-        overflow: hidden;
-      }
-
-      .main-content {
-        flex: 1;
         overflow-y: auto;
         background: var(--wa-color-surface-default, #f8f9fa);
       }
@@ -129,13 +113,11 @@ export class ESPHomeApp extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._init();
-    this.addEventListener("toggle-dark-mode", this._handleToggleDarkMode);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this._eventsWs?.close();
-    this.removeEventListener("toggle-dark-mode", this._handleToggleDarkMode);
   }
 
   private _initDarkMode() {
@@ -144,11 +126,6 @@ export class ESPHomeApp extends LitElement {
       this._applyDarkMode();
     }
   }
-
-  private _handleToggleDarkMode = () => {
-    this._darkMode = !this._darkMode;
-    this._applyDarkMode();
-  };
 
   private _applyDarkMode() {
     document.documentElement.classList.toggle("wa-dark", this._darkMode);
@@ -243,10 +220,7 @@ export class ESPHomeApp extends LitElement {
   // ─── Render ──────────────────────────────────────────────
 
   protected render() {
-    return html`
-      <esphome-sidebar></esphome-sidebar>
-      <main class="main-content">${this._router.outlet()}</main>
-    `;
+    return html`<esphome-layout>${this._router.outlet()}</esphome-layout>`;
   }
 }
 

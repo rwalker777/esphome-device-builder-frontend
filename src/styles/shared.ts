@@ -1,33 +1,63 @@
 /**
  * Shared CSS styles for ESPHome frontend components.
+ *
+ * Only ESPHome-specific brand tokens live here.
+ * For typography, spacing, borders, shadows, and transitions use the
+ * WebAwesome design tokens directly:  --wa-font-size-*, --wa-space-*,
+ * --wa-border-radius-*, --wa-shadow-*, --wa-transition-*, etc.
  */
 import { css } from "lit";
 
 /** ESPHome brand colors and design tokens. */
 export const espHomeStyles = css`
   :host {
-    --esphome-primary: #038fc7;
-    --esphome-primary-light: #4db8e0;
-    --esphome-primary-dark: #026a94;
+    /* ─── Brand colors ─── */
+    --esphome-primary: #009fee;
+    --esphome-primary-light: #dff3fc;
+    --esphome-secondary: #009ac7;
     --esphome-success: #2ecc71;
     --esphome-warning: #f39c12;
     --esphome-error: #e74c3c;
     --esphome-offline: #95a5a6;
 
-    --esphome-sidebar-width: 260px;
+    /* Text color for use on primary / dark / colored backgrounds — white in both light and dark modes */
+    --esphome-on-primary: #ffffff;
+
+    /* ─── Layout ─── */
     --esphome-header-height: 56px;
 
-    --esphome-font-family: system-ui, -apple-system, sans-serif;
-    --esphome-font-mono: "SF Mono", "Fira Code", "Fira Mono", monospace;
+    font-family: var(--wa-font-family-body);
+  }
 
-    font-family: var(--esphome-font-family);
+  /* ─── Custom wa-button variants ─── */
+
+  /* variant="primary": solid --esphome-secondary background, white text */
+  wa-button[variant="primary"]::part(base) {
+    background-color: var(--esphome-secondary);
+    border-color: var(--esphome-secondary);
+    color: var(--esphome-on-primary);
+  }
+
+  wa-button[variant="primary"]::part(base):hover {
+    background-color: color-mix(in srgb, var(--esphome-secondary), black 10%);
+    border-color: color-mix(in srgb, var(--esphome-secondary), black 10%);
+  }
+
+  /* variant="light": --esphome-primary-light background, --esphome-primary text */
+  wa-button[variant="light"]::part(base) {
+    background-color: var(--esphome-primary-light);
+    color: var(--esphome-primary);
+  }
+
+  wa-button[variant="light"]::part(base):hover {
+    background-color: color-mix(in srgb, var(--esphome-primary-light), black 5%);
   }
 `;
 
 /** Common layout helpers. */
 export const layoutStyles = css`
   .page-content {
-    padding: 24px;
+    padding: var(--wa-space-l);
     max-width: 1200px;
     margin: 0 auto;
   }
@@ -35,19 +65,19 @@ export const layoutStyles = css`
   .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 16px;
+    gap: var(--wa-space-m);
   }
 
   .flex-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--wa-space-xs);
   }
 
   .flex-col {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--wa-space-xs);
   }
 
   .spacer {

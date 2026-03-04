@@ -1,9 +1,27 @@
 {
-  "devices.title": "Appareils",
-  "devices.new_device": "Nouvel appareil",
-  "devices.search_placeholder": "Rechercher des appareils...",
-  "devices.no_devices": "Aucun appareil configuré",
-  "devices.get_started": "Créez votre premier appareil ESPHome pour commencer.",
-  "devices.create_device": "Créer un appareil",
-  "devices.discovered": "Appareils détectés"
+  "dashboard": {
+    "title": "ESPHome - créer et éditer",
+    "subtitle": "Créez et fabriquez vos appareils intelligents et automatisations",
+    "discovered_count": "{count} appareil détecté",
+    "show": "Afficher",
+    "add_new_device": "Ajouter un appareil",
+    "create_configuration": "Créer une configuration",
+    "esphome_web": "ESPHome web",
+    "update": "Mettre à jour",
+    "edit": "Éditer",
+    "logs": "Journaux",
+    "create_device": "Créer un appareil",
+    "offline": "Hors ligne",
+    "online": "En ligne"
+  },
+  "wizard": {
+    "title_create": "Créer une configuration",
+    "title_board": "Sélectionnez votre carte",
+    "title_setup": "Configurer votre carte ESPHome",
+    "how_create": "Comment souhaitez-vous créer votre projet ?",
+    "create_new": "Créer un nouveau projet",
+    "create_new_desc": "Un processus guidé pour démarrer avec un kit de démarrage ou toute autre carte ESP",
+    "advanced_options": "Options de configuration avancées",
+    "drop_yaml": "Vous pouvez aussi glisser-déposer un fichier .yaml ici"
+  }
 }
