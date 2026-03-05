@@ -66,5 +66,18 @@
       "low-power": "Laag verbruik",
       "dev-kit": "Dev-kit"
     }
+  },
+  "device": {
+    "navigator_title": "Apparaatnavigator",
+    "navigator_desc": "Navigeer, voeg toe en verwijder opties om uw ESP-apparaat en zijn functies te definiëren.",
+    "section_core": "Basisconfiguratie",
+    "section_components": "Componenten",
+    "section_automations": "Automatiseringen",
+    "section_placeholder": "Inhoud komt binnenkort",
+    "editor_title": "Kies componenten voor uw {name}",
+    "layout_components_only": "Alleen componenten weergeven",
+    "layout_split": "Gesplitste weergave",
+    "layout_yaml_only": "Alleen YAML-editor weergeven",
+    "yaml_editor": "YAML-editor"
   }
 }

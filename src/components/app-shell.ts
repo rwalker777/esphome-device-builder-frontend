@@ -66,29 +66,15 @@ export class ESPHomeApp extends LitElement {
       path: "/",
       render: () => html`<esphome-page-dashboard></esphome-page-dashboard>`,
     },
-    // {
-    //   path: "/device/:configuration",
-    //   enter: async () => {
-    //     await import("../pages/device.js");
-    //     return true;
-    //   },
-    //   render: ({ configuration }) =>
-    //     html`<esphome-page-device
-    //       .configuration=${configuration ?? ""}
-    //     ></esphome-page-device>`,
-    // },
-    // {
-    //   path: "/device/:configuration/:action",
-    //   enter: async () => {
-    //     await import("../pages/device.js");
-    //     return true;
-    //   },
-    //   render: ({ configuration, action }) =>
-    //     html`<esphome-page-device
-    //       .configuration=${configuration ?? ""}
-    //       .action=${action ?? ""}
-    //     ></esphome-page-device>`,
-    // },
+    {
+      path: "/device/:id",
+      enter: async () => {
+        await import("../pages/device.js");
+        return true;
+      },
+      render: ({ id }) =>
+        html`<esphome-page-device .id=${id ?? ""}></esphome-page-device>`,
+    },
   ]);
 
   // ─── State ───────────────────────────────────────────────
@@ -121,10 +107,8 @@ export class ESPHomeApp extends LitElement {
   }
 
   private _initDarkMode() {
-    this._darkMode = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    if (this._darkMode) {
-      this._applyDarkMode();
-    }
+    this._darkMode = false;
+    this._applyDarkMode();
   }
 
   private _applyDarkMode() {
@@ -220,7 +204,16 @@ export class ESPHomeApp extends LitElement {
   // ─── Render ──────────────────────────────────────────────
 
   protected render() {
-    return html`<esphome-layout>${this._router.outlet()}</esphome-layout>`;
+    return html`
+      <esphome-layout @toggle-dark-mode=${this._onToggleDarkMode}>
+        ${this._router.outlet()}
+      </esphome-layout>
+    `;
+  }
+
+  private _onToggleDarkMode() {
+    this._darkMode = !this._darkMode;
+    this._applyDarkMode();
   }
 }
 

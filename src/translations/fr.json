@@ -66,5 +66,18 @@
       "low-power": "Basse consommation",
       "dev-kit": "Kit de développement"
     }
+  },
+  "device": {
+    "navigator_title": "Navigateur d'appareil",
+    "navigator_desc": "Naviguez, ajoutez et supprimez des options pour définir votre appareil ESP et ses fonctionnalités.",
+    "section_core": "Configuration principale",
+    "section_components": "Composants",
+    "section_automations": "Automatisations",
+    "section_placeholder": "Contenu à venir",
+    "editor_title": "Choisissez des composants pour votre {name}",
+    "layout_components_only": "Afficher les composants uniquement",
+    "layout_split": "Vue partagée",
+    "layout_yaml_only": "Afficher l'éditeur YAML uniquement",
+    "yaml_editor": "Éditeur YAML"
   }
 }

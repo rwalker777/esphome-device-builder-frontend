@@ -66,5 +66,18 @@
       "low-power": "Low power",
       "dev-kit": "Dev kit"
     }
+  },
+  "device": {
+    "navigator_title": "Device navigator",
+    "navigator_desc": "Navigate, add and remove options to define your ESP device and its functionality.",
+    "section_core": "Core configuration",
+    "section_components": "Components",
+    "section_automations": "Automations",
+    "section_placeholder": "Content coming soon",
+    "editor_title": "Choose components for your {name}",
+    "layout_components_only": "Show components only",
+    "layout_split": "Split view",
+    "layout_yaml_only": "Show YAML editor only",
+    "yaml_editor": "YAML editor"
   }
 }

@@ -195,15 +195,27 @@ export class ESPHomeCreateConfigDialog extends LitElement {
   }
 
   private _onCreateEmptyConfig() {
+    // TODO: call BE to create empty config, get back device_id
+    // const { id } = await api.createEmptyConfig(...);
     this.close();
+    // TODO: replace "new-device-id" with the actual id returned by the BE
+    window.location.href = "/device/new-device-id";
   }
 
   private _onImportConfig() {
+    // TODO: call BE to import config from file, get back device_id
+    // const { id } = await api.importConfig(...);
     this.close();
+    // TODO: replace "new-device-id" with the actual id returned by the BE
+    window.location.href = "/device/new-device-id";
   }
 
   private _onFinishSetup() {
+    // TODO: call BE to create device from wizard setup, get back device_id
+    // const { id } = await api.createDevice(...);
     this.close();
+    // TODO: replace "new-device-id" with the actual id returned by the BE
+    window.location.href = "/device/new-device-id";
   }
 }
 

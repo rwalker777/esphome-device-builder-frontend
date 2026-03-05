@@ -161,7 +161,7 @@ export class ESPHomeWizardStepBoard extends LitElement {
       .board-card {
         position: relative;
         border-radius: var(--wa-border-radius-l);
-        border: var(--wa-border-width-m) solid var(--wa-color-border-subtle);
+        border: var(--wa-border-width-m) solid var(--wa-color-surface-lowered);
         background: var(--wa-color-surface-default);
         padding: var(--wa-space-m);
         box-sizing: border-box;
