@@ -6,10 +6,12 @@ import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
+import type { MockBoard } from "../../api/mock.js";
 import type { HighlightRange } from "../yaml-editor.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "../yaml-editor.js";
+import "./device-board-info.js";
 
 registerMdiIcons({
   "layout-left": mdiDockLeft,
@@ -33,6 +35,12 @@ export class ESPHomeDeviceEditor extends LitElement {
 
   @property()
   deviceTitle = "";
+
+  @property({ attribute: false })
+  board: MockBoard | null = null;
+
+  @property({ type: Boolean })
+  justCreated = false;
 
   @property({ attribute: false })
   highlightRange: HighlightRange | null = null;
@@ -209,14 +217,14 @@ export class ESPHomeDeviceEditor extends LitElement {
         <div class="card-body">
           <div class=${`editor-layout ${layoutClass}`}>
             <div class="editor-pane editor-pane--left">
-              <h3 class="editor-pane-title">${this.deviceTitle}</h3>
-              <div class="editor-pane-body"></div>
+              <esphome-device-board-info
+                .board=${this.board}
+                .yaml=${this.yaml}
+                .justCreated=${this.justCreated}
+              ></esphome-device-board-info>
             </div>
-            ${this.layout === "both"
-              ? html`<div class="pane-divider"></div>`
-              : nothing}
+            ${this.layout === "both" ? html`<div class="pane-divider"></div>` : nothing}
             <div class="editor-pane editor-pane--right">
-              <h3 class="editor-pane-title">${this._localize("device.yaml_editor")}</h3>
               <div class="editor-pane-body">
                 <esphome-yaml-editor
                   .value=${this.yaml}

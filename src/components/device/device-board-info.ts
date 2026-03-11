@@ -1,0 +1,267 @@
+import { consume } from "@lit/context";
+import {
+  mdiArrowDecisionOutline,
+  mdiMemory,
+  mdiOpenInNew,
+  mdiPlusCircleOutline,
+} from "@mdi/js";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, query, state } from "lit/decorators.js";
+import type { MockBoard } from "../../api/mock.js";
+import type { LocalizeFunc } from "../../common/localize.js";
+import { localizeContext } from "../../context/index.js";
+import { espHomeStyles } from "../../styles/shared.js";
+import { registerMdiIcons } from "../../util/register-icons.js";
+import {
+  categorizeSections,
+  parseYamlAutomations,
+  parseYamlTopLevelSections,
+} from "../../util/yaml-sections.js";
+import type { ESPHomeAddAutomationDialog } from "./add-automation-dialog.js";
+import type { ESPHomeAddComponentDialog } from "./add-component-dialog.js";
+
+import "@home-assistant/webawesome/dist/components/badge/badge.js";
+import "@home-assistant/webawesome/dist/components/icon/icon.js";
+import "./add-automation-dialog.js";
+import "./add-component-dialog.js";
+
+registerMdiIcons({
+  "open-in-new": mdiOpenInNew,
+  memory: mdiMemory,
+  "arrow-decision-outline": mdiArrowDecisionOutline,
+  "plus-circle-outline": mdiPlusCircleOutline,
+});
+
+@customElement("esphome-device-board-info")
+export class ESPHomeDeviceBoardInfo extends LitElement {
+  @consume({ context: localizeContext, subscribe: true })
+  @state()
+  private _localize: LocalizeFunc = (key) => key;
+
+  @property({ attribute: false })
+  board: MockBoard | null = null;
+
+  @property()
+  yaml = "";
+
+  @property({ type: Boolean })
+  justCreated = false;
+
+  @query("esphome-add-component-dialog")
+  private _addComponentDialog!: ESPHomeAddComponentDialog;
+
+  @query("esphome-add-automation-dialog")
+  private _addAutomationDialog!: ESPHomeAddAutomationDialog;
+
+  static styles = [
+    espHomeStyles,
+    css`
+      :host {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .board-header {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        width: 100%;
+        gap: var(--wa-space-l);
+      }
+
+      .board-info {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        gap: var(--wa-space-s);
+      }
+
+      .board-name {
+        margin: 0;
+      }
+
+      .board-image {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .board-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--wa-space-2xs);
+      }
+
+      .board-info-link {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
+        font-size: var(--wa-font-size-xs);
+        color: var(--esphome-primary);
+        text-decoration: underline;
+        margin-left: 10px;
+      }
+
+      .board-info-link:hover {
+        text-decoration: none;
+      }
+
+      .board-description {
+        margin: var(--wa-space-xl) 0;
+        font-size: var(--wa-font-size-xs);
+        color: var(--wa-color-text-quiet);
+      }
+
+      .board-separator {
+        height: 1px;
+        background-color: var(--wa-color-surface-lowered);
+        width: 100%;
+      }
+
+      /* ─── Step CTA ─── */
+
+      .step-section {
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-s);
+        padding-top: var(--wa-space-m);
+      }
+
+      .step-title {
+        margin: 0;
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-bold);
+        color: var(--wa-color-text-normal);
+      }
+
+      .step-desc {
+        margin: 0;
+        font-size: var(--wa-font-size-xs);
+        color: var(--wa-color-text-quiet);
+        line-height: 1.5;
+      }
+
+      .action-item {
+        padding: 0 var(--wa-space-2xs);
+        border-radius: var(--wa-border-radius-m);
+        display: flex;
+        align-items: center;
+        background: var(--esphome-primary);
+        color: var(--esphome-on-primary);
+        justify-content: space-between;
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.1s;
+        width: 220px;
+        align-self: center;
+        margin-top: var(--wa-space-m);
+      }
+
+      .action-item:hover {
+        opacity: 0.9;
+      }
+
+      .action-item p {
+        margin: var(--wa-space-xs) 0;
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-bold);
+      }
+
+      .action-item wa-icon {
+        font-size: var(--wa-font-size-l);
+      }
+
+      .action-item div {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
+      }
+    `,
+  ];
+
+  protected render() {
+    if (!this.board) return nothing;
+
+    const { components } = categorizeSections(parseYamlTopLevelSections(this.yaml));
+    const inlineAutomations = parseYamlAutomations(this.yaml);
+    const hasComponents = components.length > 0;
+    const hasAutomations = inlineAutomations.length > 0;
+
+    const showAddComponent = this.justCreated && !hasComponents;
+    const showAddAutomations = hasComponents && !hasAutomations;
+
+    return html`
+      <div class="board-header">
+        <div class="board-info">
+          <h3 class="board-name">${this.board.name}</h3>
+          <div class="board-tags">
+            ${this.board.tags.map(
+              (tag) => html`<wa-badge variant="brand" pill>${tag}</wa-badge>`
+            )}
+            <a
+              class="board-info-link"
+              href=${this.board.docsUrl}
+              target="_blank"
+              rel="noreferrer"
+              >${this._localize("device.more_info")}
+              <wa-icon library="mdi" name="open-in-new"></wa-icon
+            ></a>
+          </div>
+          <p class="board-description">${this.board.description}</p>
+        </div>
+        <div class="board-image">
+          <img src="/assets/board/apollo.svg" alt="${this.board.name}" />
+        </div>
+      </div>
+
+      <div class="board-separator"></div>
+
+      ${showAddComponent
+        ? html`
+            <div class="step-section">
+              <h4 class="step-title">${this._localize("device.step_add_component")}</h4>
+              <p class="step-desc">${this._localize("device.step_add_component_desc")}</p>
+              <div class="action-item" @click=${() => this._addComponentDialog.open()}>
+                <div>
+                  <wa-icon library="mdi" name="memory"></wa-icon>
+                  <p>${this._localize("device.add_component")}</p>
+                </div>
+                <wa-icon library="mdi" name="plus-circle-outline"></wa-icon>
+              </div>
+            </div>
+          `
+        : nothing}
+      ${showAddAutomations
+        ? html`
+            <div class="step-section">
+              <h4 class="step-title">${this._localize("device.step_add_automations")}</h4>
+              <p class="step-desc">
+                ${this._localize("device.step_add_automations_desc")}
+              </p>
+              <div class="action-item" @click=${() => this._addAutomationDialog.open()}>
+                <div>
+                  <wa-icon library="mdi" name="arrow-decision-outline"></wa-icon>
+                  <p>${this._localize("device.add_automation")}</p>
+                </div>
+                <wa-icon library="mdi" name="plus-circle-outline"></wa-icon>
+              </div>
+            </div>
+          `
+        : nothing}
+
+      <esphome-add-component-dialog
+        .boardName=${this.board.name}
+      ></esphome-add-component-dialog>
+      <esphome-add-automation-dialog
+        .boardName=${this.board.name}
+      ></esphome-add-automation-dialog>
+    `;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "esphome-device-board-info": ESPHomeDeviceBoardInfo;
+  }
+}

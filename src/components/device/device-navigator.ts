@@ -8,15 +8,25 @@ import {
   mdiMemory,
 } from "@mdi/js";
 import { css, html, LitElement, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
-import { categorizeSections, parseYamlAutomations, parseYamlTopLevelSections } from "../../util/yaml-sections.js";
+import {
+  categorizeSections,
+  parseYamlAutomations,
+  parseYamlTopLevelSections,
+} from "../../util/yaml-sections.js";
 import type { HighlightRange } from "../yaml-editor.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
+import "./add-automation-dialog.js";
+import type { ESPHomeAddAutomationDialog } from "./add-automation-dialog.js";
+import "./add-component-dialog.js";
+import type { ESPHomeAddComponentDialog } from "./add-component-dialog.js";
+import "./add-config-dialog.js";
+import type { ESPHomeAddConfigDialog } from "./add-config-dialog.js";
 
 registerMdiIcons({
   "chevron-down": mdiChevronDown,
@@ -38,6 +48,18 @@ export class ESPHomeDeviceNavigator extends LitElement {
 
   @property({ attribute: false })
   yaml = "";
+
+  @property()
+  boardName = "";
+
+  @query("esphome-add-config-dialog")
+  private _addConfigDialog!: ESPHomeAddConfigDialog;
+
+  @query("esphome-add-component-dialog")
+  private _addComponentDialog!: ESPHomeAddComponentDialog;
+
+  @query("esphome-add-automation-dialog")
+  private _addAutomationDialog!: ESPHomeAddAutomationDialog;
 
   @state()
   private _selectedKey: string | null = null;
@@ -211,13 +233,14 @@ export class ESPHomeDeviceNavigator extends LitElement {
   ];
 
   protected render() {
-    const { core, components, automations: topLevelAutomations } = categorizeSections(
-      parseYamlTopLevelSections(this.yaml)
+    const {
+      core,
+      components,
+      automations: topLevelAutomations,
+    } = categorizeSections(parseYamlTopLevelSections(this.yaml));
+    const automations = [...topLevelAutomations, ...parseYamlAutomations(this.yaml)].sort(
+      (a, b) => a.fromLine - b.fromLine
     );
-    const automations = [
-      ...topLevelAutomations,
-      ...parseYamlAutomations(this.yaml),
-    ].sort((a, b) => a.fromLine - b.fromLine);
 
     const sections = [
       {
@@ -227,9 +250,7 @@ export class ESPHomeDeviceNavigator extends LitElement {
         action: {
           label: this._localize("device.add_config"),
           icon: "cog",
-          onClick: () => {
-            console.log("config action clicked");
-          },
+          onClick: () => this._addConfigDialog.open(),
         },
       },
       {
@@ -239,9 +260,7 @@ export class ESPHomeDeviceNavigator extends LitElement {
         action: {
           label: this._localize("device.add_component"),
           icon: "memory",
-          onClick: () => {
-            console.log("component action clicked");
-          },
+          onClick: () => this._addComponentDialog.open(),
         },
       },
       {
@@ -251,15 +270,22 @@ export class ESPHomeDeviceNavigator extends LitElement {
         action: {
           label: this._localize("device.add_automation"),
           icon: "arrow-decision-outline",
-          onClick: () => {
-            console.log("automation action clicked");
-          },
+          onClick: () => this._addAutomationDialog.open(),
         },
       },
     ];
 
     return html`
       <section class="card">
+        <esphome-add-config-dialog
+          .boardName=${this.boardName}
+        ></esphome-add-config-dialog>
+        <esphome-add-component-dialog
+          .boardName=${this.boardName}
+        ></esphome-add-component-dialog>
+        <esphome-add-automation-dialog
+          .boardName=${this.boardName}
+        ></esphome-add-automation-dialog>
         <header class="card-header">
           <h2 class="card-title">${this._localize("device.navigator_title")}</h2>
         </header>
@@ -304,7 +330,7 @@ export class ESPHomeDeviceNavigator extends LitElement {
                           </div>
                         `
                       : nothing}
-                    <div class="nav-items">
+                    <div class="nav-items" @click=${() => action.onClick()}>
                       <div class="action-item">
                         <div>
                           <wa-icon library="mdi" name=${action.icon}></wa-icon>

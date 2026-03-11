@@ -83,6 +83,14 @@
     "yaml_editor": "YAML editor",
     "add_config": "Add configuration",
     "add_component": "Add component",
-    "add_automation": "Add automation"
+    "add_automation": "Add automation",
+    "more_info": "More info",
+    "step_add_component": "2. Add components",
+    "step_add_component_desc": "Use the left menu to add your first component or use the 'Add component' button.",
+    "step_add_automations": "3. Add automations",
+    "step_add_automations_desc": "Use the left menu to add your first automation or use the 'Add automation' button.",
+    "add_config_dialog_title": "Add configuration to {name}",
+    "add_component_dialog_title": "Choose components for your {name} board",
+    "add_automation_dialog_title": "New automation for {name}"
   }
 }

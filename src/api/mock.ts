@@ -9,17 +9,18 @@ export interface MockDevice {
   name: string;
   configuration: string;
   online: boolean;
+  boardId: string;
 }
 
 export const MOCK_DEVICES: MockDevice[] = [
-  { name: "Living Room Sensor", configuration: "living-room-sensor.yaml", online: true },
-  { name: "Bedroom Light Controller", configuration: "bedroom-light.yaml", online: true },
-  { name: "Kitchen Motion Sensor", configuration: "kitchen-motion.yaml", online: false },
-  { name: "Garage Door Opener", configuration: "garage-door.yaml", online: true },
-  { name: "Office Air Quality", configuration: "office-air-quality.yaml", online: true },
-  { name: "Hallway Presence", configuration: "hallway-presence.yaml", online: false },
-  { name: "Basement Humidity", configuration: "basement-humidity.yaml", online: true },
-  { name: "Front Door Bell", configuration: "front-door-bell.yaml", online: false },
+  { name: "Living Room Sensor", configuration: "living-room-sensor.yaml", online: true, boardId: "apollo-esp32-c6" },
+  { name: "Bedroom Light Controller", configuration: "bedroom-light.yaml", online: true, boardId: "esp32-s3-devkitc-1" },
+  { name: "Kitchen Motion Sensor", configuration: "kitchen-motion.yaml", online: false, boardId: "esp32-devkitc" },
+  { name: "Garage Door Opener", configuration: "garage-door.yaml", online: true, boardId: "esp8266-nodemcu" },
+  { name: "Office Air Quality", configuration: "office-air-quality.yaml", online: true, boardId: "seeed-xiao-esp32c3" },
+  { name: "Hallway Presence", configuration: "hallway-presence.yaml", online: false, boardId: "esp32-c6-devkitc-1" },
+  { name: "Basement Humidity", configuration: "basement-humidity.yaml", online: true, boardId: "rpi-pico-w" },
+  { name: "Front Door Bell", configuration: "front-door-bell.yaml", online: false, boardId: "m5stack-atom-lite" },
 ];
 
 // ─── Boards ──────────────────────────────────────────────────────────────────
@@ -48,6 +49,8 @@ export interface MockBoard {
   description: string;
   tags: Tag[];
   docsUrl: string;
+  /** For kit-style boards: what's in the box. Shown instead of description. */
+  contents?: string[];
 }
 
 export const MOCK_BOARDS: MockBoard[] = [
@@ -56,8 +59,17 @@ export const MOCK_BOARDS: MockBoard[] = [
     name: "ESPHome Starter Kit (esp32-c6)",
     description:
       "The board that ships with the Apollo Automation starter kits. This board is the esp32-c6 board and is the same board that comes with the button, buzzer, temperature and PIR (motion) sensor kits.",
-    tags: ["esp32-c6", "starter-kit"],
+    tags: ["esp32-c6", "starter-kit", "apollo-automation"],
     docsUrl: "https://esphome.io/components/esp32.html",
+    contents: [
+      "1 x ESP32-C6 board",
+      "1 x on board LED",
+      "2 x FPC cables",
+      "1 x Button",
+      "1 x PIR Motion sensor",
+      "1 x LED/Buzzer",
+      "1 x Temperature/Humidity Sensor",
+    ],
   },
   {
     id: "esp32-s3-devkitc-1",

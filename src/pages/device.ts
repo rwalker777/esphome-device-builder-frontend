@@ -1,6 +1,7 @@
 import { consume } from "@lit/context";
 import { css, html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { MOCK_BOARDS, MOCK_DEVICES, type MockBoard } from "../api/mock.js";
 import type { LocalizeFunc } from "../common/localize.js";
 import type { DeviceLayoutMode } from "../components/device/device-editor.js";
 import type { HighlightRange } from "../components/yaml-editor.js";
@@ -19,11 +20,19 @@ export class ESPHomePageDevice extends LitElement {
   @property()
   id = "";
 
+  @property({ type: Boolean })
+  justCreated = false;
+
   @state()
   private _layout: DeviceLayoutMode = "both";
 
   @state()
   private _openSections = new Set<number>();
+
+  private get _board(): MockBoard | null {
+    const device = MOCK_DEVICES.find((d) => d.configuration === this.id);
+    return device ? (MOCK_BOARDS.find((b) => b.id === device.boardId) ?? null) : null;
+  }
 
   @state()
   private _highlightRange: HighlightRange | null = null;
@@ -115,11 +124,14 @@ binary_sensor:
           <esphome-device-navigator
             .openSections=${this._openSections}
             .yaml=${this._yaml}
+            .boardName=${this._board?.name ?? ""}
           ></esphome-device-navigator>
           <esphome-device-editor
             .yaml=${this._yaml}
             .layout=${this._layout}
             .deviceTitle=${deviceTitle}
+            .board=${this._board}
+            .justCreated=${this.justCreated}
             .highlightRange=${this._highlightRange}
           ></esphome-device-editor>
         </div>
