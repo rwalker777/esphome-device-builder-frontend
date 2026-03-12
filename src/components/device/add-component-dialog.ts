@@ -9,6 +9,7 @@ import { registerMdiIcons } from "../../util/register-icons.js";
 
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
+import "./component-catalog.js";
 
 registerMdiIcons({ close: mdiClose });
 
@@ -28,7 +29,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
     espHomeStyles,
     css`
       wa-dialog {
-        --width: 600px;
+        --width: 900px;
       }
 
       wa-dialog::part(header) {
@@ -56,7 +57,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
       }
 
       wa-dialog::part(body) {
-        padding: var(--wa-space-l) var(--wa-space-xl);
+        padding: var(--wa-space-l);
       }
 
       wa-dialog::part(footer) {
@@ -77,6 +78,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
           name: this.boardName,
         })}
       >
+        <esphome-component-catalog></esphome-component-catalog>
       </wa-dialog>
     `;
   }

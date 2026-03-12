@@ -91,6 +91,21 @@
     "step_add_automations_desc": "Gebruik het linkermenu om uw eerste automatisering toe te voegen of gebruik de knop 'Automatisering toevoegen'.",
     "add_config_dialog_title": "Configuratie toevoegen aan {name}",
     "add_component_dialog_title": "Kies componenten voor uw {name}-bord",
-    "add_automation_dialog_title": "Nieuwe automatisering voor {name}"
+    "add_automation_dialog_title": "Nieuwe automatisering voor {name}",
+    "component_categories": "Categorieën",
+    "component_category_all": "Alles",
+    "component_category_sensor": "Sensoren",
+    "component_category_binary_sensor": "Binaire sensoren",
+    "component_category_switch": "Schakelaars",
+    "component_category_light": "Verlichting",
+    "component_category_button": "Knoppen",
+    "component_category_fan": "Ventilatoren",
+    "component_category_climate": "Klimaat",
+    "component_category_display": "Schermen",
+    "component_category_cover": "Rolluiken",
+    "component_category_number": "Getallen",
+    "search_components_placeholder": "Componenten zoeken…",
+    "no_components_found": "Geen componenten gevonden",
+    "add_component_action": "Toevoegen"
   }
 }

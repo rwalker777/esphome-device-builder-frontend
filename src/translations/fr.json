@@ -91,6 +91,21 @@
     "step_add_automations_desc": "Utilisez le menu de gauche pour ajouter votre première automatisation ou utilisez le bouton 'Ajouter une automatisation'.",
     "add_config_dialog_title": "Ajouter une configuration à {name}",
     "add_component_dialog_title": "Choisissez des composants pour votre carte {name}",
-    "add_automation_dialog_title": "Nouvelle automatisation pour {name}"
+    "add_automation_dialog_title": "Nouvelle automatisation pour {name}",
+    "component_categories": "Catégories",
+    "component_category_all": "Tout",
+    "component_category_sensor": "Capteurs",
+    "component_category_binary_sensor": "Capteurs binaires",
+    "component_category_switch": "Interrupteurs",
+    "component_category_light": "Lumières",
+    "component_category_button": "Boutons",
+    "component_category_fan": "Ventilateurs",
+    "component_category_climate": "Climatisation",
+    "component_category_display": "Écrans",
+    "component_category_cover": "Volets",
+    "component_category_number": "Nombres",
+    "search_components_placeholder": "Rechercher des composants…",
+    "no_components_found": "Aucun composant trouvé",
+    "add_component_action": "Ajouter"
   }
 }

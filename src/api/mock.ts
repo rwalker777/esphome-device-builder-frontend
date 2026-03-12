@@ -3,6 +3,182 @@
  * Replace these exports with real API calls when ready.
  */
 
+// ─── Components ──────────────────────────────────────────────────────────────
+
+export type ComponentCategory =
+  | "sensor"
+  | "binary_sensor"
+  | "switch"
+  | "light"
+  | "button"
+  | "fan"
+  | "climate"
+  | "display"
+  | "cover"
+  | "number"
+  | "text_sensor";
+
+export interface MockComponent {
+  id: string;
+  name: string;
+  description: string;
+  category: ComponentCategory;
+  imageUrl: string | null;
+  tags: string[];
+  docsUrl: string;
+}
+
+export const MOCK_COMPONENTS: MockComponent[] = [
+  {
+    id: "analog_threshold",
+    name: "Analog Threshold",
+    description:
+      "Convert an analog sensor value into a binary on/off state based on a configurable threshold.",
+    category: "binary_sensor",
+    imageUrl: "/assets/board/component1.svg",
+    tags: ["analog", "threshold"],
+    docsUrl: "https://esphome.io/components/binary_sensor/analog_threshold.html",
+  },
+  {
+    id: "dht",
+    name: "DHT Temperature & Humidity",
+    description:
+      "Read temperature and humidity from DHT11, DHT22, AM2302 sensors via a single-wire protocol.",
+    category: "sensor",
+    imageUrl: "/assets/board/component2.svg",
+    tags: ["temperature", "humidity", "dht"],
+    docsUrl: "https://esphome.io/components/sensor/dht.html",
+  },
+  {
+    id: "gpio_binary_sensor",
+    name: "GPIO Binary Sensor",
+    description:
+      "Monitor a digital GPIO pin as a binary sensor. Ideal for buttons, switches, and door/window contacts.",
+    category: "binary_sensor",
+    imageUrl: "/assets/board/component3.svg",
+    tags: ["gpio", "button", "door"],
+    docsUrl: "https://esphome.io/components/binary_sensor/gpio.html",
+  },
+  {
+    id: "gpio_switch",
+    name: "GPIO Switch",
+    description:
+      "Control a digital GPIO output as a switch. Commonly used to drive relays, LEDs, or other actuators.",
+    category: "switch",
+    imageUrl: null,
+    tags: ["gpio", "relay"],
+    docsUrl: "https://esphome.io/components/switch/gpio.html",
+  },
+  {
+    id: "adc",
+    name: "ADC Sensor",
+    description:
+      "Read the voltage on a GPIO pin using the built-in Analog-to-Digital Converter.",
+    category: "sensor",
+    imageUrl: null,
+    tags: ["analog", "adc", "voltage"],
+    docsUrl: "https://esphome.io/components/sensor/adc.html",
+  },
+  {
+    id: "binary_light",
+    name: "Binary Light",
+    description: "Control a simple on/off light connected to a GPIO pin.",
+    category: "light",
+    imageUrl: null,
+    tags: ["gpio", "led"],
+    docsUrl: "https://esphome.io/components/light/binary.html",
+  },
+  {
+    id: "gpio_button",
+    name: "GPIO Button",
+    description:
+      "Momentary button component backed by a GPIO pin, with configurable press and release events.",
+    category: "button",
+    imageUrl: null,
+    tags: ["gpio", "momentary"],
+    docsUrl: "https://esphome.io/components/button/gpio.html",
+  },
+  {
+    id: "speed_fan",
+    name: "Speed Fan",
+    description: "Control a variable-speed fan using a PWM or GPIO output.",
+    category: "fan",
+    imageUrl: null,
+    tags: ["pwm", "gpio"],
+    docsUrl: "https://esphome.io/components/fan/speed.html",
+  },
+  {
+    id: "thermostat",
+    name: "Thermostat",
+    description:
+      "Full thermostat controller with heating, cooling, and fan modes, using temperature sensor feedback.",
+    category: "climate",
+    imageUrl: null,
+    tags: ["thermostat", "hvac", "temperature"],
+    docsUrl: "https://esphome.io/components/climate/thermostat.html",
+  },
+  {
+    id: "template_cover",
+    name: "Template Cover",
+    description:
+      "Create a cover (blinds, shutter, garage door) using template expressions and custom actions.",
+    category: "cover",
+    imageUrl: null,
+    tags: ["template", "blinds", "garage"],
+    docsUrl: "https://esphome.io/components/cover/template.html",
+  },
+  {
+    id: "bme280",
+    name: "BME280",
+    description:
+      "Read temperature, humidity, and pressure from the popular BME280 environmental sensor over I²C or SPI.",
+    category: "sensor",
+    imageUrl: null,
+    tags: ["i2c", "spi", "temperature", "humidity", "pressure"],
+    docsUrl: "https://esphome.io/components/sensor/bme280.html",
+  },
+  {
+    id: "ssd1306",
+    name: "SSD1306 OLED Display",
+    description:
+      "Drive a small OLED display (128×64 or 128×32) over I²C or SPI using the SSD1306 controller.",
+    category: "display",
+    imageUrl: null,
+    tags: ["i2c", "spi", "oled"],
+    docsUrl: "https://esphome.io/components/display/ssd1306_i2c.html",
+  },
+  {
+    id: "rotary_encoder",
+    name: "Rotary Encoder",
+    description:
+      "Track the position and direction of a rotary encoder knob connected to two GPIO pins.",
+    category: "sensor",
+    imageUrl: null,
+    tags: ["gpio", "encoder", "rotary"],
+    docsUrl: "https://esphome.io/components/sensor/rotary_encoder.html",
+  },
+  {
+    id: "monochromatic_light",
+    name: "Monochromatic Light",
+    description:
+      "Control a single-color LED or light strip with brightness via a PWM output.",
+    category: "light",
+    imageUrl: null,
+    tags: ["pwm", "led", "dimmer"],
+    docsUrl: "https://esphome.io/components/light/monochromatic.html",
+  },
+  {
+    id: "template_number",
+    name: "Template Number",
+    description:
+      "Expose a numeric value that can be set from Home Assistant and used in automations.",
+    category: "number",
+    imageUrl: null,
+    tags: ["template", "slider"],
+    docsUrl: "https://esphome.io/components/number/template.html",
+  },
+];
+
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
 export interface MockDevice {

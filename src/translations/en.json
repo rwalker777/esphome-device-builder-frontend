@@ -91,6 +91,21 @@
     "step_add_automations_desc": "Use the left menu to add your first automation or use the 'Add automation' button.",
     "add_config_dialog_title": "Add configuration to {name}",
     "add_component_dialog_title": "Choose components for your {name} board",
-    "add_automation_dialog_title": "New automation for {name}"
+    "add_automation_dialog_title": "New automation for {name}",
+    "component_categories": "Categories",
+    "component_category_all": "All",
+    "component_category_sensor": "Sensors",
+    "component_category_binary_sensor": "Binary Sensors",
+    "component_category_switch": "Switches",
+    "component_category_light": "Lights",
+    "component_category_button": "Buttons",
+    "component_category_fan": "Fans",
+    "component_category_climate": "Climate",
+    "component_category_display": "Displays",
+    "component_category_cover": "Covers",
+    "component_category_number": "Numbers",
+    "search_components_placeholder": "Search components…",
+    "no_components_found": "No components found",
+    "add_component_action": "Add"
   }
 }
