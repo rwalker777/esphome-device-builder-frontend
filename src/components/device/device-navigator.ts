@@ -406,13 +406,13 @@ export class ESPHomeDeviceNavigator extends LitElement {
       this._selectedLine = null;
       this._selectedRange = null;
       this._emitHighlight(this._hoveredLine === fromLine ? { fromLine, toLine } : null, false);
-      this._emitSectionSelect(null);
+      this._emitSectionSelect(null, undefined);
     } else {
       this.selectedKey = key;
       this._selectedLine = fromLine;
       this._selectedRange = { fromLine, toLine };
       this._emitHighlight({ fromLine, toLine }, true);
-      this._emitSectionSelect(key);
+      this._emitSectionSelect(key, fromLine);
     }
   }
 
@@ -426,10 +426,10 @@ export class ESPHomeDeviceNavigator extends LitElement {
     );
   }
 
-  private _emitSectionSelect(sectionKey: string | null) {
+  private _emitSectionSelect(sectionKey: string | null, fromLine: number | undefined) {
     this.dispatchEvent(
       new CustomEvent("section-select", {
-        detail: { sectionKey },
+        detail: { sectionKey, fromLine },
         bubbles: true,
         composed: true,
       })

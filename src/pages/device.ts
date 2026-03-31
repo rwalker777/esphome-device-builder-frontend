@@ -6,6 +6,7 @@ import type { ESPHomeAPI } from "../api/index.js";
 import type { LocalizeFunc } from "../common/localize.js";
 import type { DeviceLayoutMode } from "../components/device/device-editor.js";
 import type { HighlightRange } from "../components/yaml-editor.js";
+import toast from "sonner-js";
 import { localizeContext, devicesContext, apiContext } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
 
@@ -64,6 +65,9 @@ export class ESPHomePageDevice extends LitElement {
   private _selectedSection: string | null = this._readUrlParam("section", null);
 
   @state()
+  private _selectedFromLine?: number;
+
+  @state()
   private _yaml = "";
 
   async connectedCallback() {
@@ -109,8 +113,10 @@ export class ESPHomePageDevice extends LitElement {
   private async _saveYaml() {
     try {
       await this._api.saveEdit(this.id, this._yaml);
+      toast.success(this._localize("device.yaml_saved"), { richColors: true });
     } catch (e) {
       console.error("Failed to save YAML:", e);
+      toast.error(this._localize("device.yaml_save_error"), { richColors: true });
     }
   }
 
@@ -176,6 +182,7 @@ export class ESPHomePageDevice extends LitElement {
             .scrollToHighlight=${this._scrollToHighlight}
             .configuration=${this.id}
             .selectedSection=${this._selectedSection}
+            .selectedFromLine=${this._selectedFromLine}
           ></esphome-device-editor>
         </div>
       </div>
@@ -211,8 +218,9 @@ export class ESPHomePageDevice extends LitElement {
     this._yaml = e.detail.yaml;
   }
 
-  private _onSectionSelect(e: CustomEvent<{ sectionKey: string | null }>) {
+  private _onSectionSelect(e: CustomEvent<{ sectionKey: string | null; fromLine?: number }>) {
     this._selectedSection = e.detail.sectionKey;
+    this._selectedFromLine = e.detail.fromLine;
     this._updateUrl();
   }
 

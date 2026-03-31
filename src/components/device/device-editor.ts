@@ -61,6 +61,9 @@ export class ESPHomeDeviceEditor extends LitElement {
   @property({ attribute: false })
   selectedSection: string | null = null;
 
+  @property({ type: Number })
+  selectedFromLine?: number;
+
   static styles = [
     espHomeStyles,
     css`
@@ -293,6 +296,7 @@ export class ESPHomeDeviceEditor extends LitElement {
                 .justCreated=${this.justCreated}
                 .configuration=${this.configuration}
                 .selectedSection=${this.selectedSection}
+                .selectedFromLine=${this.selectedFromLine}
               ></esphome-device-board-info>
             </div>
             ${this.layout === "both" ? html`<div class="pane-divider"></div>` : nothing}

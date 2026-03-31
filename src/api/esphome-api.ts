@@ -213,6 +213,17 @@ export class ESPHomeAPI {
     return this._request("POST", `devices/${configuration}/section-config`, { body: data });
   }
 
+  /** Delete a YAML section. */
+  async deleteSection(
+    configuration: string,
+    sectionKey: string,
+    fromLine?: number
+  ): Promise<{ yaml: string }> {
+    const params: Record<string, string> = { key: sectionKey };
+    if (fromLine !== undefined) params.from_line = String(fromLine);
+    return this._request("DELETE", `devices/${configuration}/section-config`, { params });
+  }
+
   /** Get user preferences. */
   async getPreferences(): Promise<UserPreferences> {
     return this._request("GET", "preferences");

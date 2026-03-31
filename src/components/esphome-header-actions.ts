@@ -1,6 +1,12 @@
 import { consume } from "@lit/context";
-import { mdiKeyVariant, mdiUpdate, mdiWeatherNight, mdiWeatherSunny } from "@mdi/js";
-import { LitElement, css, html } from "lit";
+import {
+  mdiCog,
+  mdiKeyVariant,
+  mdiPalette,
+  mdiSquareEditOutline,
+  mdiUpdate,
+} from "@mdi/js";
+import { LitElement, css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import toast from "sonner-js";
 import type { ESPHomeAPI } from "../api/index.js";
@@ -11,11 +17,15 @@ import { registerMdiIcons } from "../util/register-icons.js";
 
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
+import "@home-assistant/webawesome/dist/components/switch/switch.js";
+import "@home-assistant/webawesome/dist/components/select/select.js";
+import "@home-assistant/webawesome/dist/components/option/option.js";
 
 registerMdiIcons({
-  "weather-sunny": mdiWeatherSunny,
-  "weather-night": mdiWeatherNight,
+  cog: mdiCog,
   "key-variant": mdiKeyVariant,
+  palette: mdiPalette,
+  "square-edit-outline": mdiSquareEditOutline,
   update: mdiUpdate,
 });
 
@@ -34,6 +44,15 @@ export class ESPHomeHeaderActions extends LitElement {
 
   @state()
   private _confirmUpdateOpen = false;
+
+  @state()
+  private _settingsOpen = false;
+
+  @state()
+  private _settingsTab = "appearance";
+
+  @state()
+  private _editorLayout = "both";
 
   @state()
   private _updating = false;
@@ -165,6 +184,98 @@ export class ESPHomeHeaderActions extends LitElement {
         justify-content: flex-end;
         gap: var(--wa-space-s);
       }
+
+      /* ─── Settings dialog ─── */
+
+      wa-dialog.settings-dialog {
+        --width: 560px;
+      }
+
+      .settings-layout {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 0;
+        min-height: 280px;
+      }
+
+      .settings-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        border-right: 1px solid var(--wa-color-surface-border);
+        padding-right: var(--wa-space-m);
+      }
+
+      .settings-tab {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+        padding: var(--wa-space-xs) var(--wa-space-s);
+        border: none;
+        background: none;
+        border-radius: var(--wa-border-radius-m);
+        cursor: pointer;
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-semibold);
+        font-family: inherit;
+        color: var(--wa-color-text-quiet);
+        text-align: left;
+      }
+
+      .settings-tab:hover {
+        background: var(--wa-color-surface-lowered);
+        color: var(--wa-color-text-normal);
+      }
+
+      .settings-tab--active {
+        background: color-mix(in srgb, var(--esphome-primary), transparent 88%);
+        color: var(--esphome-primary);
+      }
+
+      .settings-tab wa-icon {
+        font-size: 16px;
+      }
+
+      .settings-content {
+        padding-left: var(--wa-space-l);
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-l);
+      }
+
+      .settings-content h3 {
+        margin: 0;
+        font-size: var(--wa-font-size-m);
+        font-weight: var(--wa-font-weight-bold);
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--wa-space-m);
+      }
+
+      .setting-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .setting-label {
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-semibold);
+        color: var(--wa-color-text-normal);
+      }
+
+      .setting-desc {
+        font-size: var(--wa-font-size-2xs);
+        color: var(--wa-color-text-quiet);
+      }
+
+      .setting-row wa-select {
+        min-width: 140px;
+      }
     `,
   ];
 
@@ -194,15 +305,10 @@ export class ESPHomeHeaderActions extends LitElement {
         <div class="header-actions-separator"></div>
         <button
           class="hdr-btn hdr-btn--icon-only"
-          @click=${this._toggleDarkMode}
-          title=${this._darkMode
-            ? this._localize("layout.light_mode")
-            : this._localize("layout.dark_mode")}
+          @click=${this._openSettings}
+          title=${this._localize("layout.settings")}
         >
-          <wa-icon
-            library="mdi"
-            name=${this._darkMode ? "weather-sunny" : "weather-night"}
-          ></wa-icon>
+          <wa-icon library="mdi" name="cog"></wa-icon>
         </button>
       </div>
 
@@ -239,6 +345,73 @@ export class ESPHomeHeaderActions extends LitElement {
           </div>
         </div>
       </wa-dialog>
+
+      <wa-dialog
+        class="settings-dialog"
+        label=${this._localize("layout.settings")}
+        ?open=${this._settingsOpen}
+        @wa-after-hide=${() => { this._settingsOpen = false; }}
+        light-dismiss
+      >
+        <div class="settings-layout">
+          <nav class="settings-sidebar">
+            <button
+              class="settings-tab ${this._settingsTab === "appearance" ? "settings-tab--active" : ""}"
+              @click=${() => { this._settingsTab = "appearance"; }}
+            >
+              <wa-icon library="mdi" name="palette"></wa-icon>
+              ${this._localize("settings.appearance")}
+            </button>
+            <button
+              class="settings-tab ${this._settingsTab === "editor" ? "settings-tab--active" : ""}"
+              @click=${() => { this._settingsTab = "editor"; }}
+            >
+              <wa-icon library="mdi" name="square-edit-outline"></wa-icon>
+              ${this._localize("settings.editor")}
+            </button>
+          </nav>
+          <div class="settings-content">
+            ${this._settingsTab === "appearance" ? this._renderAppearanceSettings() : nothing}
+            ${this._settingsTab === "editor" ? this._renderEditorSettings() : nothing}
+          </div>
+        </div>
+      </wa-dialog>
+    `;
+  }
+
+  private _renderAppearanceSettings() {
+    return html`
+      <h3>${this._localize("settings.appearance")}</h3>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">${this._localize("settings.dark_mode")}</span>
+          <span class="setting-desc">${this._localize("settings.dark_mode_desc")}</span>
+        </div>
+        <wa-switch
+          ?checked=${this._darkMode}
+          @change=${this._toggleDarkMode}
+        ></wa-switch>
+      </div>
+    `;
+  }
+
+  private _renderEditorSettings() {
+    return html`
+      <h3>${this._localize("settings.editor")}</h3>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">${this._localize("settings.editor_layout")}</span>
+          <span class="setting-desc">${this._localize("settings.editor_layout_desc")}</span>
+        </div>
+        <wa-select
+          .value=${this._editorLayout}
+          @change=${(e: Event) => this._setEditorLayout((e.target as HTMLSelectElement).value)}
+        >
+          <wa-option value="both">${this._localize("settings.layout_split")}</wa-option>
+          <wa-option value="left">${this._localize("settings.layout_visual")}</wa-option>
+          <wa-option value="right">${this._localize("settings.layout_yaml")}</wa-option>
+        </wa-select>
+      </div>
     `;
   }
 
@@ -269,10 +442,25 @@ export class ESPHomeHeaderActions extends LitElement {
     }
   }
 
+  private async _openSettings() {
+    try {
+      const prefs = await this._api.getPreferences();
+      this._editorLayout = prefs.editor_layout ?? "both";
+    } catch {
+      // Use defaults
+    }
+    this._settingsOpen = true;
+  }
+
   private _toggleDarkMode() {
     this.dispatchEvent(
       new CustomEvent("toggle-dark-mode", { bubbles: true, composed: true })
     );
+  }
+
+  private _setEditorLayout(layout: string) {
+    this._editorLayout = layout;
+    this._api.updatePreferences({ editor_layout: layout as "both" | "left" | "right" }).catch(() => {});
   }
 }
 

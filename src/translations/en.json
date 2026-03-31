@@ -96,6 +96,14 @@
     "add_config": "Add configuration",
     "add_component": "Add component",
     "add_automation": "Add automation",
+    "delete_section": "Delete section",
+    "confirm_delete_section": "Are you sure you want to delete the '{name}' section?",
+    "section_saved": "Section saved",
+    "section_save_error": "Failed to save section",
+    "section_deleted": "'{name}' section deleted",
+    "section_delete_error": "Failed to delete section",
+    "yaml_saved": "YAML saved",
+    "yaml_save_error": "Failed to save YAML",
     "more_info": "More info",
     "step_add_component": "2. Add components",
     "step_add_component_desc": "Use the left menu to add your first component or use the 'Add component' button.",
@@ -144,7 +152,19 @@
     "updating": "Updating…",
     "cancel": "Cancel",
     "light_mode": "Switch to light mode",
-    "dark_mode": "Switch to dark mode"
+    "dark_mode": "Switch to dark mode",
+    "settings": "Settings"
+  },
+  "settings": {
+    "appearance": "Appearance",
+    "editor": "Editor",
+    "dark_mode": "Dark mode",
+    "dark_mode_desc": "Use dark colors for the interface",
+    "editor_layout": "Default layout",
+    "editor_layout_desc": "Default editor panel layout",
+    "layout_split": "Split view",
+    "layout_visual": "Visual only",
+    "layout_yaml": "YAML only"
   },
   "secrets": {
     "title": "Secrets",

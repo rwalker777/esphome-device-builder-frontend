@@ -19,6 +19,7 @@ import {
 } from "../../util/yaml-sections.js";
 import type { ESPHomeAddAutomationDialog } from "./add-automation-dialog.js";
 import type { ESPHomeAddComponentDialog } from "./add-component-dialog.js";
+import type { ESPHomeDeviceSectionConfig } from "./device-section-config.js";
 
 import "@home-assistant/webawesome/dist/components/badge/badge.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -54,11 +55,32 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
   @property({ attribute: false })
   selectedSection: string | null = null;
 
+  @property({ type: Number })
+  selectedFromLine?: number;
+
+  @query("esphome-device-section-config")
+  private _sectionConfig!: ESPHomeDeviceSectionConfig;
+
   @query("esphome-add-component-dialog")
   private _addComponentDialog!: ESPHomeAddComponentDialog;
 
   @query("esphome-add-automation-dialog")
   private _addAutomationDialog!: ESPHomeAddAutomationDialog;
+
+  private _reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+  updated(changedProperties: Map<string, unknown>) {
+    if (changedProperties.has("yaml") && this.selectedSection && this._sectionConfig) {
+      // Debounce reload so typing in the YAML editor doesn't spam the API
+      if (this._reloadTimer) clearTimeout(this._reloadTimer);
+      this._reloadTimer = setTimeout(() => this._sectionConfig?.reload(), 1000);
+    }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._reloadTimer) clearTimeout(this._reloadTimer);
+  }
 
   static styles = [
     espHomeStyles,
@@ -229,6 +251,7 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
             <esphome-device-section-config
               .configuration=${this.configuration}
               .sectionKey=${this.selectedSection}
+              .fromLine=${this.selectedFromLine}
             ></esphome-device-section-config>
           `
         : html`
