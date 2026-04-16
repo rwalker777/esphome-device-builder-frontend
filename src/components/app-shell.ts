@@ -221,8 +221,8 @@ export class ESPHomeApp extends LitElement {
   private async _loadActiveJobs() {
     try {
       const [queued, running] = await Promise.all([
-        this._api.getJobs({ status: JobStatus.QUEUED }),
-        this._api.getJobs({ status: JobStatus.RUNNING }),
+        this._api.firmwareGetJobs({ status: JobStatus.QUEUED }),
+        this._api.firmwareGetJobs({ status: JobStatus.RUNNING }),
       ]);
       const map = new Map<string, FirmwareJob>();
       for (const job of [...queued, ...running]) {
