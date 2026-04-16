@@ -32,7 +32,7 @@ import {
   extractApiKey,
   streamSerialToDialog,
 } from "./dashboard-actions.js";
-import { detectChip, disconnect } from "../util/web-serial.js";
+import { detectChip, disconnect, flashFirmware, resetAndDisconnect } from "../util/web-serial.js";
 import { cardSkeletonTemplate, tableSkeletonTemplate } from "./dashboard-skeletons.js";
 import { dashboardStyles } from "./dashboard-styles.js";
 
@@ -560,10 +560,72 @@ export class ESPHomePageDashboard extends LitElement {
     } else if (method === "server-serial") {
       this._openCommand(device, "install", port);
     } else if (method === "web-serial") {
-      // TODO: implement Web Serial install flow
-      toast.info("Web Serial install is not yet implemented", { richColors: true });
+      this._webSerialInstall(device);
     }
   }
+
+  private async _webSerialInstall(device: ConfiguredDevice) {
+    const name = device.friendly_name || device.name;
+
+    // 1. Compile firmware on the backend
+    const compileToast = toast.loading(this._localize("serial.getting_firmware"), { richColors: true });
+    try {
+      const job = await this._api.firmwareCompile(device.configuration);
+      await new Promise<void>((resolve, reject) => {
+        this._api.firmwareFollowJob(job.job_id, {
+          onResult: (data) => { data.success ? resolve() : reject(new Error("Compilation failed")); },
+          onError: (err) => reject(new Error(err)),
+        });
+      });
+    } catch {
+      toast.error(this._localize("dashboard.update_compilation_failed"), { id: compileToast, richColors: true });
+      return;
+    }
+
+    // 2. Download the compiled binary
+    let firmwareBytes: Uint8Array;
+    try {
+      const binaries = await this._api.firmwareGetBinaries(device.configuration);
+      if (binaries.length === 0) {
+        toast.error(this._localize("serial.no_firmware"), { id: compileToast, richColors: true });
+        return;
+      }
+      const result = await this._api.firmwareDownload(device.configuration, binaries[0].file);
+      firmwareBytes = Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0));
+    } catch {
+      toast.error(this._localize("dashboard.download_firmware_failed", { name }), { id: compileToast, richColors: true });
+      return;
+    }
+
+    // 3. Connect to the device via Web Serial
+    let detected;
+    try {
+      toast.loading(this._localize("serial.detecting"), { id: compileToast, richColors: true });
+      detected = await detectChip();
+    } catch {
+      toast.dismiss(compileToast);
+      return; // User cancelled port selection
+    }
+
+    // 4. Flash the firmware
+    try {
+      toast.loading(this._localize("serial.flashing"), { id: compileToast, richColors: true });
+      await flashFirmware(detected.loader, firmwareBytes, 0x10000);
+    } catch {
+      toast.error(this._localize("dashboard.update_upload_failed"), { id: compileToast, richColors: true });
+      try { await disconnect(detected.transport); } catch { /* ignore */ }
+      return;
+    }
+
+    // 5. Reset and disconnect
+    try {
+      toast.loading(this._localize("serial.resetting"), { id: compileToast, richColors: true });
+      await resetAndDisconnect(detected.loader, detected.transport);
+    } catch { /* ignore reset errors */ }
+
+    toast.success(this._localize("serial.flash_success"), { id: compileToast, richColors: true });
+  }
+
   private _openLogs(device: ConfiguredDevice) {
     if (device.state === DeviceState.ONLINE) {
       this._logsDialog.configuration = device.configuration;
