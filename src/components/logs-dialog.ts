@@ -1,5 +1,5 @@
 import { consume } from "@lit/context";
-import { mdiClose, mdiDeleteSweep, mdiDownload, mdiPlay, mdiStop } from "@mdi/js";
+import { mdiArrowCollapse, mdiArrowExpand, mdiClose, mdiDeleteSweep, mdiDownload, mdiPlay, mdiStop } from "@mdi/js";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../api/index.js";
@@ -13,6 +13,8 @@ import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "./ansi-log.js";
 
 registerMdiIcons({
+  "arrow-collapse": mdiArrowCollapse,
+  "arrow-expand": mdiArrowExpand,
   close: mdiClose,
   download: mdiDownload,
   play: mdiPlay,
@@ -41,6 +43,9 @@ export class ESPHomeLogsDialog extends LitElement {
 
   @state()
   private _streaming = false;
+
+  @state()
+  private _expanded = false;
 
   @state()
   _lines: string[] = [];
@@ -77,6 +82,15 @@ export class ESPHomeLogsDialog extends LitElement {
 
       wa-dialog {
         --width: min(900px, 90vw);
+      }
+
+      :host([expanded]) wa-dialog {
+        --width: 95vw;
+      }
+
+      :host([expanded]) .logs-content {
+        height: 80vh;
+        max-height: 85vh;
       }
 
       wa-dialog::part(header) {
@@ -217,11 +231,15 @@ export class ESPHomeLogsDialog extends LitElement {
     if (changedProperties.has("_darkMode")) {
       this.toggleAttribute("light", !this._darkMode);
     }
+    if (changedProperties.has("_expanded")) {
+      this.toggleAttribute("expanded", this._expanded);
+    }
   }
 
   public open() {
     this._lines = [];
     this._streaming = false;
+    this._expanded = false;
     this._streamId = "";
     this._dialog.open = true;
     this._startStreaming();
@@ -252,6 +270,12 @@ export class ESPHomeLogsDialog extends LitElement {
               ? html`<span class="streaming-dot"></span>`
               : ""}
             <span class="spacer"></span>
+            <button
+              class="term-btn term-btn--ghost"
+              @click=${this._toggleExpanded}
+            >
+              <wa-icon library="mdi" name=${this._expanded ? "arrow-collapse" : "arrow-expand"}></wa-icon>
+            </button>
             <button
               class="term-btn term-btn--ghost"
               @click=${this._downloadLogs}
@@ -321,6 +345,10 @@ export class ESPHomeLogsDialog extends LitElement {
     a.download = `${this.configuration.replace(/\.yaml$/, "")}-logs.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  private _toggleExpanded() {
+    this._expanded = !this._expanded;
   }
 
   private _clearLogs() {
