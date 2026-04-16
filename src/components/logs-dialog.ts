@@ -248,6 +248,16 @@ export class ESPHomeLogsDialog extends LitElement {
     this._startStreaming();
   }
 
+  /** Open dialog without auto-starting streaming (for Web Serial feed). */
+  public openPassive() {
+    this._port = "";
+    this._lines = [];
+    this._streaming = true;
+    this._expanded = false;
+    this._streamId = "";
+    this._dialog.open = true;
+  }
+
   public close() {
     this._stopStreaming();
     this._dialog.open = false;

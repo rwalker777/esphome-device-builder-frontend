@@ -595,7 +595,7 @@ export class ESPHomePageDashboard extends LitElement {
       this._logsDialog.name = device.friendly_name || device.name;
       this._logsDialog.open(port);
     } else if (method === "web-serial") {
-      // Web Serial logs
+      // Web Serial logs — prompt port first, then open dialog without auto-streaming
       if (!("serial" in navigator)) {
         toast.error(this._localize("dashboard.logs_web_serial_unsupported"), { richColors: true });
         return;
@@ -605,7 +605,7 @@ export class ESPHomePageDashboard extends LitElement {
         await serialPort.open({ baudRate: 115200 });
         this._logsDialog.configuration = device.configuration;
         this._logsDialog.name = device.friendly_name || device.name;
-        this._logsDialog.open();
+        this._logsDialog.openPassive();
         streamSerialToDialog(serialPort, this._logsDialog);
       } catch { /* User cancelled */ }
     }
