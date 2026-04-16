@@ -190,8 +190,8 @@
     "status_validating": "Validating configuration…",
     "validate_success": "Configuration is valid!",
     "validate_failed": "Validation failed.",
-    "show_logs": "Show logs",
-    "hide_logs": "Hide logs"
+    "show_details": "Show details",
+    "hide_details": "Hide details"
   },
   "serial": {
     "title": "USB Device",

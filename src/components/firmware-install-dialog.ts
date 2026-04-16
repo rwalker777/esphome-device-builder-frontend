@@ -386,7 +386,7 @@ export class ESPHomeFirmwareInstallDialog extends LitElement {
     return html`
       <button class="logs-toggle" @click=${() => { this._logsExpanded = !this._logsExpanded; }}>
         <wa-icon library="mdi" name=${this._logsExpanded ? "chevron-up" : "chevron-down"}></wa-icon>
-        ${this._logsExpanded ? this._localize("firmware.hide_logs") : this._localize("firmware.show_logs")}
+        ${this._logsExpanded ? this._localize("firmware.hide_details") : this._localize("firmware.show_details")}
       </button>
       ${this._logsExpanded
         ? html`<div class="logs-container"><esphome-ansi-log .lines=${this._logLines} ?light=${!this._darkMode}></esphome-ansi-log></div>`
