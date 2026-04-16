@@ -11,7 +11,9 @@ import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import toast from "sonner-js";
 import type { ESPHomeAPI } from "../api/index.js";
+import { DashboardView, SortDirection } from "../api/types.js";
 import type { AdoptableDevice, ConfiguredDevice } from "../api/types.js";
+import type { SortingState, VisibilityState } from "@tanstack/lit-table";
 import type { LocalizeFunc } from "../common/localize.js";
 import {
   apiContext,
@@ -24,16 +26,12 @@ import {
 import { espHomeStyles } from "../styles/shared.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 import {
-  cleanBuild,
-  compileAndUpload,
+  deleteBulkDevices,
   deleteDevice,
-  downloadElf,
   downloadYaml,
   editDevice,
   extractApiKey,
-  installDevice,
   streamSerialToDialog,
-  validateDevice,
 } from "./dashboard-actions.js";
 import { cardSkeletonTemplate, tableSkeletonTemplate } from "./dashboard-skeletons.js";
 import { dashboardStyles } from "./dashboard-styles.js";
@@ -52,12 +50,11 @@ import "../components/logs-method-dialog.js";
 import "../components/rename-device-dialog.js";
 import type { ESPHomeRenameDeviceDialog } from "../components/rename-device-dialog.js";
 import "../components/select-bar.js";
-import "../components/update-dialog.js";
-import type { ESPHomeUpdateDialog } from "../components/update-dialog.js";
+import "../components/command-dialog.js";
+import type { ESPHomeCommandDialog } from "../components/command-dialog.js";
+import type { CommandType } from "../components/command-dialog.js";
 import "../components/wizard/create-config-dialog.js";
 import type { ESPHomeCreateConfigDialog } from "../components/wizard/create-config-dialog.js";
-
-type DashboardView = "cards" | "table";
 
 registerMdiIcons({
   "clipboard-text-search-outline": mdiClipboardTextSearchOutline,
@@ -103,8 +100,12 @@ export class ESPHomePageDashboard extends LitElement {
   @state() private _drawerDevice: ConfiguredDevice | null = null;
 
   @state()
-  private _view: DashboardView =
-    (localStorage.getItem("esphome-dashboard-view") as DashboardView) || "cards";
+  private _view: DashboardView = DashboardView.CARDS;
+
+  // Table preferences — synced to/from backend
+  @state() private _tablePageSize = 25;
+  @state() private _tableSorting: SortingState | null = null;
+  @state() private _tableColumnVisibility: VisibilityState | null = null;
 
   private _onEnterSelectMode = (configuration?: string) => {
     this._selectMode = true;
@@ -117,12 +118,36 @@ export class ESPHomePageDashboard extends LitElement {
     if (changed.has("_view")) {
       this.setAttribute("view", this._view);
     }
+    // Load preferences once WS is connected (devices loaded means events are flowing)
+    if (changed.has("_devicesLoaded") && this._devicesLoaded) {
+      this._loadPreferences();
+    }
   }
 
   connectedCallback() {
     super.connectedCallback();
     this.setAttribute("view", this._view);
     window.addEventListener("esphome-enter-select-mode", this._onGlobalEnterSelectMode);
+  }
+
+  private async _loadPreferences() {
+    try {
+      const prefs = await this._api.getPreferences();
+      this._view = prefs.dashboard_view;
+      this._tablePageSize = prefs.table_page_size;
+      this._tableColumnVisibility = prefs.table_column_visibility;
+
+      // Convert backend sort (column + direction) to TanStack SortingState
+      if (prefs.table_sort_column) {
+        this._tableSorting = [
+          { id: prefs.table_sort_column, desc: prefs.table_sort_direction === SortDirection.DESC },
+        ];
+      } else {
+        this._tableSorting = [];
+      }
+    } catch {
+      // Preferences not critical — use default
+    }
   }
 
   disconnectedCallback() {
@@ -134,7 +159,7 @@ export class ESPHomePageDashboard extends LitElement {
   @query("esphome-confirm-dialog") private _confirmDialog!: ESPHomeConfirmDialog;
   @query("esphome-create-config-dialog") private _createDialog!: ESPHomeCreateConfigDialog;
   @query("esphome-rename-device-dialog") private _renameDialog!: ESPHomeRenameDeviceDialog;
-  @query("esphome-update-dialog") private _updateDialog!: ESPHomeUpdateDialog;
+  @query("esphome-command-dialog") private _commandDialog!: ESPHomeCommandDialog;
   @query("esphome-logs-dialog") private _logsDialog!: ESPHomeLogsDialog;
 
   /** Device currently targeted by rename/api-key actions. */
@@ -144,7 +169,7 @@ export class ESPHomePageDashboard extends LitElement {
 
   protected render() {
     if (!this._devicesLoaded) {
-      return this._view === "table" ? tableSkeletonTemplate : cardSkeletonTemplate;
+      return this._view === DashboardView.TABLE ? tableSkeletonTemplate : cardSkeletonTemplate;
     }
 
     const q = this._search.trim().toLowerCase();
@@ -158,11 +183,11 @@ export class ESPHomePageDashboard extends LitElement {
 
     return html`
       ${this._renderBanner()}
-      ${this._devices.length > 0 && this._view === "cards"
+      ${this._devices.length > 0 && this._view === DashboardView.CARDS
         ? this._renderToolbar(filtered.length, this._devices.length)
         : ""}
-      ${filtered.length === 0 && q && this._view === "cards" ? this._renderEmptySearch() : ""}
-      ${this._view === "cards" ? this._renderCardGrid(filtered) : this._renderTable()}
+      ${filtered.length === 0 && q && this._view === DashboardView.CARDS ? this._renderEmptySearch() : ""}
+      ${this._view === DashboardView.CARDS ? this._renderCardGrid(filtered) : this._renderTable()}
       ${this._renderDrawer()}
       ${this._renderSelectBarOrFab()}
       ${this._renderDialogs()}
@@ -191,10 +216,10 @@ export class ESPHomePageDashboard extends LitElement {
     const view = this._view;
     return html`
       <div class="view-toggle">
-        <button class="view-toggle-btn ${view === "cards" ? "active" : ""}" @click=${() => this._setView("cards")}>
+        <button class="view-toggle-btn ${view === DashboardView.CARDS ? "active" : ""}" @click=${() => this._setView(DashboardView.CARDS)}>
           <wa-icon library="mdi" name="view-grid"></wa-icon>
         </button>
-        <button class="view-toggle-btn ${view === "table" ? "active" : ""}" @click=${() => this._setView("table")}>
+        <button class="view-toggle-btn ${view === DashboardView.TABLE ? "active" : ""}" @click=${() => this._setView(DashboardView.TABLE)}>
           <wa-icon library="mdi" name="table"></wa-icon>
         </button>
       </div>
@@ -248,15 +273,15 @@ export class ESPHomePageDashboard extends LitElement {
               ?select-mode=${this._selectMode}
               ?selected=${this._selectedDevices.has(device.configuration)}
               @edit-device=${() => editDevice(device)}
-              @update-device=${() => this._openUpdate(device)}
+              @update-device=${() => this._openCommand(device, "install")}
               @open-logs=${() => this._openLogs(device)}
-              @validate-device=${() => validateDevice(device, this._localize)}
-              @install-device=${() => installDevice(device, this._localize)}
+              @validate-device=${() => this._openCommand(device, "validate")}
+              @install-device=${() => this._openCommand(device, "install")}
               @show-api-key=${() => this._showApiKey(device)}
-              @download-yaml=${() => downloadYaml(device, this._api)}
+              @download-yaml=${() => downloadYaml(device, this._api, this._localize)}
               @rename-device=${() => this._openRename(device)}
-              @clean-build=${() => cleanBuild(device, this._localize)}
-              @download-elf=${() => downloadElf(device, this._localize)}
+              @clean-build=${() => this._openCommand(device, "clean")}
+              @download-elf=${() => this._downloadFirmware(device)}
               @delete-device=${() => deleteDevice(device, this._api, this._devices, this._localize)}
               @toggle-select=${() => this._toggleDevice(device.configuration)}
             ></esphome-device-card>
@@ -272,22 +297,28 @@ export class ESPHomePageDashboard extends LitElement {
         .devices=${this._devices}
         .deviceStates=${this._deviceStates}
         .search=${this._search}
+        .initialPageSize=${this._tablePageSize}
+        .initialSorting=${this._tableSorting}
+        .initialColumnVisibility=${this._tableColumnVisibility}
         ?select-mode=${this._selectMode}
         .selectedDevices=${this._selectedDevices}
+        @table-sort-change=${this._saveTablePreference}
+        @table-visibility-change=${this._saveTablePreference}
+        @table-page-size-change=${this._saveTablePreference}
         @row-click=${(e: CustomEvent<ConfiguredDevice>) => { this._drawerDevice = e.detail; this._drawerOpen = true; }}
         @toggle-select=${(e: CustomEvent<string>) => this._toggleDevice(e.detail)}
         @select-all=${() => { this._selectedDevices = new Set(this._devices.map((d) => d.configuration)); }}
         @deselect-all=${() => { this._selectedDevices = new Set(); }}
         @edit-device=${(e: CustomEvent<ConfiguredDevice>) => editDevice(e.detail)}
-        @update-device=${(e: CustomEvent<ConfiguredDevice>) => this._openUpdate(e.detail)}
+        @update-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
         @open-logs=${(e: CustomEvent<ConfiguredDevice>) => this._openLogs(e.detail)}
-        @validate-device=${(e: CustomEvent<ConfiguredDevice>) => validateDevice(e.detail, this._localize)}
-        @install-device=${(e: CustomEvent<ConfiguredDevice>) => installDevice(e.detail, this._localize)}
+        @validate-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "validate")}
+        @install-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
         @show-api-key=${(e: CustomEvent<ConfiguredDevice>) => this._showApiKey(e.detail)}
-        @download-yaml=${(e: CustomEvent<ConfiguredDevice>) => downloadYaml(e.detail, this._api)}
+        @download-yaml=${(e: CustomEvent<ConfiguredDevice>) => downloadYaml(e.detail, this._api, this._localize)}
         @rename-device=${(e: CustomEvent<ConfiguredDevice>) => this._openRename(e.detail)}
-        @clean-build=${(e: CustomEvent<ConfiguredDevice>) => cleanBuild(e.detail, this._localize)}
-        @download-elf=${(e: CustomEvent<ConfiguredDevice>) => downloadElf(e.detail, this._localize)}
+        @clean-build=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "clean")}
+        @download-elf=${(e: CustomEvent<ConfiguredDevice>) => this._downloadFirmware(e.detail)}
         @delete-device=${(e: CustomEvent<ConfiguredDevice>) => deleteDevice(e.detail, this._api, this._devices, this._localize)}
         @enter-select-mode=${(e: CustomEvent<string>) => this._onEnterSelectMode(e.detail)}
       >
@@ -317,7 +348,7 @@ export class ESPHomePageDashboard extends LitElement {
         .device=${this._drawerDevice}
         @drawer-close=${() => { this._drawerOpen = false; }}
         @edit-device=${(e: CustomEvent) => { this._drawerOpen = false; editDevice(e.detail); }}
-        @update-device=${(e: CustomEvent) => { this._drawerOpen = false; this._openUpdate(e.detail); }}
+        @update-device=${(e: CustomEvent) => { this._drawerOpen = false; this._openCommand(e.detail, "install"); }}
         @open-logs=${(e: CustomEvent) => { this._drawerOpen = false; this._openLogs(e.detail); }}
       ></esphome-device-drawer>
     `;
@@ -337,7 +368,7 @@ export class ESPHomePageDashboard extends LitElement {
         ></esphome-select-bar>
       `;
     }
-    if (this._view === "cards") {
+    if (this._view === DashboardView.CARDS) {
       return html`
         <div class="fab-container">
           <button class="fab-btn" @click=${() => this._createDialog.open()}>
@@ -364,7 +395,7 @@ export class ESPHomePageDashboard extends LitElement {
       ></esphome-rename-device-dialog>
       <esphome-api-key-dialog></esphome-api-key-dialog>
       <esphome-create-config-dialog></esphome-create-config-dialog>
-      <esphome-update-dialog></esphome-update-dialog>
+      <esphome-command-dialog></esphome-command-dialog>
       <esphome-logs-dialog></esphome-logs-dialog>
       <esphome-logs-method-dialog
         ?open=${this._logsMethodOpen}
@@ -391,7 +422,23 @@ export class ESPHomePageDashboard extends LitElement {
 
   private _setView(view: DashboardView) {
     this._view = view;
-    localStorage.setItem("esphome-dashboard-view", view);
+    this._api.updatePreferences({ dashboard_view: view }).catch(() => {});
+  }
+
+  private _saveTablePreference(e: CustomEvent) {
+    const type = e.type;
+    if (type === "table-sort-change") {
+      const sorting = (e as CustomEvent<SortingState>).detail;
+      const first = sorting[0] ?? null;
+      this._api.updatePreferences({
+        table_sort_column: first?.id ?? null,
+        table_sort_direction: first ? (first.desc ? SortDirection.DESC : SortDirection.ASC) : null,
+      }).catch(() => {});
+    } else if (type === "table-visibility-change") {
+      this._api.updatePreferences({ table_column_visibility: (e as CustomEvent<VisibilityState>).detail }).catch(() => {});
+    } else if (type === "table-page-size-change") {
+      this._api.updatePreferences({ table_page_size: (e as CustomEvent<number>).detail }).catch(() => {});
+    }
   }
 
   private _openRename(device: ConfiguredDevice) {
@@ -419,10 +466,34 @@ export class ESPHomePageDashboard extends LitElement {
     this._apiKeyDialog.open(key);
   }
 
-  private _openUpdate(device: ConfiguredDevice) {
-    this._updateDialog.configuration = device.configuration;
-    this._updateDialog.name = device.friendly_name || device.name;
-    this._updateDialog.open();
+  private _openCommand(device: ConfiguredDevice, type: CommandType) {
+    this._commandDialog.configuration = device.configuration;
+    this._commandDialog.name = device.friendly_name || device.name;
+    this._commandDialog.open(type);
+  }
+
+  private async _downloadFirmware(device: ConfiguredDevice) {
+    const name = device.friendly_name || device.name;
+    try {
+      const binaries = await this._api.firmwareGetBinaries(device.configuration);
+      if (binaries.length === 0) {
+        toast.error(this._localize("dashboard.download_no_binaries", { name }), { richColors: true });
+        return;
+      }
+      // Download the first available binary
+      const binary = binaries[0];
+      const result = await this._api.firmwareDownload(device.configuration, binary.file);
+      const bytes = Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error(this._localize("dashboard.download_firmware_failed", { name }), { richColors: true });
+    }
   }
 
   private _openLogs(device: ConfiguredDevice) {
@@ -471,10 +542,10 @@ export class ESPHomePageDashboard extends LitElement {
       return;
     }
     toast.info(this._localize("layout.update_all_started", { count: selected.length }), { richColors: true });
-    for (const configuration of selected) {
-      const device = this._devices.find((d) => d.configuration === configuration);
-      if (!device) continue;
-      await compileAndUpload(configuration, device.friendly_name || device.name, this._api, this._localize);
+    try {
+      await this._api.firmwareInstallBulk(selected);
+    } catch {
+      toast.error(this._localize("layout.update_all_error"), { richColors: true });
     }
   }
 
@@ -490,11 +561,7 @@ export class ESPHomePageDashboard extends LitElement {
     const selected = [...this._selectedDevices];
     this._selectMode = false;
     this._selectedDevices = new Set();
-    for (const configuration of selected) {
-      const device = this._devices.find((d) => d.configuration === configuration);
-      if (!device) continue;
-      deleteDevice(device, this._api, this._devices, this._localize);
-    }
+    deleteBulkDevices(selected, this._devices, this._api, this._localize);
   }
 }
 

@@ -1,6 +1,6 @@
 import toast from "sonner-js";
 import type { ESPHomeAPI } from "../api/index.js";
-import type { ConfiguredDevice } from "../api/types.js";
+import type { BulkDeleteResult, ConfiguredDevice } from "../api/types.js";
 import type { LocalizeFunc } from "../common/localize.js";
 
 export function editDevice(device: ConfiguredDevice) {
@@ -12,7 +12,7 @@ export function deleteDevice(
   device: ConfiguredDevice,
   api: ESPHomeAPI,
   devices: ConfiguredDevice[],
-  localize: LocalizeFunc,
+  localize: LocalizeFunc
 ) {
   const name = device.friendly_name || device.name;
   toast.success(localize("dashboard.deleted", { name }), { richColors: true });
@@ -23,44 +23,73 @@ export function deleteDevice(
   });
 }
 
-export function validateDevice(device: ConfiguredDevice, localize: LocalizeFunc) {
+export async function deleteBulkDevices(
+  configurations: string[],
+  devices: ConfiguredDevice[],
+  api: ESPHomeAPI,
+  localize: LocalizeFunc
+) {
+  let results: BulkDeleteResult[];
+  try {
+    results = await api.deleteBulkDevices(configurations);
+  } catch {
+    toast.error(localize("dashboard.delete_bulk_failed"), { richColors: true });
+    return;
+  }
+
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.filter((r) => !r.success);
+
+  if (succeeded > 0) {
+    toast.success(localize("dashboard.delete_bulk_success", { count: succeeded }), {
+      richColors: true,
+    });
+  }
+  for (const result of failed) {
+    const device = devices.find((d) => d.configuration === result.configuration);
+    const name = device ? device.friendly_name || device.name : result.configuration;
+    toast.error(localize("dashboard.delete_failed", { name }), { richColors: true });
+  }
+}
+
+export async function downloadYaml(
+  device: ConfiguredDevice,
+  api: ESPHomeAPI,
+  localize: LocalizeFunc
+) {
   const name = device.friendly_name || device.name;
-  toast.success(localize("dashboard.action_validate_success", { name }), { richColors: true });
+  let url: string | undefined;
+  try {
+    const yaml = await api.getConfig(device.configuration);
+    const blob = new Blob([yaml], { type: "text/yaml" });
+    url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = device.configuration.endsWith(".yaml")
+      ? device.configuration
+      : `${device.configuration}.yaml`;
+    a.click();
+  } catch {
+    toast.error(localize("dashboard.action_download_yaml_failed", { name }), {
+      richColors: true,
+    });
+  } finally {
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
+  }
 }
 
-export function installDevice(device: ConfiguredDevice, localize: LocalizeFunc) {
-  const name = device.friendly_name || device.name;
-  toast.success(localize("dashboard.action_install_success", { name }), { richColors: true });
-}
-
-export function cleanBuild(device: ConfiguredDevice, localize: LocalizeFunc) {
-  const name = device.friendly_name || device.name;
-  toast.success(localize("dashboard.action_clean_success", { name }), { richColors: true });
-}
-
-export function downloadElf(device: ConfiguredDevice, localize: LocalizeFunc) {
-  const name = device.friendly_name || device.name;
-  toast.success(localize("dashboard.action_download_elf_success", { name }), { richColors: true });
-}
-
-export async function downloadYaml(device: ConfiguredDevice, api: ESPHomeAPI) {
-  const yaml = await api.getConfig(device.configuration);
-  const blob = new Blob([yaml], { type: "text/yaml" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = device.configuration.endsWith(".yaml")
-    ? device.configuration
-    : `${device.configuration}.yaml`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-export async function extractApiKey(device: ConfiguredDevice, api: ESPHomeAPI): Promise<string> {
+export async function extractApiKey(
+  device: ConfiguredDevice,
+  api: ESPHomeAPI
+): Promise<string> {
   try {
     const yaml = await api.getConfig(device.configuration);
     // Look for api: encryption: key: "..."
-    const match = yaml.match(/api:\s[\s\S]*?encryption:\s[\s\S]*?key:\s*["']([^"']+)["']/);
+    const match = yaml.match(
+      /api:\s[\s\S]*?encryption:\s[\s\S]*?key:\s*["']([^"']+)["']/
+    );
     return match?.[1] ?? "";
   } catch {
     return "";
@@ -84,48 +113,10 @@ export function streamSerialToDialog(port: any, dialog: any) {
           dialog._lines = [...dialog._lines, line];
         }
       }
-    } catch { /* Port closed */ }
+    } catch {
+      /* Port closed */
+    }
   };
   readLoop();
 }
 
-export function compileAndUpload(
-  configuration: string,
-  name: string,
-  api: ESPHomeAPI,
-  localize: LocalizeFunc,
-): Promise<void> {
-  return new Promise((resolve) => {
-    api.compile(configuration, {
-      onOutput: () => {},
-      onResult: (data: { success: boolean; code: number }) => {
-        if (data.success) {
-          api.upload(configuration, "OTA", {
-            onOutput: () => {},
-            onResult: (d: { success: boolean; code: number }) => {
-              toast[d.success ? "success" : "error"](
-                localize(
-                  d.success ? "dashboard.update_device_success" : "dashboard.update_device_failed",
-                  { name },
-                ),
-                { richColors: true },
-              );
-              resolve();
-            },
-            onError: () => {
-              toast.error(localize("dashboard.update_device_failed", { name }), { richColors: true });
-              resolve();
-            },
-          });
-        } else {
-          toast.error(localize("dashboard.update_device_failed", { name }), { richColors: true });
-          resolve();
-        }
-      },
-      onError: () => {
-        toast.error(localize("dashboard.update_device_failed", { name }), { richColors: true });
-        resolve();
-      },
-    });
-  });
-}
