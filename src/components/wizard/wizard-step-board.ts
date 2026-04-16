@@ -376,7 +376,7 @@ export class ESPHomeWizardStepBoard extends LitElement {
 
   private _renderFeatured(board: BoardCatalogEntry) {
     const imageUrl =
-      board.images.length > 0 ? board.images[0] : "/assets/board/apollo.svg";
+      board.images.length > 0 ? board.images[0] : "/assets/board/default.svg";
     return html`
       <div class="featured-card">
         <img class="featured-image" src=${imageUrl} alt=${board.name} />
