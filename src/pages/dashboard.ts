@@ -47,6 +47,7 @@ import "../components/dashboard/table-row-menu.js";
 import "../components/device-card.js";
 import "../components/logs-dialog.js";
 import type { ESPHomeLogsDialog } from "../components/logs-dialog.js";
+import "../components/install-method-dialog.js";
 import "../components/logs-method-dialog.js";
 import "../components/rename-device-dialog.js";
 import type { ESPHomeRenameDeviceDialog } from "../components/rename-device-dialog.js";
@@ -91,6 +92,8 @@ export class ESPHomePageDashboard extends LitElement {
   @state() private _search = "";
   @state() private _logsMethodOpen = false;
   @state() private _logsMethodDevice: ConfiguredDevice | null = null;
+  @state() private _installMethodOpen = false;
+  @state() private _installMethodDevice: ConfiguredDevice | null = null;
   @state() private _selectMode = false;
   @state() private _selectedDevices = new Set<string>();
   @state() private _drawerOpen = false;
@@ -277,6 +280,7 @@ export class ESPHomePageDashboard extends LitElement {
               ?select-mode=${this._selectMode}
               ?selected=${this._selectedDevices.has(device.configuration)}
               @edit-device=${() => editDevice(device)}
+              @install-device=${() => this._openInstallMethod(device)}
               @update-device=${() => this._openCommand(device, "install")}
               @card-click=${() => { this._drawerDevice = device; this._drawerOpen = true; }}
               @card-context-menu=${(e: CustomEvent) => { this._cardContextDevice = device; this._cardContextPosition = e.detail; }}
@@ -310,7 +314,7 @@ export class ESPHomePageDashboard extends LitElement {
         @update-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
         @open-logs=${(e: CustomEvent<ConfiguredDevice>) => this._openLogs(e.detail)}
         @validate-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "validate")}
-        @install-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
+        @install-device=${(e: CustomEvent<ConfiguredDevice>) => this._openInstallMethod(e.detail)}
         @show-api-key=${(e: CustomEvent<ConfiguredDevice>) => this._showApiKey(e.detail)}
         @download-yaml=${(e: CustomEvent<ConfiguredDevice>) => downloadYaml(e.detail, this._api, this._localize)}
         @rename-device=${(e: CustomEvent<ConfiguredDevice>) => this._openRename(e.detail)}
@@ -361,7 +365,7 @@ export class ESPHomePageDashboard extends LitElement {
         @update-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
         @open-logs=${(e: CustomEvent<ConfiguredDevice>) => this._openLogs(e.detail)}
         @validate-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "validate")}
-        @install-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
+        @install-device=${(e: CustomEvent<ConfiguredDevice>) => this._openInstallMethod(e.detail)}
         @show-api-key=${(e: CustomEvent<ConfiguredDevice>) => this._showApiKey(e.detail)}
         @download-yaml=${(e: CustomEvent<ConfiguredDevice>) => downloadYaml(e.detail, this._api, this._localize)}
         @rename-device=${(e: CustomEvent<ConfiguredDevice>) => this._openRename(e.detail)}
@@ -421,6 +425,12 @@ export class ESPHomePageDashboard extends LitElement {
         @close=${() => { this._logsMethodOpen = false; }}
         @web-serial=${this._openLogsWebSerial}
       ></esphome-logs-method-dialog>
+      <esphome-install-method-dialog
+        ?open=${this._installMethodOpen}
+        .deviceState=${this._installMethodDevice?.state ?? DeviceState.UNKNOWN}
+        @close=${() => { this._installMethodOpen = false; }}
+        @select-method=${this._onInstallMethodSelect}
+      ></esphome-install-method-dialog>
     `;
   }
 
@@ -528,13 +538,32 @@ export class ESPHomePageDashboard extends LitElement {
     }
   }
 
-  private _openCommand(device: ConfiguredDevice, type: CommandType) {
+  private _openCommand(device: ConfiguredDevice, type: CommandType, port?: string) {
     this._commandDialog.configuration = device.configuration;
     this._commandDialog.name = device.friendly_name || device.name;
-    this._commandDialog.open(type);
+    this._commandDialog.open(type, port);
   }
 
+  private _openInstallMethod(device: ConfiguredDevice) {
+    this._installMethodDevice = device;
+    this._installMethodOpen = true;
+  }
 
+  private _onInstallMethodSelect(e: CustomEvent<{ method: string; port?: string }>) {
+    const device = this._installMethodDevice;
+    this._installMethodOpen = false;
+    if (!device) return;
+
+    const { method, port } = e.detail;
+    if (method === "ota") {
+      this._openCommand(device, "install");
+    } else if (method === "server-serial") {
+      this._openCommand(device, "install", port);
+    } else if (method === "web-serial") {
+      // TODO: implement Web Serial install flow
+      toast.info("Web Serial install is not yet implemented", { richColors: true });
+    }
+  }
   private _openLogs(device: ConfiguredDevice) {
     if (device.state === DeviceState.ONLINE) {
       this._logsDialog.configuration = device.configuration;

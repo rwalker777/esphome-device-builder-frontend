@@ -38,6 +38,9 @@ export class ESPHomeCommandDialog extends LitElement {
   @property()
   name = "";
 
+  @property()
+  port = "OTA";
+
   @state() private _commandType: CommandType = "validate";
   @state() private _state: CommandState | null = null;
   @state() private _lines: string[] = [];
@@ -176,8 +179,9 @@ export class ESPHomeCommandDialog extends LitElement {
     }
   }
 
-  public open(type: CommandType) {
+  public open(type: CommandType, port = "OTA") {
     this._commandType = type;
+    this.port = port;
     this._state = null;
     this._lines = [];
     this._jobId = "";
@@ -284,7 +288,7 @@ export class ESPHomeCommandDialog extends LitElement {
     try {
       switch (this._commandType) {
         case "install":
-          job = await this._api.firmwareInstall(this.configuration);
+          job = await this._api.firmwareInstall(this.configuration, this.port);
           break;
         case "compile":
           job = await this._api.firmwareCompile(this.configuration);

@@ -1,11 +1,9 @@
 import { consume } from "@lit/context";
 import {
-  mdiAlertCircleOutline,
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
   mdiDotsVertical,
   mdiPencil,
-  mdiUpdate,
   mdiUpload,
   mdiWifi,
   mdiWifiOff,
@@ -21,12 +19,10 @@ import { registerMdiIcons } from "../util/register-icons.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 
 registerMdiIcons({
-  "alert-circle-outline": mdiAlertCircleOutline,
   "checkbox-blank-outline": mdiCheckboxBlankOutline,
   "checkbox-marked": mdiCheckboxMarked,
   "dots-vertical": mdiDotsVertical,
   pencil: mdiPencil,
-  update: mdiUpdate,
   upload: mdiUpload,
   wifi: mdiWifi,
   "wifi-off": mdiWifiOff,
@@ -111,14 +107,39 @@ export class ESPHomeDeviceCard extends LitElement {
         min-width: 0;
       }
 
-      .device-name {
+      .device-name-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         margin: 0 0 var(--wa-space-2xs);
+      }
+
+      .device-name {
+        margin: 0;
         font-size: var(--wa-font-size-m);
         font-weight: var(--wa-font-weight-bold);
         color: var(--wa-color-text-normal);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+
+      .indicator-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .indicator-dot--modified {
+        background: var(--esphome-warning, #f59e0b);
+        box-shadow: 0 0 5px color-mix(in srgb, var(--esphome-warning, #f59e0b), transparent 50%);
+      }
+
+      .indicator-dot--update {
+        background: var(--esphome-primary);
+        box-shadow: 0 0 5px color-mix(in srgb, var(--esphome-primary), transparent 50%);
       }
 
       .device-config {
@@ -160,38 +181,6 @@ export class ESPHomeDeviceCard extends LitElement {
 
       .device-status wa-icon {
         font-size: 13px;
-      }
-
-      .device-indicators {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        padding: 0 var(--wa-space-m) var(--wa-space-s);
-      }
-
-      .indicator-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 8px;
-        border-radius: 999px;
-        font-size: var(--wa-font-size-2xs);
-        font-weight: var(--wa-font-weight-bold);
-        letter-spacing: 0.02em;
-      }
-
-      .indicator-badge wa-icon {
-        font-size: 12px;
-      }
-
-      .indicator-badge--modified {
-        background: color-mix(in srgb, var(--esphome-warning, #f59e0b), transparent 85%);
-        color: var(--esphome-warning, #d97706);
-      }
-
-      .indicator-badge--update {
-        background: color-mix(in srgb, var(--esphome-primary), transparent 88%);
-        color: var(--esphome-primary);
       }
 
       .device-checkbox {
@@ -293,7 +282,15 @@ export class ESPHomeDeviceCard extends LitElement {
               `
             : nothing}
           <div class="device-card-header-left">
-            <h3 class="device-name">${this.name}</h3>
+            <div class="device-name-wrap">
+              <h3 class="device-name">${this.name}</h3>
+              ${this.hasPendingChanges
+                ? html`<span class="indicator-dot indicator-dot--modified" title=${this._localize("dashboard.status_modified")}></span>`
+                : nothing}
+              ${this.hasUpdateAvailable
+                ? html`<span class="indicator-dot indicator-dot--update" title=${this._localize("dashboard.status_update_available")}></span>`
+                : nothing}
+            </div>
             <p class="device-config">${this.configuration}</p>
           </div>
           <div class="device-status ${this.state}">
@@ -305,7 +302,6 @@ export class ESPHomeDeviceCard extends LitElement {
                 : this._localize("dashboard.unknown")}
           </div>
         </div>
-        ${this._renderIndicators()}
         ${!this.selectMode
           ? html`
               <div class="device-actions" @click=${(e: Event) => e.stopPropagation()}>
@@ -316,17 +312,27 @@ export class ESPHomeDeviceCard extends LitElement {
                   <wa-icon library="mdi" name="pencil"></wa-icon>
                   ${this._localize("dashboard.edit")}
                 </button>
-                ${this.hasPendingChanges || this.hasUpdateAvailable
+                ${this.hasPendingChanges
                   ? html`
                       <button
                         class="action-btn action-btn--accent"
-                        @click=${() => this._emit("update-device")}
+                        @click=${() => this._emit("install-device")}
                       >
                         <wa-icon library="mdi" name="upload"></wa-icon>
-                        ${this._localize("dashboard.update")}
+                        ${this._localize("dashboard.install")}
                       </button>
                     `
-                  : nothing}
+                  : this.hasUpdateAvailable
+                    ? html`
+                        <button
+                          class="action-btn action-btn--accent"
+                          @click=${() => this._emit("update-device")}
+                        >
+                          <wa-icon library="mdi" name="upload"></wa-icon>
+                          ${this._localize("dashboard.update")}
+                        </button>
+                      `
+                    : nothing}
                 <button
                   class="action-btn action-btn--ghost action-btn--icon-only"
                   aria-label=${this._localize("dashboard.more_options")}
@@ -336,26 +342,6 @@ export class ESPHomeDeviceCard extends LitElement {
                 </button>
               </div>
             `
-          : nothing}
-      </div>
-    `;
-  }
-
-  private _renderIndicators() {
-    if (!this.hasPendingChanges && !this.hasUpdateAvailable) return nothing;
-    return html`
-      <div class="device-indicators">
-        ${this.hasPendingChanges
-          ? html`<span class="indicator-badge indicator-badge--modified">
-              <wa-icon library="mdi" name="alert-circle-outline"></wa-icon>
-              ${this._localize("dashboard.status_modified")}
-            </span>`
-          : nothing}
-        ${this.hasUpdateAvailable
-          ? html`<span class="indicator-badge indicator-badge--update">
-              <wa-icon library="mdi" name="update"></wa-icon>
-              ${this._localize("dashboard.status_update_available")}
-            </span>`
           : nothing}
       </div>
     `;
