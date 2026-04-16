@@ -206,7 +206,6 @@ export class ESPHomeAnsiLog extends LitElement {
       margin: 0;
       padding: 0;
       border-radius: 2px;
-      height: 18px;
       line-height: 18px;
     }
 
@@ -243,8 +242,8 @@ export class ESPHomeAnsiLog extends LitElement {
       // Normalize line endings and strip carriage returns
       const normalized = raw.replace(/\r\n?/g, "\n");
       for (const part of normalized.split("\n")) {
-        // Strip all leading/trailing whitespace while keeping inline ANSI codes
-        const stripped = this._stripLeadingWhitespace(part.trim());
+        // Strip ANSI codes and whitespace from edges, then re-add interior ANSI codes
+        const stripped = this._cleanLine(part);
         if (stripped.replace(/\u001b\[[0-9;]*m/g, "").trim().length > 0) {
           visual.push(stripped);
         }
@@ -261,19 +260,12 @@ export class ESPHomeAnsiLog extends LitElement {
   }
 
   /**
-   * Remove leading whitespace while preserving any ANSI escape sequences
-   * that appear before the first visible character. This ensures every
-   * rendered line starts flush with the container's left padding.
+   * Clean a log line: strip leading/trailing whitespace while preserving
+   * ANSI escape sequences that are interleaved with the text content.
    */
-  private _stripLeadingWhitespace(line: string): string {
-    // Match: any number of (ANSI escape | space | tab) at the start.
-    // We keep the ANSI escapes and drop the spaces/tabs.
-    const re = /^((?:\u001b\[[0-9;]*m|[ \t])*)/;
-    const match = line.match(re);
-    if (!match) return line;
-    const prefix = match[0];
-    const ansiOnly = prefix.replace(/[ \t]+/g, "");
-    return ansiOnly + line.slice(prefix.length);
+  private _cleanLine(line: string): string {
+    // Remove all leading whitespace and ANSI codes, then all trailing whitespace
+    return line.replace(/^(?:\u001b\[[0-9;]*m|\s)*/g, "").replace(/\s+$/, "");
   }
 
   private _renderLine(line: string) {
