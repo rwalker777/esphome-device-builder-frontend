@@ -362,7 +362,7 @@ export class ESPHomeFirmwareInstallDialog extends LitElement {
         ${this._logsExpanded ? this._localize("firmware.hide_logs") : this._localize("firmware.show_logs")}
       </button>
       ${this._logsExpanded
-        ? html`<div class="logs-container"><esphome-ansi-log .lines=${this._logLines}></esphome-ansi-log></div>`
+        ? html`<div class="logs-container"><esphome-ansi-log .lines=${this._logLines} ?light=${!this._darkMode}></esphome-ansi-log></div>`
         : nothing}
     `;
   }
