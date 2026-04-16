@@ -189,16 +189,15 @@ export class ESPHomeAnsiLog extends LitElement {
     .log-container {
       background: var(--log-bg);
       color: var(--log-fg);
-      font-family: "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", monospace;
+      font-family: ui-monospace, "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", Menlo, Consolas, monospace;
       font-size: 12px;
       padding: 8px 12px;
       border-radius: 8px;
       height: 100%;
       overflow-y: auto;
-      white-space: pre;
-      overflow-wrap: anywhere;
       overflow-x: auto;
-      line-height: 1.3;
+      white-space: pre;
+      line-height: 18px;
       box-sizing: border-box;
       tab-size: 4;
     }
@@ -207,6 +206,8 @@ export class ESPHomeAnsiLog extends LitElement {
       margin: 0;
       padding: 0;
       border-radius: 2px;
+      height: 18px;
+      line-height: 18px;
     }
 
     .log-line:hover {
