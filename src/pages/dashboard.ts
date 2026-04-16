@@ -42,6 +42,7 @@ import "../components/confirm-dialog.js";
 import type { ESPHomeConfirmDialog } from "../components/confirm-dialog.js";
 import "../components/dashboard/device-drawer.js";
 import "../components/dashboard/device-table.js";
+import "../components/dashboard/table-row-menu.js";
 import "../components/device-card.js";
 import "../components/logs-dialog.js";
 import type { ESPHomeLogsDialog } from "../components/logs-dialog.js";
@@ -93,6 +94,8 @@ export class ESPHomePageDashboard extends LitElement {
   @state() private _selectedDevices = new Set<string>();
   @state() private _drawerOpen = false;
   @state() private _drawerDevice: ConfiguredDevice | null = null;
+  @state() private _cardContextDevice: ConfiguredDevice | null = null;
+  @state() private _cardContextPosition: { x: number; y: number } | null = null;
 
   @state()
   private _view: DashboardView = DashboardView.CARDS;
@@ -270,21 +273,14 @@ export class ESPHomePageDashboard extends LitElement {
               ?selected=${this._selectedDevices.has(device.configuration)}
               @edit-device=${() => editDevice(device)}
               @update-device=${() => this._openCommand(device, "install")}
-              @open-logs=${() => this._openLogs(device)}
-              @validate-device=${() => this._openCommand(device, "validate")}
-              @install-device=${() => this._openCommand(device, "install")}
-              @show-api-key=${() => this._showApiKey(device)}
-              @download-yaml=${() => downloadYaml(device, this._api, this._localize)}
-              @rename-device=${() => this._openRename(device)}
-              @clean-build=${() => this._openCommand(device, "clean")}
-              @download-elf=${() => this._downloadFirmware(device)}
-              @delete-device=${() => deleteDevice(device, this._api, this._devices, this._localize)}
               @card-click=${() => { this._drawerDevice = device; this._drawerOpen = true; }}
+              @card-context-menu=${(e: CustomEvent) => { this._cardContextDevice = device; this._cardContextPosition = e.detail; }}
               @toggle-select=${() => this._toggleDevice(device.configuration)}
             ></esphome-device-card>
           `;
         })}
       </div>
+      ${this._renderCardContextMenu()}
     `;
   }
 
@@ -347,6 +343,28 @@ export class ESPHomePageDashboard extends LitElement {
         @update-device=${(e: CustomEvent) => { this._drawerOpen = false; this._openCommand(e.detail, "install"); }}
         @open-logs=${(e: CustomEvent) => { this._drawerOpen = false; this._openLogs(e.detail); }}
       ></esphome-device-drawer>
+    `;
+  }
+
+  private _renderCardContextMenu() {
+    return html`
+      <esphome-table-row-menu
+        .device=${this._cardContextDevice}
+        .position=${this._cardContextPosition}
+        @menu-close=${() => { this._cardContextDevice = null; this._cardContextPosition = null; }}
+        @edit-device=${(e: CustomEvent<ConfiguredDevice>) => editDevice(e.detail)}
+        @update-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
+        @open-logs=${(e: CustomEvent<ConfiguredDevice>) => this._openLogs(e.detail)}
+        @validate-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "validate")}
+        @install-device=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "install")}
+        @show-api-key=${(e: CustomEvent<ConfiguredDevice>) => this._showApiKey(e.detail)}
+        @download-yaml=${(e: CustomEvent<ConfiguredDevice>) => downloadYaml(e.detail, this._api, this._localize)}
+        @rename-device=${(e: CustomEvent<ConfiguredDevice>) => this._openRename(e.detail)}
+        @clean-build=${(e: CustomEvent<ConfiguredDevice>) => this._openCommand(e.detail, "clean")}
+        @download-elf=${(e: CustomEvent<ConfiguredDevice>) => this._downloadFirmware(e.detail)}
+        @delete-device=${(e: CustomEvent<ConfiguredDevice>) => deleteDevice(e.detail, this._api, this._devices, this._localize)}
+        @enter-select=${(e: CustomEvent<ConfiguredDevice>) => this._onEnterSelectMode(e.detail.configuration)}
+      ></esphome-table-row-menu>
     `;
   }
 

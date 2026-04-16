@@ -1,18 +1,10 @@
 import { consume } from "@lit/context";
 import {
   mdiAlertCircleOutline,
-  mdiBroom,
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
-  mdiCheckDecagram,
-  mdiConsole,
-  mdiDelete,
   mdiDotsVertical,
-  mdiDownload,
-  mdiFileDownloadOutline,
-  mdiKeyVariant,
   mdiPencil,
-  mdiRenameOutline,
   mdiUpdate,
   mdiUpload,
   mdiWifi,
@@ -26,24 +18,14 @@ import { localizeContext } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 
-import "@home-assistant/webawesome/dist/components/dropdown-item/dropdown-item.js";
-import "@home-assistant/webawesome/dist/components/dropdown/dropdown.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 
 registerMdiIcons({
   "alert-circle-outline": mdiAlertCircleOutline,
-  broom: mdiBroom,
   "checkbox-blank-outline": mdiCheckboxBlankOutline,
   "checkbox-marked": mdiCheckboxMarked,
-  "check-decagram": mdiCheckDecagram,
-  console: mdiConsole,
-  delete: mdiDelete,
   "dots-vertical": mdiDotsVertical,
-  download: mdiDownload,
-  "file-download-outline": mdiFileDownloadOutline,
-  "key-variant": mdiKeyVariant,
   pencil: mdiPencil,
-  "rename-outline": mdiRenameOutline,
   update: mdiUpdate,
   upload: mdiUpload,
   wifi: mdiWifi,
@@ -288,6 +270,7 @@ export class ESPHomeDeviceCard extends LitElement {
       .action-btn--icon-only {
         padding: 5px;
         flex-shrink: 0;
+        margin-left: auto;
       }
     `,
   ];
@@ -297,6 +280,7 @@ export class ESPHomeDeviceCard extends LitElement {
       <div
         class="device-card ${this.selectMode ? "device-card--selectable" : "device-card--clickable"} ${this.selectMode && this.selected ? "device-card--selected" : ""}"
         @click=${this.selectMode ? () => this._emit("toggle-select") : () => this._emit("card-click")}
+        @contextmenu=${this.selectMode ? nothing : this._onContextMenu}
       >
         <div class="device-card-header">
           ${this.selectMode
@@ -332,65 +316,24 @@ export class ESPHomeDeviceCard extends LitElement {
                   <wa-icon library="mdi" name="pencil"></wa-icon>
                   ${this._localize("dashboard.edit")}
                 </button>
+                ${this.hasPendingChanges || this.hasUpdateAvailable
+                  ? html`
+                      <button
+                        class="action-btn action-btn--accent"
+                        @click=${() => this._emit("update-device")}
+                      >
+                        <wa-icon library="mdi" name="upload"></wa-icon>
+                        ${this._localize("dashboard.update")}
+                      </button>
+                    `
+                  : nothing}
                 <button
-                  class="action-btn action-btn--accent"
-                  @click=${() => this._emit("update-device")}
+                  class="action-btn action-btn--ghost action-btn--icon-only"
+                  aria-label=${this._localize("dashboard.more_options")}
+                  @click=${this._onDotsClick}
                 >
-                  <wa-icon library="mdi" name="upload"></wa-icon>
-                  ${this._localize("dashboard.update")}
+                  <wa-icon library="mdi" name="dots-vertical"></wa-icon>
                 </button>
-                <button
-                  class="action-btn action-btn--ghost"
-                  @click=${() => this._emit("open-logs")}
-                >
-                  <wa-icon library="mdi" name="console"></wa-icon>
-                  ${this._localize("dashboard.logs")}
-                </button>
-                <wa-dropdown
-                  placement="right-start"
-                  distance="4"
-                  @wa-select=${this._onDropdownSelect}
-                >
-                  <button
-                    slot="trigger"
-                    class="action-btn action-btn--ghost action-btn--icon-only"
-                    aria-label=${this._localize("dashboard.more_options")}
-                  >
-                    <wa-icon library="mdi" name="dots-vertical"></wa-icon>
-                  </button>
-                  <wa-dropdown-item value="validate-device">
-                    <wa-icon slot="icon" library="mdi" name="check-decagram"></wa-icon>
-                    ${this._localize("dashboard.action_validate")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="install-device">
-                    <wa-icon slot="icon" library="mdi" name="upload"></wa-icon>
-                    ${this._localize("dashboard.action_install")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="show-api-key">
-                    <wa-icon slot="icon" library="mdi" name="key-variant"></wa-icon>
-                    ${this._localize("dashboard.action_show_api_key")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="download-yaml">
-                    <wa-icon slot="icon" library="mdi" name="download"></wa-icon>
-                    ${this._localize("dashboard.action_download_yaml")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="rename-device">
-                    <wa-icon slot="icon" library="mdi" name="rename-outline"></wa-icon>
-                    ${this._localize("dashboard.action_rename")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="clean-build">
-                    <wa-icon slot="icon" library="mdi" name="broom"></wa-icon>
-                    ${this._localize("dashboard.action_clean_build")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="download-elf">
-                    <wa-icon slot="icon" library="mdi" name="file-download-outline"></wa-icon>
-                    ${this._localize("dashboard.action_download_elf")}
-                  </wa-dropdown-item>
-                  <wa-dropdown-item value="delete-device" .variant=${"danger"}>
-                    <wa-icon slot="icon" library="mdi" name="delete"></wa-icon>
-                    ${this._localize("dashboard.delete")}
-                  </wa-dropdown-item>
-                </wa-dropdown>
               </div>
             `
           : nothing}
@@ -418,10 +361,29 @@ export class ESPHomeDeviceCard extends LitElement {
     `;
   }
 
-  private _onDropdownSelect(e: CustomEvent) {
-    const item = e.detail?.item;
-    const value = item?.value;
-    if (value) this._emit(value);
+  private _onContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent("card-context-menu", {
+        detail: { x: e.clientX, y: e.clientY },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private _onDotsClick(e: MouseEvent) {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLElement;
+    const rect = btn.getBoundingClientRect();
+    this.dispatchEvent(
+      new CustomEvent("card-context-menu", {
+        detail: { x: rect.right, y: rect.bottom },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _emit(name: string) {
