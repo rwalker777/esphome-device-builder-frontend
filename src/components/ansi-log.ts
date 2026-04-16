@@ -189,24 +189,23 @@ export class ESPHomeAnsiLog extends LitElement {
     .log-container {
       background: var(--log-bg);
       color: var(--log-fg);
-      font-family: ui-monospace, "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", Menlo, Consolas, monospace;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       font-size: 12px;
       padding: 8px 12px;
       border-radius: 8px;
       height: 100%;
       overflow-y: auto;
       overflow-x: auto;
-      white-space: pre;
-      line-height: 18px;
       box-sizing: border-box;
       tab-size: 4;
     }
 
     .log-line {
       margin: 0;
-      padding: 0;
-      border-radius: 2px;
-      line-height: 18px;
+      padding: 1px 0;
+      white-space: pre;
+      font-size: 12px;
+      line-height: 16px;
     }
 
     .log-line:hover {
@@ -260,12 +259,20 @@ export class ESPHomeAnsiLog extends LitElement {
   }
 
   /**
-   * Clean a log line: strip leading/trailing whitespace while preserving
-   * ANSI escape sequences that are interleaved with the text content.
+   * Clean a log line: strip leading/trailing whitespace and ANSI codes
+   * from the edges while preserving interior ANSI codes for colorization.
    */
   private _cleanLine(line: string): string {
-    // Remove all leading whitespace and ANSI codes, then all trailing whitespace
-    return line.replace(/^(?:\u001b\[[0-9;]*m|\s)*/g, "").replace(/\s+$/, "");
+    // 1. Strip trailing whitespace
+    let s = line.replace(/\s+$/, "");
+    // 2. Repeatedly strip leading ANSI escape sequences and whitespace
+    let prev = "";
+    while (s !== prev) {
+      prev = s;
+      s = s.replace(/^\u001b\[[0-9;]*[a-zA-Z]/, ""); // any ANSI escape (not just SGR)
+      s = s.replace(/^\s+/, "");
+    }
+    return s;
   }
 
   private _renderLine(line: string) {
