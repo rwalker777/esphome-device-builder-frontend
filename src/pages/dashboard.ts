@@ -277,6 +277,7 @@ export class ESPHomePageDashboard extends LitElement {
               @clean-build=${() => this._openCommand(device, "clean")}
               @download-elf=${() => this._downloadFirmware(device)}
               @delete-device=${() => deleteDevice(device, this._api, this._devices, this._localize)}
+              @card-click=${() => { this._drawerDevice = device; this._drawerOpen = true; }}
               @toggle-select=${() => this._toggleDevice(device.configuration)}
             ></esphome-device-card>
           `;

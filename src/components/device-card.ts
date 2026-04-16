@@ -88,6 +88,10 @@ export class ESPHomeDeviceCard extends LitElement {
         box-shadow: var(--wa-shadow-m);
       }
 
+      .device-card--clickable {
+        cursor: pointer;
+      }
+
       .device-card--selectable {
         cursor: pointer;
       }
@@ -249,8 +253,8 @@ export class ESPHomeDeviceCard extends LitElement {
   protected render() {
     return html`
       <div
-        class="device-card ${this.selectMode ? "device-card--selectable" : ""} ${this.selectMode && this.selected ? "device-card--selected" : ""}"
-        @click=${this.selectMode ? () => this._emit("toggle-select") : nothing}
+        class="device-card ${this.selectMode ? "device-card--selectable" : "device-card--clickable"} ${this.selectMode && this.selected ? "device-card--selected" : ""}"
+        @click=${this.selectMode ? () => this._emit("toggle-select") : () => this._emit("card-click")}
       >
         <div class="device-card-header">
           ${this.selectMode
@@ -277,7 +281,7 @@ export class ESPHomeDeviceCard extends LitElement {
         </div>
         ${!this.selectMode
           ? html`
-              <div class="device-actions">
+              <div class="device-actions" @click=${(e: Event) => e.stopPropagation()}>
                 <button
                   class="action-btn action-btn--primary"
                   @click=${() => this._emit("edit-device")}
