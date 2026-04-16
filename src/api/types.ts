@@ -87,6 +87,8 @@ export interface ConfiguredDevice {
   state: DeviceState;
   /** null = never compiled, true = YAML newer than binary, false = up to date */
   has_pending_changes: boolean | null;
+  /** true if server ESPHome version != device's compiled version */
+  update_available: boolean;
 }
 
 /** An adoptable/importable ESPHome device. */

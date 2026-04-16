@@ -182,7 +182,7 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
     if (!d) return nothing;
 
     const hasPendingChanges = d.has_pending_changes === true;
-    const hasUpdateAvailable = !!(d.deployed_version && d.current_version && d.deployed_version !== d.current_version);
+    const hasUpdateAvailable = d.update_available;
 
     return html`
       ${hasPendingChanges || hasUpdateAvailable
