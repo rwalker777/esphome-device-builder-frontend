@@ -418,7 +418,9 @@ export class ESPHomePageDashboard extends LitElement {
       ></esphome-rename-device-dialog>
       <esphome-api-key-dialog></esphome-api-key-dialog>
       <esphome-create-config-dialog></esphome-create-config-dialog>
-      <esphome-command-dialog></esphome-command-dialog>
+      <esphome-command-dialog
+        @command-success=${this._onWebSerialCompileSuccess}
+      ></esphome-command-dialog>
       <esphome-logs-dialog></esphome-logs-dialog>
       <esphome-logs-method-dialog
         ?open=${this._logsMethodOpen}
@@ -564,62 +566,62 @@ export class ESPHomePageDashboard extends LitElement {
     }
   }
 
+  /** Pending Web Serial device — set before compile, consumed on command-success. */
+  private _webSerialDevice: ConfiguredDevice | null = null;
+
   private async _webSerialInstall(device: ConfiguredDevice) {
+    // Store the device so _onWebSerialCompileSuccess can pick it up
+    this._webSerialDevice = device;
+    // Open compile in the command dialog so the user sees progress
+    this._openCommand(device, "compile");
+  }
+
+  private async _onWebSerialCompileSuccess() {
+    const device = this._webSerialDevice;
+    if (!device) return;
+    this._webSerialDevice = null;
+
     const name = device.friendly_name || device.name;
 
-    // 1. Compile firmware on the backend
-    const compileToast = toast.loading(this._localize("serial.getting_firmware"), { richColors: true });
-    try {
-      const job = await this._api.firmwareCompile(device.configuration);
-      await new Promise<void>((resolve, reject) => {
-        this._api.firmwareFollowJob(job.job_id, {
-          onResult: (data) => { data.success ? resolve() : reject(new Error("Compilation failed")); },
-          onError: (err) => reject(new Error(err)),
-        });
-      });
-    } catch {
-      toast.error(this._localize("dashboard.update_compilation_failed"), { id: compileToast, richColors: true });
-      return;
-    }
-
-    // 2. Download the compiled binary
+    // 1. Download the compiled binary
+    const progressToast = toast.loading(this._localize("serial.getting_firmware"), { richColors: true });
     let firmwareBytes: Uint8Array;
     try {
       const binaries = await this._api.firmwareGetBinaries(device.configuration);
       if (binaries.length === 0) {
-        toast.error(this._localize("serial.no_firmware"), { id: compileToast, richColors: true });
+        toast.error(this._localize("serial.no_firmware"), { id: progressToast, richColors: true });
         return;
       }
       const result = await this._api.firmwareDownload(device.configuration, binaries[0].file);
       firmwareBytes = Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0));
     } catch {
-      toast.error(this._localize("dashboard.download_firmware_failed", { name }), { id: compileToast, richColors: true });
+      toast.error(this._localize("dashboard.download_firmware_failed", { name }), { id: progressToast, richColors: true });
       return;
     }
 
-    // 3. Connect to the device via Web Serial
+    // 2. Connect to the device via Web Serial
     let detected;
     try {
-      toast.loading(this._localize("serial.detecting"), { id: compileToast, richColors: true });
+      toast.loading(this._localize("serial.detecting"), { id: progressToast, richColors: true });
       detected = await detectChip();
     } catch {
-      toast.dismiss(compileToast);
+      toast.dismiss(progressToast);
       return; // User cancelled port selection
     }
 
-    // 4. Flash the firmware
+    // 3. Flash the firmware
     try {
-      toast.loading(this._localize("serial.flashing"), { id: compileToast, richColors: true });
+      toast.loading(this._localize("serial.flashing"), { id: progressToast, richColors: true });
       await flashFirmware(detected.loader, firmwareBytes, 0x10000);
     } catch {
-      toast.error(this._localize("dashboard.update_upload_failed"), { id: compileToast, richColors: true });
+      toast.error(this._localize("dashboard.update_upload_failed"), { id: progressToast, richColors: true });
       try { await disconnect(detected.transport); } catch { /* ignore */ }
       return;
     }
 
-    // 5. Reset and disconnect
+    // 4. Reset and disconnect
     try {
-      toast.loading(this._localize("serial.resetting"), { id: compileToast, richColors: true });
+      toast.loading(this._localize("serial.resetting"), { id: progressToast, richColors: true });
       await resetAndDisconnect(detected.loader, detected.transport);
     } catch { /* ignore reset errors */ }
 
