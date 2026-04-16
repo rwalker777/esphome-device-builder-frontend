@@ -400,10 +400,12 @@ export class ESPHomeFirmwareInstallDialog extends LitElement {
     // 2. Verify chip matches device platform
     this._statusMessage = this._localize("firmware.status_verifying");
     const detectedNorm = normalizeChipName(detected.chipName);
-    const expectedNorm = device.target_platform.toLowerCase();
-    if (detectedNorm !== expectedNorm) {
+    const expectedPlatform = device.target_platform;
+    const expectedNorm = expectedPlatform ? expectedPlatform.toLowerCase().replace(/-/g, "") : "";
+    console.debug("[Web Serial] Detected chip:", detected.chipName, "→", detectedNorm, "| Expected:", expectedPlatform, "→", expectedNorm);
+    if (expectedNorm && expectedNorm !== "unknown" && detectedNorm !== expectedNorm) {
       try { await disconnect(detected.transport); } catch { /* ignore */ }
-      this._fail(this._localize("firmware.chip_mismatch", { detected: detected.chipName, expected: device.target_platform }));
+      this._fail(this._localize("firmware.chip_mismatch", { detected: detected.chipName, expected: expectedPlatform }));
       return;
     }
 
