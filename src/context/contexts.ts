@@ -6,7 +6,7 @@
  */
 import { createContext } from "@lit/context";
 import { ESPHomeAPI } from "../api/index.js";
-import type { ConfiguredDevice, AdoptableDevice } from "../api/types.js";
+import type { ConfiguredDevice, AdoptableDevice, FirmwareJob } from "../api/types.js";
 import type { LocalizeFunc } from "../common/localize.js";
 
 /** Context for the ESPHome API client instance. */
@@ -41,4 +41,9 @@ export const devicesLoadedContext = createContext<boolean>(
 /** Context for whether the frontend is running inside HA ingress. */
 export const isHaIngressContext = createContext<boolean>(
   Symbol("esphome-is-ha-ingress")
+);
+
+/** Context for active firmware jobs, keyed by device configuration. */
+export const activeJobsContext = createContext<Map<string, FirmwareJob>>(
+  Symbol("esphome-active-jobs")
 );

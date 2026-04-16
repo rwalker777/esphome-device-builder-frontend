@@ -71,6 +71,9 @@ export class ESPHomeDeviceTable extends LitElement {
   @property({ attribute: false })
   selectedDevices = new Set<string>();
 
+  @property({ attribute: false })
+  activeJobs = new Map<string, unknown>();
+
   /** Initial sorting from preferences — applied once when first set. */
   @property({ attribute: false })
   initialSorting: SortingState | null = null;
@@ -195,7 +198,7 @@ export class ESPHomeDeviceTable extends LitElement {
       this._prevLocalize = this._localize;
       this._columns = createDeviceColumns(this._localize);
     }
-    if (changed.has("devices")) {
+    if (changed.has("devices") || changed.has("activeJobs")) {
       this._rows = this.devices.map((d) => ({
         status: d.state,
         name: d.name,
@@ -208,6 +211,7 @@ export class ESPHomeDeviceTable extends LitElement {
         config: d.configuration,
         hasPendingChanges: d.has_pending_changes === true,
         hasUpdateAvailable: d.update_available,
+        busy: this.activeJobs.has(d.configuration),
         _device: d,
       }));
     }

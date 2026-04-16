@@ -12,10 +12,11 @@ import { customElement, query, state } from "lit/decorators.js";
 import toast from "sonner-js";
 import type { ESPHomeAPI } from "../api/index.js";
 import { DashboardView, DeviceState, SortDirection } from "../api/types.js";
-import type { AdoptableDevice, ConfiguredDevice } from "../api/types.js";
+import type { AdoptableDevice, ConfiguredDevice, FirmwareJob } from "../api/types.js";
 import type { SortingState, VisibilityState } from "@tanstack/lit-table";
 import type { LocalizeFunc } from "../common/localize.js";
 import {
+  activeJobsContext,
   apiContext,
   devicesContext,
   devicesLoadedContext,
@@ -86,6 +87,10 @@ export class ESPHomePageDashboard extends LitElement {
   @consume({ context: devicesLoadedContext, subscribe: true })
   @state()
   private _devicesLoaded = false;
+
+  @consume({ context: activeJobsContext, subscribe: true })
+  @state()
+  private _activeJobs: Map<string, FirmwareJob> = new Map();
 
   @consume({ context: apiContext })
   private _api!: ESPHomeAPI;
@@ -280,6 +285,7 @@ export class ESPHomePageDashboard extends LitElement {
               .state=${device.state}
               ?has-pending-changes=${device.has_pending_changes === true}
               ?has-update-available=${device.update_available}
+              ?busy=${this._activeJobs.has(device.configuration)}
               ?select-mode=${this._selectMode}
               ?selected=${this._selectedDevices.has(device.configuration)}
               @edit-device=${() => editDevice(device)}
@@ -301,6 +307,7 @@ export class ESPHomePageDashboard extends LitElement {
       <esphome-device-table
         .devices=${this._devices}
         .search=${this._search}
+        .activeJobs=${this._activeJobs}
         .initialPageSize=${this._tablePageSize}
         .initialSorting=${this._tableSorting}
         .initialColumnVisibility=${this._tableColumnVisibility}

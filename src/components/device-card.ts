@@ -17,6 +17,7 @@ import { espHomeStyles } from "../styles/shared.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
+import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 
 registerMdiIcons({
   "checkbox-blank-outline": mdiCheckboxBlankOutline,
@@ -48,6 +49,9 @@ export class ESPHomeDeviceCard extends LitElement {
 
   @property({ type: Boolean, attribute: "has-update-available" })
   hasUpdateAvailable = false;
+
+  @property({ type: Boolean })
+  busy = false;
 
   @property({ type: Boolean, attribute: "select-mode" })
   selectMode = false;
@@ -183,6 +187,23 @@ export class ESPHomeDeviceCard extends LitElement {
         font-size: 13px;
       }
 
+      .device-status.busy {
+        background: color-mix(in srgb, var(--esphome-primary), transparent 85%);
+        color: var(--esphome-primary);
+      }
+
+      .device-status.busy wa-spinner {
+        font-size: 12px;
+        --indicator-color: var(--esphome-primary);
+        --track-color: transparent;
+      }
+
+      .action-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+        pointer-events: none;
+      }
+
       .device-checkbox {
         font-size: 22px;
         color: var(--wa-color-text-quiet);
@@ -293,14 +314,19 @@ export class ESPHomeDeviceCard extends LitElement {
             </div>
             <p class="device-config">${this.configuration}</p>
           </div>
-          <div class="device-status ${this.state}">
-            <wa-icon library="mdi" name=${this.state === DeviceState.ONLINE ? "wifi" : "wifi-off"}></wa-icon>
-            ${this.state === DeviceState.ONLINE
-              ? this._localize("dashboard.online")
-              : this.state === DeviceState.OFFLINE
-                ? this._localize("dashboard.offline")
-                : this._localize("dashboard.unknown")}
-          </div>
+          ${this.busy
+            ? html`<div class="device-status busy">
+                <wa-spinner></wa-spinner>
+                ${this._localize("dashboard.status_busy")}
+              </div>`
+            : html`<div class="device-status ${this.state}">
+                <wa-icon library="mdi" name=${this.state === DeviceState.ONLINE ? "wifi" : "wifi-off"}></wa-icon>
+                ${this.state === DeviceState.ONLINE
+                  ? this._localize("dashboard.online")
+                  : this.state === DeviceState.OFFLINE
+                    ? this._localize("dashboard.offline")
+                    : this._localize("dashboard.unknown")}
+              </div>`}
         </div>
         ${!this.selectMode
           ? html`
@@ -316,6 +342,7 @@ export class ESPHomeDeviceCard extends LitElement {
                   ? html`
                       <button
                         class="action-btn action-btn--accent"
+                        ?disabled=${this.busy}
                         @click=${() => this._emit("install-device")}
                       >
                         <wa-icon library="mdi" name="upload"></wa-icon>
@@ -326,6 +353,7 @@ export class ESPHomeDeviceCard extends LitElement {
                     ? html`
                         <button
                           class="action-btn action-btn--accent"
+                          ?disabled=${this.busy}
                           @click=${() => this._emit("update-device")}
                         >
                           <wa-icon library="mdi" name="upload"></wa-icon>

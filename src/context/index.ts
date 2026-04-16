@@ -7,4 +7,5 @@ export {
   localizeContext,
   devicesLoadedContext,
   isHaIngressContext,
+  activeJobsContext,
 } from "./contexts.js";

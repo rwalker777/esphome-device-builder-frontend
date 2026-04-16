@@ -16,6 +16,7 @@ export interface DeviceRow {
   config: string;
   hasPendingChanges: boolean;
   hasUpdateAvailable: boolean;
+  busy: boolean;
   _device: ConfiguredDevice;
 }
 
@@ -25,6 +26,10 @@ export function createDeviceColumns(localize: LocalizeFunc): ColumnDef<DeviceRow
       accessorKey: "status",
       header: localize("dashboard.table_col_status"),
       cell: (info) => {
+        const row = info.row.original;
+        if (row.busy) {
+          return html`<wa-spinner class="status-spinner" style="font-size:12px;--indicator-color:var(--esphome-primary);--track-color:transparent;"></wa-spinner>`;
+        }
         const state = info.getValue() as DeviceState;
         const dotClass = state === DeviceState.ONLINE ? "online" : state === DeviceState.OFFLINE ? "offline" : "unknown";
         const title = state === DeviceState.ONLINE

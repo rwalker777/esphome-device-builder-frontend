@@ -146,7 +146,8 @@
     "drawer_loaded_integrations": "Loaded Integrations",
     "context_select": "Select",
     "status_modified": "Modified",
-    "status_update_available": "Update available"
+    "status_update_available": "Update available",
+    "status_busy": "Working…"
   },
   "command": {
     "install_title": "Install — {name}",

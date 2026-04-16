@@ -13,14 +13,16 @@ import { css, html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import toast from "sonner-js";
 import { ESPHomeAPI } from "../api/index.js";
-import { DeviceEventType, DeviceState, Theme } from "../api/types.js";
+import { DeviceEventType, DeviceState, JobStatus, Theme } from "../api/types.js";
 import type {
   AdoptableDevice,
   ConfiguredDevice,
   DeviceEventData,
   DeviceStateChangedEventData,
+  FirmwareJob,
   ImportableDeviceEventData,
   InitialStateEventData,
+  JobEventData,
   ServerInfoMessage,
 } from "../api/types.js";
 import { defaultLocalize, loadLocalize, type LocalizeFunc } from "../common/localize.js";
@@ -29,6 +31,7 @@ import {
   darkModeContext,
   devicesContext,
   devicesLoadedContext,
+  activeJobsContext,
   importableDevicesContext,
   isHaIngressContext,
   localizeContext,
@@ -70,6 +73,10 @@ export class ESPHomeApp extends LitElement {
   @provide({ context: isHaIngressContext })
   @state()
   private _isHaIngress = false;
+
+  @provide({ context: activeJobsContext })
+  @state()
+  private _activeJobs: Map<string, FirmwareJob> = new Map();
 
   @provide({ context: localizeContext })
   @state()
@@ -211,6 +218,22 @@ export class ESPHomeApp extends LitElement {
 
   // ─── Event Subscription ──────────────────────────────────
 
+  private async _loadActiveJobs() {
+    try {
+      const [queued, running] = await Promise.all([
+        this._api.getJobs({ status: JobStatus.QUEUED }),
+        this._api.getJobs({ status: JobStatus.RUNNING }),
+      ]);
+      const map = new Map<string, FirmwareJob>();
+      for (const job of [...queued, ...running]) {
+        map.set(job.configuration, job);
+      }
+      this._activeJobs = map;
+    } catch {
+      // Not critical
+    }
+  }
+
   private async _subscribeToEvents() {
     try {
       await this._api.subscribeEvents((event, data) =>
@@ -227,6 +250,7 @@ export class ESPHomeApp extends LitElement {
         const { devices } = data as InitialStateEventData;
         this._devices = devices;
         this._devicesLoaded = true;
+        this._loadActiveJobs();
         break;
       }
       case DeviceEventType.DEVICE_ADDED: {
@@ -273,6 +297,22 @@ export class ESPHomeApp extends LitElement {
         this._importableDevices = this._importableDevices.filter(
           (d) => d.name !== device.name
         );
+        break;
+      }
+      case DeviceEventType.JOB_QUEUED:
+      case DeviceEventType.JOB_STARTED: {
+        const { job } = data as JobEventData;
+        const next = new Map(this._activeJobs);
+        next.set(job.configuration, job);
+        this._activeJobs = next;
+        break;
+      }
+      case DeviceEventType.JOB_COMPLETED:
+      case DeviceEventType.JOB_FAILED: {
+        const { job } = data as JobEventData;
+        const next = new Map(this._activeJobs);
+        next.delete(job.configuration);
+        this._activeJobs = next;
         break;
       }
     }
