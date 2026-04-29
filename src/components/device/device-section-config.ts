@@ -573,7 +573,6 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         entries: component.config_entries,
       };
       this._values = this._parseYamlSectionValues(yaml);
-      console.debug("[SectionConfig] parsed values:", this._values);
       this._presentComponents = this._parseTopLevelComponents(yaml);
       this._yaml = yaml;
     } catch (e) {
@@ -1034,7 +1033,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
             <div class="multi-row">
               <wa-input
                 class=${invalid ? "invalid" : ""}
-                .value=${item}
+                value=${item}
                 ?disabled=${this._saving}
                 @input=${(e: Event) =>
                   this._updateMultiItem(
