@@ -66,6 +66,7 @@ import "@home-assistant/webawesome/dist/components/option/option.js";
 import "@home-assistant/webawesome/dist/components/select/select.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 import "@home-assistant/webawesome/dist/components/switch/switch.js";
+import "../mdi-icon-picker.js";
 
 registerMdiIcons({
   "alert-circle-outline": mdiAlertCircleOutline,
@@ -123,24 +124,26 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   @state()
   private _fieldErrors: Map<string, ValidationError> = new Map();
 
-  /** Section keys whose Advanced section is currently expanded. Tracking this
-   *  per-section means switching between configs (esphome → wifi → logger)
-   *  doesn't bleed one section's state into another. */
+  /** Section keys for which the user has flipped on "Show advanced
+   *  settings". Tracking this per-section means switching between configs
+   *  (esphome → wifi → logger) doesn't bleed one section's state into
+   *  another — each component remembers its own toggle state for the
+   *  duration of the page session. */
   @state()
-  private _advancedOpenSections = new Set<string>();
+  private _advancedShownSections = new Set<string>();
 
-  private get _advancedOpen(): boolean {
-    return this._advancedOpenSections.has(this.sectionKey);
+  private get _showAdvanced(): boolean {
+    return this._advancedShownSections.has(this.sectionKey);
   }
 
-  private _setAdvancedOpen(open: boolean) {
-    const next = new Set(this._advancedOpenSections);
-    if (open) {
+  private _setShowAdvanced(show: boolean) {
+    const next = new Set(this._advancedShownSections);
+    if (show) {
       next.add(this.sectionKey);
     } else {
       next.delete(this.sectionKey);
     }
-    this._advancedOpenSections = next;
+    this._advancedShownSections = next;
   }
 
   /**
@@ -309,37 +312,17 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         color: var(--esphome-primary);
       }
 
-      .advanced-section {
-        margin-top: var(--wa-space-l);
-      }
-
-      .advanced-toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--wa-space-2xs);
-        background: none;
-        border: none;
-        padding: 0;
-        font-family: inherit;
-        font-size: var(--wa-font-size-s);
-        font-weight: var(--wa-font-weight-bold);
-        color: var(--wa-color-text-quiet);
-        cursor: pointer;
-      }
-
-      .advanced-toggle:hover {
-        color: var(--wa-color-text-normal);
-      }
-
-      .advanced-toggle wa-icon {
-        font-size: 18px;
-      }
-
-      .advanced-fields {
+      /* "Show advanced settings" toggle row, shown above the form when
+         the section has any advanced entries (at any depth). */
+      .advanced-toggle-row {
         display: flex;
-        flex-direction: column;
-        gap: var(--wa-space-m);
-        margin-top: var(--wa-space-m);
+        justify-content: flex-end;
+        font-size: var(--wa-font-size-s);
+      }
+
+      .advanced-toggle-row wa-switch {
+        font-weight: var(--wa-font-weight-semibold);
+        color: var(--wa-color-text-quiet);
       }
 
       /* ─── Nested group ────────────────────────────────────────
@@ -1029,14 +1012,16 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
 
     if (!this._config) return nothing;
 
-    // Filter entries by visibility (hidden + depends_on), then split into
-    // standard and advanced. Advanced entries get rendered in a separate
-    // collapsible section at the bottom.
-    const visibleEntries = this._config.entries.filter((e) =>
-      isEntryVisible(e, this._values, this._presentComponents)
+    // Render entries inline at their natural positions. Advanced fields
+    // — at any depth, including inside nested groups — are gated by the
+    // single per-section "Show advanced settings" toggle.
+    const showAdvanced = this._showAdvanced;
+    const visibleEntries = this._filterRenderable(
+      this._config.entries,
+      this._values,
+      showAdvanced,
     );
-    const standardEntries = visibleEntries.filter((e) => !e.advanced);
-    const advancedEntries = visibleEntries.filter((e) => e.advanced);
+    const hasAdvanced = this._anyAdvancedEntry(this._config.entries);
 
     return html`
       <div class="section-header">
@@ -1066,10 +1051,20 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
           />
         </div>
       </div>
-      <div class="form">${standardEntries.map((entry) => this._renderEntry(entry))}</div>
-      ${advancedEntries.length > 0
-        ? this._renderAdvancedSection(advancedEntries)
+      ${hasAdvanced
+        ? html`<div class="advanced-toggle-row">
+            <wa-switch
+              ?checked=${showAdvanced}
+              @change=${(e: Event) =>
+                this._setShowAdvanced(
+                  (e.target as HTMLInputElement & { checked: boolean }).checked,
+                )}
+            >
+              ${this._localize("device.show_advanced")}
+            </wa-switch>
+          </div>`
         : nothing}
+      <div class="form">${visibleEntries.map((entry) => this._renderEntry(entry))}</div>
       ${this._error ? html`<p class="error">${this._error}</p>` : nothing}
       <div class="actions">
         <button
@@ -1086,28 +1081,50 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
     `;
   }
 
-  private _renderAdvancedSection(entries: ConfigEntry[]) {
-    return html`
-      <div class="advanced-section">
-        <button
-          class="advanced-toggle"
-          @click=${() => {
-            this._setAdvancedOpen(!this._advancedOpen);
-          }}
-        >
-          <wa-icon
-            library="mdi"
-            name=${this._advancedOpen ? "chevron-up" : "chevron-down"}
-          ></wa-icon>
-          ${this._localize("device.advanced_options")}
-        </button>
-        ${this._advancedOpen
-          ? html`<div class="advanced-fields">
-              ${entries.map((entry) => this._renderEntry(entry))}
-            </div>`
-          : nothing}
-      </div>
-    `;
+  /**
+   * Filter `entries` for rendering: hidden + dependency-failing entries
+   * always go away, advanced entries go away unless `showAdvanced` is on.
+   * NESTED entries stay if anything inside them is renderable — that
+   * way an advanced-only nested group doesn't leave an empty header
+   * sitting in the form when the toggle is off.
+   */
+  private _filterRenderable(
+    entries: ConfigEntry[],
+    values: Record<string, unknown>,
+    showAdvanced: boolean,
+  ): ConfigEntry[] {
+    const out: ConfigEntry[] = [];
+    for (const entry of entries) {
+      if (!isEntryVisible(entry, values, this._presentComponents)) continue;
+      if (entry.advanced && !showAdvanced) continue;
+      if (entry.type === ConfigEntryType.NESTED) {
+        const childValues = this._scopeValues([entry.key]);
+        const childList = entry.config_entries ?? [];
+        const renderableChildren = this._filterRenderable(
+          childList,
+          childValues,
+          showAdvanced,
+        );
+        if (renderableChildren.length === 0) continue;
+      }
+      out.push(entry);
+    }
+    return out;
+  }
+
+  /**
+   * True when `entries` (or any descendant inside a NESTED entry)
+   * contains an `advanced: true` entry. Drives whether we render the
+   * "Show advanced settings" toggle at all.
+   */
+  private _anyAdvancedEntry(entries: ConfigEntry[]): boolean {
+    for (const entry of entries) {
+      if (entry.advanced) return true;
+      if (entry.type === ConfigEntryType.NESTED) {
+        if (this._anyAdvancedEntry(entry.config_entries ?? [])) return true;
+      }
+    }
+    return false;
   }
 
   private _renderEntry(entry: ConfigEntry, path: string[] = [entry.key]) {
@@ -1178,12 +1195,39 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         }
         return this._renderStringField(entry, "text", path);
 
-      // ICON, TRIGGER, TIME_PERIOD, STRING, UNKNOWN → text input
+      case ConfigEntryType.ICON:
+        return this._renderIconField(entry, path);
+
+      // TRIGGER, TIME_PERIOD, STRING, UNKNOWN → text input
       // (richer pickers are a follow-up — schemas don't yet expose enough
       // info for cross-component trigger lookups).
       default:
         return this._renderStringField(entry, "text", path);
     }
+  }
+
+  /**
+   * Render an MDI icon picker. Uses the path-based value access so this
+   * works the same whether the entry sits at the top level or inside a
+   * nested group.
+   */
+  private _renderIconField(entry: ConfigEntry, path: string[] = [entry.key]) {
+    const value = String(this._getAt(path) ?? "");
+    const invalid = this._errorAt(path) !== null;
+    return html`
+      <div class="field" data-field-key=${path.join(".")}>
+        ${this._renderLabel(entry)}
+        <esphome-mdi-icon-picker
+          .value=${value}
+          .invalid=${invalid}
+          .disabled=${this._saving}
+          .placeholder=${String(entry.default_value ?? "Choose an icon…")}
+          @change=${(e: CustomEvent<{ value: string }>) =>
+            this._setAt(path, e.detail.value)}
+        ></esphome-mdi-icon-picker>
+        ${this._fieldErrorAt(path)}
+      </div>
+    `;
   }
 
   /**
@@ -1195,12 +1239,19 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
    * (sensor, binary_sensor, ...) and the relevant base fields are
    * already included in `entry.config_entries` by the backend, so we
    * just recurse.
+   *
+   * Children are filtered through `_filterRenderable` so the same
+   * advanced-toggle gating that applies at the top level applies here:
+   * if every child is `advanced` and the toggle is off, nothing renders
+   * inside (and the parent itself is filtered out by the same helper
+   * one level up).
    */
   private _renderNestedField(entry: ConfigEntry, path: string[]) {
-    const children = entry.config_entries ?? [];
     const isOpen = this._nestedOpenSections.has(path.join("."));
-    const visibleChildren = children.filter((c) =>
-      isEntryVisible(c, this._scopeValues(path), this._presentComponents),
+    const renderableChildren = this._filterRenderable(
+      entry.config_entries ?? [],
+      this._scopeValues(path),
+      this._showAdvanced,
     );
     return html`
       <div class="nested-group" data-field-key=${path.join(".")}>
@@ -1220,7 +1271,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         </button>
         ${isOpen
           ? html`<div class="nested-fields">
-              ${visibleChildren.map((child) =>
+              ${renderableChildren.map((child) =>
                 this._renderEntry(child, [...path, child.key]),
               )}
             </div>`
@@ -1874,20 +1925,22 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
     if (!this._config) return;
 
     // Walk the entry tree in render order looking for the first
-    // (possibly nested) entry that owns an error. Returns the entry
-    // and the dotted path that produced the matching error key.
+    // (possibly nested) entry that owns an error. Returns the dotted
+    // path of the leaf field plus a flag for whether any entry along
+    // the path is `advanced` (so we know to flip the toggle on).
     const firstHit = this._findFirstErrorTarget(
       this._config.entries,
       errors,
       [],
     );
     if (!firstHit) return;
-    const { topEntry, path } = firstHit;
+    const { path, hasAdvancedAncestor } = firstHit;
 
-    // If the failing field lives in the collapsed Advanced section it isn't
-    // in the DOM yet — open it and wait for the re-render before searching.
-    if (topEntry.advanced && !this._advancedOpen) {
-      this._setAdvancedOpen(true);
+    // If anything along the path is advanced the field isn't rendered
+    // yet. Flip the global "Show advanced settings" toggle on, then
+    // wait for the re-render before walking the DOM.
+    if (hasAdvancedAncestor && !this._showAdvanced) {
+      this._setShowAdvanced(true);
       await this.updateComplete;
     }
 
@@ -1920,33 +1973,32 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
 
   /**
    * Walk the entries in render order and return the first error target.
-   * `topEntry` is the top-level entry under which the error sits (used
-   * to decide whether to expand the Advanced section); `path` is the
-   * dotted path of the actual leaf field with the error.
+   * `path` is the dotted path of the failing leaf field;
+   * `hasAdvancedAncestor` is true when the leaf itself or any
+   * NESTED entry along the way is `advanced` — used to know whether the
+   * "Show advanced settings" toggle has to be flipped on first.
    */
   private _findFirstErrorTarget(
     entries: ConfigEntry[],
     errors: Map<string, ValidationError>,
     pathPrefix: string[],
-  ): { topEntry: ConfigEntry; path: string[] } | null {
+    ancestorAdvanced = false,
+  ): { path: string[]; hasAdvancedAncestor: boolean } | null {
     for (const entry of entries) {
       const path = [...pathPrefix, entry.key];
+      const advancedHere = ancestorAdvanced || entry.advanced;
       if (entry.type === ConfigEntryType.NESTED) {
         const found = this._findFirstErrorTarget(
           entry.config_entries ?? [],
           errors,
           path,
+          advancedHere,
         );
-        if (found) {
-          return {
-            topEntry: pathPrefix.length === 0 ? entry : found.topEntry,
-            path: found.path,
-          };
-        }
+        if (found) return found;
         continue;
       }
       if (errors.has(path.join("."))) {
-        return { topEntry: entry, path };
+        return { path, hasAdvancedAncestor: advancedHere };
       }
     }
     return null;
