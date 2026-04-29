@@ -67,6 +67,15 @@ export class ESPHomeAddComponentDialog extends LitElement {
   @state()
   private _submitError = "";
 
+  /**
+   * Component the user was originally adding when they clicked
+   * "+ Add <dep>" inside the form. After they finish adding the
+   * dependency, we restore this component so they don't have to
+   * re-navigate the catalog and re-fill what they had.
+   */
+  @state()
+  private _returnTo: ComponentCatalogEntry | null = null;
+
   static styles = [
     espHomeStyles,
     css`
@@ -135,11 +144,37 @@ export class ESPHomeAddComponentDialog extends LitElement {
       .back-button:hover {
         opacity: 1;
       }
+
+      /* Breadcrumb that shows up while the user is detoured into
+         "add a dependency" mid-way through adding another component.
+         Tells them we'll bring them back to the original after. */
+      .return-banner {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
+        margin-bottom: var(--wa-space-m);
+        padding: var(--wa-space-2xs) var(--wa-space-s);
+        background: color-mix(
+          in srgb,
+          var(--esphome-primary),
+          transparent 92%
+        );
+        border-left: 3px solid var(--esphome-primary);
+        border-radius: var(--wa-border-radius-s);
+        font-size: var(--wa-font-size-xs);
+        color: var(--wa-color-text-quiet);
+      }
+
+      .return-banner strong {
+        color: var(--wa-color-text-normal);
+        font-weight: var(--wa-font-weight-semibold);
+      }
     `,
   ];
 
   public open() {
     this._selected = null;
+    this._returnTo = null;
     this._submitError = "";
     this._submitting = false;
     this._dialog.open = true;
@@ -147,18 +182,19 @@ export class ESPHomeAddComponentDialog extends LitElement {
   }
 
   /**
-   * Open the dialog directly into the catalog with the search box
-   * pre-filled to a domain (e.g. "output"). Used when the section
-   * editor's ID-reference dropdown asks "+ Add new output" — we want
-   * to land the user one click away from the right component instead
-   * of in the unfiltered catalog.
+   * Open the dialog directly into the catalog filtered to a domain
+   * (e.g. "output"). Used when the section editor's ID-reference
+   * dropdown asks "+ Add new output" — we land the user one click
+   * away from the right component instead of in the unfiltered
+   * catalog.
    */
-  public openWithSearch(query: string) {
+  public openWithSearch(domain: string) {
     this._selected = null;
+    this._returnTo = null;
     this._submitError = "";
     this._submitting = false;
     this._dialog.open = true;
-    this.updateComplete.then(() => this._catalog?.setSearch(query));
+    this.updateComplete.then(() => this._catalog?.filterByDomain(domain));
   }
 
   protected render() {
@@ -189,6 +225,13 @@ export class ESPHomeAddComponentDialog extends LitElement {
               ? this._localize("device.add_component_dialog_title", { name: this.boardName })
               : this._localize("device.add_component")}
         </span>
+        ${this._returnTo
+          ? html`<div class="return-banner">
+              ${this._localize("device.return_to_after_dep_prefix")}
+              <strong>${this._returnTo.name}</strong>
+              ${this._localize("device.return_to_after_dep_suffix")}
+            </div>`
+          : nothing}
         <esphome-component-catalog
           ?hidden=${isForm}
           .platform=${this.platform}
@@ -214,26 +257,41 @@ export class ESPHomeAddComponentDialog extends LitElement {
 
   private _onBack() {
     if (this._submitting) return;
+    // If the user is in the middle of a "go add a dependency" detour
+    // and they hit back, treat it as cancelling the detour: drop them
+    // back at the original component they were filling in, instead of
+    // sending them to the catalog and losing context.
+    if (this._returnTo) {
+      this._selected = this._returnTo;
+      this._returnTo = null;
+      this._submitError = "";
+      return;
+    }
     this._selected = null;
     this._submitError = "";
   }
 
   /**
-   * Switch back to the catalog view filtered to the missing dependency
-   * domain. The user picks one of the matching components, adds it
-   * (which closes the dialog), then can re-open and pick the original
-   * component they were after.
+   * Switch to the catalog view filtered to a missing dependency's
+   * domain. Remember the component the user was in the middle of
+   * adding so we can restore it after they finish adding the
+   * dependency.
    */
   private async _onNavigateToDep(e: CustomEvent<{ domain: string }>) {
     e.stopPropagation();
     if (this._submitting) return;
     const { domain } = e.detail;
+    // Stash the component the user was filling in so we can return to
+    // it after the dep is added (only when the trigger came from the
+    // form view — clicks from elsewhere don't have anything to return
+    // to).
+    if (this._selected) {
+      this._returnTo = this._selected;
+    }
     this._selected = null;
     this._submitError = "";
-    // Wait for the catalog to be visible again before filtering, then
-    // load with the dep's domain as the search query.
     await this.updateComplete;
-    this._catalog?.setSearch(domain);
+    this._catalog?.filterByDomain(domain);
   }
 
   private async _onFormSubmit(e: CustomEvent<{ fields: Record<string, unknown> }>) {
@@ -246,8 +304,12 @@ export class ESPHomeAddComponentDialog extends LitElement {
         component_id: this._selected.id,
         fields: e.detail.fields,
       });
-      this._dialog.open = false;
-      this._selected = null;
+
+      // Notify the host so the page re-fetches / re-renders with the
+      // new YAML. We dispatch this BEFORE deciding whether to close —
+      // when restoring `_returnTo` the dialog stays open, but we still
+      // need the device to know the YAML changed (so the dependency
+      // we just added shows up in the original component's dropdown).
       this.dispatchEvent(
         new CustomEvent("yaml-updated", {
           detail: { yaml },
@@ -255,6 +317,20 @@ export class ESPHomeAddComponentDialog extends LitElement {
           composed: true,
         }),
       );
+
+      if (this._returnTo) {
+        // Just finished adding a dependency — restore the original
+        // component's form so the user can continue where they left
+        // off. The form re-mounts fresh and re-reads `this.yaml`,
+        // which now contains the dep, so the ID-reference dropdown
+        // will be populated.
+        const restore = this._returnTo;
+        this._returnTo = null;
+        this._selected = restore;
+      } else {
+        this._dialog.open = false;
+        this._selected = null;
+      }
     } catch (err) {
       this._submitError = err instanceof Error
         ? err.message

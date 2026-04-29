@@ -3,6 +3,7 @@ import { mdiArrowCollapseAll, mdiArrowExpandAll, mdiMemory, mdiOpenInNew, mdiPlu
 import { css, html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ComponentCatalogEntry } from "../../api/types.js";
+import { ComponentCategory } from "../../api/types.js";
 import type { ESPHomeAPI } from "../../api/index.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext, apiContext } from "../../context/index.js";
@@ -79,14 +80,27 @@ export class ESPHomeComponentCatalog extends LitElement {
   }
 
   /**
-   * Programmatically set the search query (and optionally the
-   * category) and refetch. Used by the add-component dialog to deep
-   * link from a "missing dependency" banner to the catalog filtered
-   * to that dependency's domain.
+   * Filter the catalog to a specific component domain (e.g. "output",
+   * "sensor"). When the domain matches a known ComponentCategory we
+   * use the category filter — that's an exact match against
+   * `output.gpio`, `output.ledc`, ... — which is much more precise
+   * than putting the word "output" through the search box (where it
+   * also matches anything mentioning "output" in name or description).
+   *
+   * For domains that aren't categories (e.g. bus IDs like "i2c") we
+   * fall back to the search query.
    */
-  public setSearch(query: string, category = "all") {
-    this._search = query;
-    this._category = category;
+  public filterByDomain(domain: string) {
+    const isCategory = Object.values(ComponentCategory).includes(
+      domain as ComponentCategory,
+    );
+    if (isCategory) {
+      this._search = "";
+      this._category = domain;
+    } else {
+      this._search = domain;
+      this._category = "all";
+    }
     this._fetchComponents();
   }
 
