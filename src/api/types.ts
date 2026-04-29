@@ -311,6 +311,12 @@ export interface ConfigEntry {
   depends_on_value: ConfigPrimitive | null;
   /** Show only when dependency value does NOT equal this. */
   depends_on_value_not: ConfigPrimitive | null;
+  /**
+   * Hide this entry unless the named component is configured on the
+   * same device (e.g. `qos` only matters when an `mqtt:` block exists).
+   * null = always visible.
+   */
+  depends_on_component: string | null;
 
   // === pin selection (only meaningful when type == PIN) ===
   /** Pin capabilities required for this field. */

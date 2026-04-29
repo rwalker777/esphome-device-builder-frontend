@@ -2,14 +2,30 @@ import type { ConfigEntry } from "../api/types.js";
 import { ConfigEntryType } from "../api/types.js";
 
 /**
- * Determine if a config entry is currently visible based on its `hidden`
- * flag and any `depends_on` predicate against the current form values.
+ * Determine if a config entry is currently visible.
+ *
+ * Visibility is the AND of three checks:
+ *  1. `hidden === false`
+ *  2. The `depends_on` predicate against the current form values
+ *  3. `depends_on_component` is present in `presentComponents` (when given)
+ *
+ * Pass `presentComponents` to honor the third check; when omitted the
+ * cross-component dependency is treated as satisfied (callers without
+ * device-wide context — e.g. add-component before insertion — should
+ * leave it undefined).
  */
 export function isEntryVisible(
   entry: ConfigEntry,
   values: Record<string, unknown>,
+  presentComponents?: Set<string>,
 ): boolean {
   if (entry.hidden) return false;
+
+  // Cross-component dependency: only check when caller provided context.
+  if (entry.depends_on_component && presentComponents) {
+    if (!presentComponents.has(entry.depends_on_component)) return false;
+  }
+
   if (!entry.depends_on) return true;
   const depValue = values[entry.depends_on];
   if (entry.depends_on_value !== null && entry.depends_on_value !== undefined) {
@@ -90,12 +106,13 @@ export function validateEntry(
 export function validateEntries(
   entries: ConfigEntry[],
   values: Record<string, unknown>,
+  presentComponents?: Set<string>,
 ): Map<string, ValidationError> {
   const errors = new Map<string, ValidationError>();
   for (const entry of entries) {
-    // Skip hidden entries and those whose depends_on predicate fails —
+    // Skip hidden entries and those whose visibility predicates fail —
     // we don't want to require fields the user can't even see.
-    if (!isEntryVisible(entry, values)) continue;
+    if (!isEntryVisible(entry, values, presentComponents)) continue;
     const raw = values[entry.key] ?? entry.default_value;
     const err = validateEntry(entry, raw);
     if (err) errors.set(entry.key, err);

@@ -99,6 +99,14 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   @state()
   private _advancedOpen = false;
 
+  /**
+   * Top-level component keys present in the device's YAML (e.g. `wifi`,
+   * `mqtt`, `api`). Used to evaluate `depends_on_component` predicates so
+   * we hide entries that only matter when their parent component exists.
+   */
+  @state()
+  private _presentComponents: Set<string> = new Set();
+
   static styles = [
     espHomeStyles,
     css`
@@ -501,6 +509,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         entries: component.config_entries,
       };
       this._values = this._parseYamlSectionValues(yaml);
+      this._presentComponents = this._parseTopLevelComponents(yaml);
     } catch (e) {
       if (id !== this._loadId) return;
       const msg = e instanceof Error ? e.message : "";
@@ -513,6 +522,24 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         this._loading = false;
       }
     }
+  }
+
+  /**
+   * Extract the set of top-level component keys configured in the YAML
+   * (e.g. ["wifi", "api", "mqtt", "switch"]). Used to evaluate
+   * `depends_on_component` visibility predicates on config entries.
+   *
+   * A "top-level component" is any non-comment line starting at column 0
+   * with the shape `key:` — same heuristic the navigator uses for
+   * top-level sections.
+   */
+  private _parseTopLevelComponents(yaml: string): Set<string> {
+    const present = new Set<string>();
+    for (const line of yaml.split("\n")) {
+      const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)$/);
+      if (match) present.add(match[1]);
+    }
+    return present;
   }
 
   /**
@@ -620,7 +647,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
     // standard and advanced. Advanced entries get rendered in a separate
     // collapsible section at the bottom.
     const visibleEntries = this._config.entries.filter((e) =>
-      isEntryVisible(e, this._values),
+      isEntryVisible(e, this._values, this._presentComponents),
     );
     const standardEntries = visibleEntries.filter((e) => !e.advanced);
     const advancedEntries = visibleEntries.filter((e) => e.advanced);
@@ -1090,7 +1117,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
 
   private async _onSave() {
     if (!this._config) return;
-    const errors = validateEntries(this._config.entries, this._values);
+    const errors = validateEntries(this._config.entries, this._values, this._presentComponents);
     if (errors.size > 0) {
       this._fieldErrors = errors;
       return;
