@@ -14,7 +14,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import toast from "sonner-js";
 import type { ESPHomeAPI } from "../../api/index.js";
 import type { BoardCatalogEntry, BoardPin, ConfigEntry } from "../../api/types.js";
-import { ConfigEntryType } from "../../api/types.js";
+import { ConfigEntryType, PinFeature, PinMode } from "../../api/types.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { apiContext, localizeContext } from "../../context/index.js";
 import { inputStyles } from "../../styles/inputs.js";
@@ -1195,9 +1195,20 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
           ${visible.map((pin) => {
             const optValue = `GPIO${pin.gpio}`;
             const primary = pin.label || optValue;
-            const disabled = pin.available === false;
             const occupiedBy = pin.occupied_by || "";
             const usedBy = usedPins.get(pin.gpio) || "";
+            // An input-only pin can't satisfy a field that needs to drive
+            // an output. PinMode.OUTPUT obviously requires output; the
+            // bidirectional INPUT_OUTPUT mode also needs output capability.
+            const needsOutput =
+              entry.pin_mode === PinMode.OUTPUT ||
+              entry.pin_mode === PinMode.INPUT_OUTPUT;
+            const isInputOnly = pin.features.includes(PinFeature.INPUT_ONLY);
+            const inputOnlyConflict = needsOutput && isInputOnly;
+            // Disable when hardware says so OR when the pin can't fulfil
+            // the requested direction. YAML-level conflicts stay enabled.
+            const disabled = pin.available === false || inputOnlyConflict;
+
             // Show a warning when the pin is already claimed — either by
             // the board metadata (occupied_by) or by another component in
             // the YAML. We don't disable in the YAML-conflict case so the
@@ -1208,8 +1219,10 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
               : usedBy
                 ? this._localize("device.pin_used_by", { name: usedBy })
                 : "";
-            const baseSupporting =
-              pin.notes || (disabled ? this._localize("device.pin_unavailable") : "");
+            const baseSupporting = inputOnlyConflict
+              ? this._localize("device.pin_input_only")
+              : pin.notes ||
+                (pin.available === false ? this._localize("device.pin_unavailable") : "");
 
             const secondaryParts: string[] = [];
             if (pin.label && pin.label !== optValue) secondaryParts.push(optValue);

@@ -353,6 +353,7 @@
     "pin_unavailable": "Unavailable",
     "pin_occupied_by": "Reserved for {name}",
     "pin_used_by": "Already used by {name}",
+    "pin_input_only": "Input only — can't be used as output",
     "save": "Save",
     "save_yaml": "Save YAML",
     "loading_config_catalog": "Loading configuration catalog…",
