@@ -10,6 +10,7 @@ import {
 } from "@mdi/js";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import type { BoardCatalogEntry } from "../../api/types.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
@@ -51,6 +52,11 @@ export class ESPHomeDeviceNavigator extends LitElement {
 
   @property({ attribute: false })
   yaml = "";
+
+  /** Optional board metadata; forwarded to the add-component dialog so
+   * the embedded form can render GPIO pin selectors. */
+  @property({ attribute: false })
+  board: BoardCatalogEntry | null = null;
 
   @property()
   boardName = "";
@@ -347,6 +353,8 @@ export class ESPHomeDeviceNavigator extends LitElement {
           .boardName=${this.boardName}
           .configuration=${this.configuration}
           .platform=${this.platform}
+          .board=${this.board}
+          .yaml=${this.yaml}
         ></esphome-add-component-dialog>
         <esphome-add-automation-dialog
           .boardName=${this.boardName}

@@ -374,6 +374,8 @@
     "save_error": "Failed to save",
     "section_saved_toast": "\"{title}\" saved",
     "add_component_error": "Failed to add component",
+    "missing_dependencies_title": "{name} requires other components",
+    "missing_dependencies_body": "The following components must be configured first. Close this dialog, add them, then come back.",
     "add_automation_error": "Failed to add automation",
     "add_automation_unavailable": "Automation support is not yet available",
     "add_config_error": "Failed to add config section",

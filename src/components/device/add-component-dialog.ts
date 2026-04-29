@@ -2,7 +2,10 @@ import { consume } from "@lit/context";
 import { mdiArrowLeft, mdiClose } from "@mdi/js";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { ComponentCatalogEntry } from "../../api/types.js";
+import type {
+  BoardCatalogEntry,
+  ComponentCatalogEntry,
+} from "../../api/types.js";
 import type { ESPHomeAPI } from "../../api/index.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext, apiContext } from "../../context/index.js";
@@ -36,6 +39,18 @@ export class ESPHomeAddComponentDialog extends LitElement {
   /** Device's target platform — forwarded to the catalog for default resolution. */
   @property()
   platform = "";
+
+  /** Board metadata. Forwarded to the form so the embedded shared
+   * config-entry-form can render the GPIO pin selector with proper
+   * filtering and conflict detection. */
+  @property({ attribute: false })
+  board: BoardCatalogEntry | null = null;
+
+  /** Current device YAML. Forwarded to the form so it can resolve
+   * `depends_on_component` predicates, the component-level
+   * `dependencies` list, and ID-reference dropdowns. */
+  @property()
+  yaml = "";
 
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
@@ -164,6 +179,8 @@ export class ESPHomeAddComponentDialog extends LitElement {
         ${isForm
           ? html`<esphome-add-component-form
               .component=${this._selected!}
+              .board=${this.board}
+              .yaml=${this.yaml}
               .submitting=${this._submitting}
               .submitError=${this._submitError}
             ></esphome-add-component-form>`

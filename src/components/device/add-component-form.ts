@@ -1,7 +1,12 @@
 import { consume } from "@lit/context";
-import { html, LitElement, nothing } from "lit";
+import { mdiAlertCircleOutline } from "@mdi/js";
+import { css, html, LitElement, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ComponentCatalogEntry, ConfigEntry } from "../../api/types.js";
+import type {
+  BoardCatalogEntry,
+  ComponentCatalogEntry,
+  ConfigEntry,
+} from "../../api/types.js";
 import { ConfigEntryType } from "../../api/types.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext } from "../../context/index.js";
@@ -12,10 +17,18 @@ import {
   type ValidationError,
 } from "../../util/config-validation.js";
 import { setIn } from "../../util/nested-values.js";
-import { serializeYamlValues } from "../../util/yaml-serialize.js";
+import { registerMdiIcons } from "../../util/register-icons.js";
+import {
+  parseTopLevelComponents,
+  serializeYamlValues,
+} from "../../util/yaml-serialize.js";
 import { addComponentFormStyles } from "./add-component-form.styles.js";
 import "./config-entry-form.js";
 import type { ConfigEntryValueChange } from "./config-entry-form.js";
+
+import "@home-assistant/webawesome/dist/components/icon/icon.js";
+
+registerMdiIcons({ "alert-circle-outline": mdiAlertCircleOutline });
 
 @customElement("esphome-add-component-form")
 export class ESPHomeAddComponentForm extends LitElement {
@@ -25,6 +38,15 @@ export class ESPHomeAddComponentForm extends LitElement {
 
   @property({ attribute: false })
   component!: ComponentCatalogEntry;
+
+  /** Board metadata; forwarded to the shared form for pin pickers. */
+  @property({ attribute: false })
+  board: BoardCatalogEntry | null = null;
+
+  /** Current device YAML; forwarded to the shared form for ID
+   * reference dropdowns and used here for the dependency check. */
+  @property()
+  yaml = "";
 
   @property({ type: Boolean })
   submitting = false;
@@ -41,7 +63,46 @@ export class ESPHomeAddComponentForm extends LitElement {
   @state()
   private _showYaml = false;
 
-  static styles = [espHomeStyles, inputStyles, addComponentFormStyles];
+  static styles = [
+    espHomeStyles,
+    inputStyles,
+    addComponentFormStyles,
+    css`
+      /* Banner shown when the component has unmet dependencies
+         (e.g. a gpio light needs a configured output: first). */
+      .deps-warning {
+        display: flex;
+        gap: var(--wa-space-s);
+        padding: var(--wa-space-s) var(--wa-space-m);
+        background: color-mix(
+          in srgb,
+          var(--esphome-warning, #d97706),
+          transparent 88%
+        );
+        border: var(--wa-border-width-s) solid
+          var(--esphome-warning, #d97706);
+        border-radius: var(--wa-border-radius-m);
+        color: var(--wa-color-text-normal);
+        font-size: var(--wa-font-size-s);
+        line-height: 1.45;
+      }
+
+      .deps-warning wa-icon {
+        flex-shrink: 0;
+        font-size: 20px;
+        color: var(--esphome-warning, #d97706);
+      }
+
+      .deps-warning .deps-warning-title {
+        font-weight: var(--wa-font-weight-bold);
+      }
+
+      .deps-warning ul {
+        margin: var(--wa-space-2xs) 0 0;
+        padding-left: var(--wa-space-l);
+      }
+    `,
+  ];
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -98,6 +159,15 @@ export class ESPHomeAddComponentForm extends LitElement {
 
   protected render() {
     const disabled = this.submitting;
+    const presentComponents = parseTopLevelComponents(this.yaml);
+    // Top-level dependencies the catalog entry declares as required.
+    // For example a `light.binary` light needs an `output:` block
+    // configured first. Surface these to the user instead of letting
+    // them submit a config that won't validate.
+    const missingDeps = (this.component.dependencies ?? []).filter(
+      (d) => !presentComponents.has(d),
+    );
+
     // The shared form filters its own visibility — but we still need
     // to know whether everything required is filled in to enable the
     // submit button. Run validation against the current values; if
@@ -105,16 +175,23 @@ export class ESPHomeAddComponentForm extends LitElement {
     const validation = validateEntries(
       this.component.config_entries,
       this._values,
+      presentComponents,
     );
     const isComplete = !this._hasRequiredErrors(validation);
 
     return html`
       <div class="form">
         <p class="form-desc">${this.component.description}</p>
+        ${missingDeps.length > 0
+          ? this._renderMissingDeps(missingDeps)
+          : nothing}
         <esphome-config-entry-form
           .entries=${this.component.config_entries}
           .values=${this._values}
           .errors=${this._errors}
+          .board=${this.board}
+          .yaml=${this.yaml}
+          .presentComponents=${presentComponents}
           ?disabled=${disabled}
           ?required-only=${true}
           @value-change=${this._onValueChange}
@@ -146,13 +223,40 @@ export class ESPHomeAddComponentForm extends LitElement {
           </button>
           <button
             class="btn btn-primary"
-            ?disabled=${disabled || !isComplete}
+            ?disabled=${disabled || !isComplete || missingDeps.length > 0}
             @click=${this._onSubmit}
           >
             ${this.submitting
               ? this._localize("device.adding")
               : this._localize("device.add_component_action")}
           </button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Banner shown when one or more entries from `component.dependencies`
+   * aren't yet configured at the top level. The submit button is
+   * disabled while this is showing — the user has to back out, add the
+   * missing component(s), then come back.
+   */
+  private _renderMissingDeps(missing: string[]) {
+    return html`
+      <div class="deps-warning" role="alert">
+        <wa-icon library="mdi" name="alert-circle-outline"></wa-icon>
+        <div>
+          <div class="deps-warning-title">
+            ${this._localize("device.missing_dependencies_title", {
+              name: this.component.name,
+            })}
+          </div>
+          <div>
+            ${this._localize("device.missing_dependencies_body")}
+          </div>
+          <ul>
+            ${missing.map((d) => html`<li><code>${d}</code></li>`)}
+          </ul>
         </div>
       </div>
     `;
@@ -192,11 +296,21 @@ export class ESPHomeAddComponentForm extends LitElement {
   }
 
   private _onSubmit() {
+    const presentComponents = parseTopLevelComponents(this.yaml);
+    // Block submit when there are missing top-level dependencies.
+    // The button should already be disabled in that case, but defend
+    // here too in case the YAML changed under us between renders.
+    const missingDeps = (this.component.dependencies ?? []).filter(
+      (d) => !presentComponents.has(d),
+    );
+    if (missingDeps.length > 0) return;
+
     // Validate the entire schema. If anything fails, surface the
     // errors inline (the shared form will pick them up by path).
     const errors = validateEntries(
       this.component.config_entries,
       this._values,
+      presentComponents,
     );
     if (errors.size > 0) {
       this._errors = errors;

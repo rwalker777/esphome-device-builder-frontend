@@ -1,16 +1,15 @@
 /**
- * Minimal YAML serializer for ConfigEntry form values. Used by the
- * device section editor (to write a section back into the device YAML)
- * and the "Add component" dialog (to render a live preview).
+ * Minimal YAML helpers for ConfigEntry form values.
  *
- * The serializer is deliberately small — it doesn't aim to handle
- * every YAML feature, just the shape our form values take:
- *   - scalars (string / number / boolean)
- *   - arrays of scalars (block lists)
- *   - nested objects (recurse)
+ * `serializeYamlValues` is used by the section editor (to write a
+ * section back into the device YAML) and by the add-component dialog
+ * (to render a live preview). It handles scalars, arrays of scalars,
+ * and nested objects; empty/null/undefined values are skipped.
  *
- * Empty / null / undefined values are skipped so optional fields the
- * user didn't fill don't end up in the output.
+ * `parseTopLevelComponents` walks the YAML to find every top-level
+ * key (e.g. `wifi:`, `mqtt:`, `output:`). Both forms use it to
+ * evaluate `depends_on_component` predicates and component-level
+ * dependency checks against the user's current configuration.
  */
 
 /**
@@ -46,6 +45,21 @@ export function serializeYamlValues(
     lines.push(`${indent}${key}: ${formatYamlScalar(val)}`);
   }
   return lines;
+}
+
+/**
+ * Extract the set of top-level component keys configured in the YAML
+ * (e.g. `["wifi", "api", "mqtt", "switch"]`). Used to evaluate
+ * `depends_on_component` predicates on config entries and the
+ * component-level `dependencies` list on the catalog entry.
+ */
+export function parseTopLevelComponents(yaml: string): Set<string> {
+  const present = new Set<string>();
+  for (const line of yaml.split("\n")) {
+    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)$/);
+    if (match) present.add(match[1]);
+  }
+  return present;
 }
 
 /** Format a single scalar value, quoting when needed. */

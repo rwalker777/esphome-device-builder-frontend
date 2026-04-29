@@ -297,6 +297,7 @@ export class ESPHomePageDevice extends LitElement {
           class="drawer-nav"
           .openSections=${this._openSections}
           .yaml=${this._yaml}
+          .board=${this._board}
           .boardName=${this._board?.name ?? ""}
           .configuration=${this.id}
           .platform=${this._board?.esphome.platform ?? ""}
@@ -322,8 +323,10 @@ export class ESPHomePageDevice extends LitElement {
             class="desktop-nav"
             .openSections=${this._openSections}
             .yaml=${this._yaml}
+            .board=${this._board}
             .boardName=${this._board?.name ?? ""}
             .configuration=${this.id}
+            .platform=${this._board?.esphome.platform ?? ""}
             .selectedKey=${this._selectedSection}
             .selectedFromLine=${this._selectedFromLine}
           ></esphome-device-navigator>

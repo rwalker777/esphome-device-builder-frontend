@@ -16,7 +16,10 @@ import {
 } from "../../util/config-validation.js";
 import { setIn } from "../../util/nested-values.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
-import { serializeYamlValues } from "../../util/yaml-serialize.js";
+import {
+  parseTopLevelComponents,
+  serializeYamlValues,
+} from "../../util/yaml-serialize.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
@@ -328,7 +331,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         entries: component.config_entries,
       };
       this._values = this._parseYamlSectionValues(yaml);
-      this._presentComponents = this._parseTopLevelComponents(yaml);
+      this._presentComponents = parseTopLevelComponents(yaml);
       this._yaml = yaml;
     } catch (e) {
       if (id !== this._loadId) return;
@@ -341,16 +344,6 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         this._loading = false;
       }
     }
-  }
-
-  /** Set of top-level component keys configured in the YAML. */
-  private _parseTopLevelComponents(yaml: string): Set<string> {
-    const present = new Set<string>();
-    for (const line of yaml.split("\n")) {
-      const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.*)$/);
-      if (match) present.add(match[1]);
-    }
-    return present;
   }
 
   /**
