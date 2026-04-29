@@ -271,30 +271,49 @@ export class ESPHomeDeviceNavigator extends LitElement {
   ];
 
   protected willUpdate(changedProperties: Map<string, unknown>) {
-    // Sync _selectedLine from selectedKey/selectedFromLine when set externally (e.g. URL restore)
+    // Sync `_selectedLine`/`_selectedRange` whenever the externally-
+    // controlled selection changes (URL restore, "go to component"
+    // events from the dialog, YAML edits that shift line numbers).
+    // We don't gate on `_selectedLine === null` here — that used to
+    // be a guard against re-sync loops, but it also meant external
+    // updates couldn't move the highlight off whatever was previously
+    // selected.
     if (
-      (changedProperties.has("selectedKey") || changedProperties.has("yaml") || changedProperties.has("selectedFromLine")) &&
-      this.selectedKey &&
-      this._selectedLine === null &&
+      (changedProperties.has("selectedKey") ||
+        changedProperties.has("yaml") ||
+        changedProperties.has("selectedFromLine")) &&
       this.yaml
     ) {
+      if (!this.selectedKey) {
+        // Cleared externally — drop the local highlight.
+        this._selectedLine = null;
+        this._selectedRange = null;
+        return;
+      }
       const allSections = [
         ...parseYamlTopLevelSections(this.yaml),
         ...parseYamlAutomations(this.yaml),
       ];
-      // Match by fromLine first (exact), fall back to key/platform match
-      const match = this.selectedFromLine !== undefined
-        ? allSections.find((s) => s.fromLine === this.selectedFromLine)
-        : allSections.find((s) => {
-            if (!s.platform) return s.key === this.selectedKey;
-            const candidate = s.platform.startsWith(`${s.key}.`)
-              ? s.platform
-              : `${s.key}.${s.platform}`;
-            return candidate === this.selectedKey;
-          });
+      // Try fromLine first (exact match), fall back to key/platform
+      // match (handles the case where the YAML shifted under us, e.g.
+      // the user just added a component before the selected one).
+      const matchByKey = (s: YamlSection) => {
+        if (!s.platform) return s.key === this.selectedKey;
+        const candidate = s.platform.startsWith(`${s.key}.`)
+          ? s.platform
+          : `${s.key}.${s.platform}`;
+        return candidate === this.selectedKey;
+      };
+      const match =
+        (this.selectedFromLine !== undefined
+          ? allSections.find((s) => s.fromLine === this.selectedFromLine)
+          : undefined) ?? allSections.find(matchByKey);
       if (match) {
         this._selectedLine = match.fromLine;
-        this._selectedRange = { fromLine: match.fromLine, toLine: match.toLine };
+        this._selectedRange = {
+          fromLine: match.fromLine,
+          toLine: match.toLine,
+        };
       }
     }
   }
