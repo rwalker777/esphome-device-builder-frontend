@@ -77,10 +77,32 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
     }
   }
 
+  connectedCallback() {
+    super.connectedCallback();
+    // Catch ID-reference "+ Add new <domain>" requests that bubble out
+    // of the section editor's shared form, and open the add-component
+    // dialog deep-linked to the requested domain.
+    this.addEventListener(
+      "request-add-component",
+      this._onRequestAddComponent as EventListener,
+    );
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._reloadTimer) clearTimeout(this._reloadTimer);
+    this.removeEventListener(
+      "request-add-component",
+      this._onRequestAddComponent as EventListener,
+    );
   }
+
+  private _onRequestAddComponent = (e: Event) => {
+    const detail = (e as CustomEvent<{ domain: string }>).detail;
+    if (!detail?.domain) return;
+    e.stopPropagation();
+    this._addComponentDialog?.openWithSearch(detail.domain);
+  };
 
   static styles = [
     espHomeStyles,

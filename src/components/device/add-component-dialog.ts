@@ -146,6 +146,21 @@ export class ESPHomeAddComponentDialog extends LitElement {
     this.updateComplete.then(() => this._catalog?.load());
   }
 
+  /**
+   * Open the dialog directly into the catalog with the search box
+   * pre-filled to a domain (e.g. "output"). Used when the section
+   * editor's ID-reference dropdown asks "+ Add new output" — we want
+   * to land the user one click away from the right component instead
+   * of in the unfiltered catalog.
+   */
+  public openWithSearch(query: string) {
+    this._selected = null;
+    this._submitError = "";
+    this._submitting = false;
+    this._dialog.open = true;
+    this.updateComplete.then(() => this._catalog?.setSearch(query));
+  }
+
   protected render() {
     const isForm = this._selected !== null;
     // Keep the catalog mounted permanently so its state (search query, scroll
@@ -160,6 +175,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
         @form-cancel=${this._onBack}
         @form-submit=${this._onFormSubmit}
         @navigate-to-dep=${this._onNavigateToDep}
+        @request-add-component=${this._onNavigateToDep}
       >
         <span slot="label" class="dialog-label">
           ${isForm

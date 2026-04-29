@@ -390,6 +390,52 @@ export class ESPHomeConfigEntryForm extends LitElement {
       }
 
       /* ─── ID reference picker option layout ──────────────────── */
+      .ref-row {
+        display: flex;
+        align-items: stretch;
+        gap: var(--wa-space-2xs);
+      }
+
+      .ref-row wa-select {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .ref-add-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 var(--wa-space-s);
+        background: transparent;
+        border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+        border-radius: var(--wa-border-radius-m);
+        color: var(--wa-color-text-quiet);
+        font-family: inherit;
+        font-size: var(--wa-font-size-xs);
+        font-weight: var(--wa-font-weight-bold);
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          background 0.12s,
+          border-color 0.12s,
+          color 0.12s;
+      }
+
+      .ref-add-btn:hover:not(:disabled) {
+        background: var(--esphome-primary);
+        border-color: var(--esphome-primary);
+        color: var(--esphome-on-primary);
+      }
+
+      .ref-add-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .ref-add-btn wa-icon {
+        font-size: 14px;
+      }
+
       .id-option-stack {
         display: inline-flex;
         flex-direction: column;
@@ -844,23 +890,38 @@ export class ESPHomeConfigEntryForm extends LitElement {
     const candidates = this._findReferencedComponents(this.yaml, domain);
     const value = String(this._getAt(path) ?? "");
     const invalid = this._errorAt(path) !== null;
+    const empty = candidates.length === 0;
 
-    // No instances of `domain:` configured yet — render the dropdown
-    // disabled with a clear empty-state hint so the user understands
-    // why the field is empty (rather than a deceptive text input
-    // inviting freeform typing).
-    if (candidates.length === 0) {
+    // Inline "+ Add new <domain>" button — clicking emits an event the
+    // parent dialog/page handles by opening the add-component dialog
+    // filtered to this domain. Works the same whether the dropdown is
+    // empty (only option to make progress) or already has candidates
+    // (user wants to add another).
+    const addButton = html`
+      <button
+        type="button"
+        class="ref-add-btn"
+        ?disabled=${this.disabled}
+        title=${this._localize("device.id_reference_add", { domain })}
+        @click=${() => this._requestAddComponent(domain)}
+      >
+        <wa-icon library="mdi" name="plus"></wa-icon>
+        ${this._localize("device.id_reference_add", { domain })}
+      </button>
+    `;
+
+    if (empty) {
       return html`
         <div class="field" data-field-key=${path.join(".")}>
           ${this._renderLabel(entry)}
-          <wa-select class=${invalid ? "invalid" : ""} disabled>
-            <wa-option value="" selected>
-              ${this._localize("device.id_reference_empty", { domain })}
-            </wa-option>
-          </wa-select>
-          <p class="field-description">
-            ${this._localize("device.id_reference_empty_hint", { domain })}
-          </p>
+          <div class="ref-row">
+            <wa-select class=${invalid ? "invalid" : ""} disabled>
+              <wa-option value="" selected>
+                ${this._localize("device.id_reference_empty", { domain })}
+              </wa-option>
+            </wa-select>
+            ${addButton}
+          </div>
           ${this._fieldErrorAt(path)}
         </div>
       `;
@@ -869,31 +930,50 @@ export class ESPHomeConfigEntryForm extends LitElement {
     return html`
       <div class="field" data-field-key=${path.join(".")}>
         ${this._renderLabel(entry)}
-        <wa-select
-          class=${invalid ? "invalid" : ""}
-          ?disabled=${this.disabled}
-          @change=${(e: Event) =>
-            this._emitChange(path, (e.target as HTMLSelectElement).value)}
-        >
-          ${candidates.map(
-            (c) => html`<wa-option
-              class="id-option"
-              value=${c.id}
-              .label=${c.name || c.id}
-              ?selected=${c.id === value}
-            >
-              <span class="id-option-stack">
-                <span class="id-option-primary">${c.name || c.id}</span>
-                <span class="id-option-secondary"
-                  >${c.name ? `${c.id} · ${domain}` : domain}</span
-                >
-              </span>
-            </wa-option>`,
-          )}
-        </wa-select>
+        <div class="ref-row">
+          <wa-select
+            class=${invalid ? "invalid" : ""}
+            ?disabled=${this.disabled}
+            @change=${(e: Event) =>
+              this._emitChange(path, (e.target as HTMLSelectElement).value)}
+          >
+            ${candidates.map(
+              (c) => html`<wa-option
+                class="id-option"
+                value=${c.id}
+                .label=${c.name || c.id}
+                ?selected=${c.id === value}
+              >
+                <span class="id-option-stack">
+                  <span class="id-option-primary">${c.name || c.id}</span>
+                  <span class="id-option-secondary"
+                    >${c.name ? `${c.id} · ${domain}` : domain}</span
+                  >
+                </span>
+              </wa-option>`,
+            )}
+          </wa-select>
+          ${addButton}
+        </div>
         ${this._fieldErrorAt(path)}
       </div>
     `;
+  }
+
+  /**
+   * Ask the host to open the add-component flow filtered to a domain.
+   * The `add-component-form` re-routes this within its own dialog
+   * (catalog view, search filter); the section editor's host catches
+   * it at a higher level and opens the dialog from scratch.
+   */
+  private _requestAddComponent(domain: string) {
+    this.dispatchEvent(
+      new CustomEvent("request-add-component", {
+        detail: { domain },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _renderTextareaField(entry: ConfigEntry, path: string[]) {

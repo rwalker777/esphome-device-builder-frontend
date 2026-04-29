@@ -378,7 +378,7 @@
     "missing_dependencies_body": "Configure these first, then come back to add this one:",
     "missing_dependencies_add": "Add {domain}",
     "id_reference_empty": "No {domain} configured yet",
-    "id_reference_empty_hint": "Add a {domain} component first to be able to reference it here.",
+    "id_reference_add": "Add {domain}",
     "add_automation_error": "Failed to add automation",
     "add_automation_unavailable": "Automation support is not yet available",
     "add_config_error": "Failed to add config section",
