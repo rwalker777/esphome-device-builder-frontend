@@ -332,8 +332,33 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         gap: var(--wa-space-2xs);
       }
 
-      .multi-row wa-input {
+      .multi-row .multi-input {
         flex: 1;
+        font-family: inherit;
+        font-size: var(--wa-font-size-s);
+        padding: 6px 12px;
+        border-radius: var(--wa-border-radius-m);
+        border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+        background: var(--wa-color-surface-default);
+        color: var(--wa-color-text-normal);
+        outline: none;
+        box-sizing: border-box;
+        transition: border-color 0.12s, box-shadow 0.12s;
+      }
+
+      .multi-row .multi-input:focus {
+        border-color: var(--esphome-primary);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--esphome-primary), transparent 80%);
+      }
+
+      .multi-row .multi-input.invalid {
+        border-color: var(--esphome-error);
+      }
+
+      .multi-row .multi-input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
 
       .multi-btn {
@@ -1031,10 +1056,10 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         ${items.map(
           (item, i) => html`
             <div class="multi-row">
-              <wa-input
-                class=${invalid ? "invalid" : ""}
+              <input
+                type="text"
+                class="multi-input ${invalid ? "invalid" : ""}"
                 .value=${item}
-                .defaultValue=${item}
                 ?disabled=${this._saving}
                 @input=${(e: Event) =>
                   this._updateMultiItem(
@@ -1042,7 +1067,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
                     i,
                     (e.target as HTMLInputElement).value
                   )}
-              ></wa-input>
+              />
               <button
                 type="button"
                 class="multi-btn"
