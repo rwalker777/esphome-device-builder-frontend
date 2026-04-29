@@ -293,6 +293,13 @@ export interface ConfigEntry {
   required: boolean;
   /** Default value. For multi_value entries this is the default list. */
   default_value: ConfigPrimitive | ConfigPrimitive[] | null;
+  /**
+   * Per-target-platform defaults for fields using `cv.SplitDefault` (e.g.
+   * `wifi.power_save_mode` is "light" on ESP32, "none" on ESP8266). Look
+   * up the device's target platform here and fall back to `default_value`
+   * when the platform isn't listed.
+   */
+  platform_defaults: Record<string, ConfigPrimitive> | null;
 
   // === value constraints ===
   /** Constrains the value to a fixed set of choices. */
@@ -317,6 +324,14 @@ export interface ConfigEntry {
    * null = always visible.
    */
   depends_on_component: string | null;
+  /**
+   * For `type === "id"` entries: identifies the component domain the
+   * value must reference. The frontend should render a dropdown of
+   * existing components of that domain in the device's YAML — e.g.
+   * `rtttl.output` → "output", many sensors reference "i2c" / "spi" /
+   * "uart" buses. null = free-form ID input.
+   */
+  references_component: string | null;
 
   // === pin selection (only meaningful when type == PIN) ===
   /** Pin capabilities required for this field. */

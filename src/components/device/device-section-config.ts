@@ -111,6 +111,10 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   @state()
   private _presentComponents: Set<string> = new Set();
 
+  /** Full YAML of the device — kept so the ID picker can scan it. */
+  @state()
+  private _yaml = "";
+
   static styles = [
     espHomeStyles,
     inputStyles,
@@ -409,6 +413,27 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         color: var(--wa-color-text-quiet);
       }
 
+      /* ─── ID reference picker option layout ──────────────────
+         Same two-line stacked treatment as the pin selector. */
+      .id-option-stack {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 1px;
+        line-height: 1.25;
+      }
+
+      .id-option-primary {
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-semibold);
+        color: var(--wa-color-text-normal);
+      }
+
+      .id-option-secondary {
+        font-size: var(--wa-font-size-2xs);
+        color: var(--wa-color-text-quiet);
+        font-style: italic;
+      }
+
       .alert-entry {
         padding: var(--wa-space-s) var(--wa-space-m);
         background: var(--wa-color-surface-lowered);
@@ -546,6 +571,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
       };
       this._values = this._parseYamlSectionValues(yaml);
       this._presentComponents = this._parseTopLevelComponents(yaml);
+      this._yaml = yaml;
     } catch (e) {
       if (id !== this._loadId) return;
       const msg = e instanceof Error ? e.message : "";
@@ -811,9 +837,19 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
       case ConfigEntryType.JSON:
         return this._renderTextareaField(entry);
 
-      // ICON, ID, TRIGGER, TIME_PERIOD, STRING, UNKNOWN → text input
+      case ConfigEntryType.ID:
+        // When the schema declares a domain via references_component
+        // (e.g. "i2c", "output", "sensor"), render a dropdown of
+        // existing components of that domain configured in the YAML.
+        // Free-form ID entries fall through to the text input.
+        if (entry.references_component) {
+          return this._renderIdReferenceField(entry);
+        }
+        return this._renderStringField(entry, "text");
+
+      // ICON, TRIGGER, TIME_PERIOD, STRING, UNKNOWN → text input
       // (richer pickers are a follow-up — schemas don't yet expose enough
-      // info for cross-component ID/trigger lookups).
+      // info for cross-component trigger lookups).
       default:
         return this._renderStringField(entry, "text");
     }
@@ -1042,6 +1078,118 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         ${this._fieldError(entry.key)}
       </div>
     `;
+  }
+
+  /**
+   * Render a dropdown listing existing component instances of the
+   * `references_component` domain (e.g. an output ID picker for an
+   * `rtttl` block lists all configured `output:` instances).
+   *
+   * Falls back to a plain text input when no instances are configured —
+   * the user might be referencing a component they haven't added yet,
+   * and we don't want to block them.
+   */
+  private _renderIdReferenceField(entry: ConfigEntry) {
+    const domain = entry.references_component || "";
+    const candidates = this._findReferencedComponents(this._yaml, domain);
+
+    if (candidates.length === 0) {
+      // Fall back to text input but with a hint in the label / help.
+      return this._renderStringField(entry, "text");
+    }
+
+    const value = String(this._values[entry.key] ?? "");
+    const invalid = this._errorFor(entry.key) !== null;
+    return html`
+      <div class="field" data-field-key=${entry.key}>
+        ${this._renderLabel(entry)}
+        <wa-select
+          class=${invalid ? "invalid" : ""}
+          value=${value}
+          ?disabled=${this._saving}
+          @change=${(e: Event) =>
+            this._setValue(entry.key, (e.target as HTMLSelectElement).value)}
+        >
+          ${candidates.map(
+            (c) => html`<wa-option
+              class="id-option"
+              value=${c.id}
+              .label=${c.name || c.id}
+            >
+              <span class="id-option-stack">
+                <span class="id-option-primary">${c.name || c.id}</span>
+                <span class="id-option-secondary"
+                  >${c.name ? `${c.id} · ${domain}` : domain}</span
+                >
+              </span>
+            </wa-option>`,
+          )}
+        </wa-select>
+        ${this._fieldError(entry.key)}
+      </div>
+    `;
+  }
+
+  /**
+   * Scan the device YAML for configured component instances of the
+   * given top-level domain (e.g. "i2c", "output", "sensor"). Returns
+   * an array of `{id, name}` for each list item that exposes an `id:`.
+   *
+   * The parser is deliberately simple — it only looks at items
+   * directly under the matching top-level key and extracts `id:` /
+   * `name:` from indented children. It doesn't need to handle nested
+   * blocks or anchors because the YAML produced by ESPHome and our
+   * own form is always shallow at this level.
+   */
+  private _findReferencedComponents(
+    yaml: string,
+    domain: string,
+  ): Array<{ id: string; name: string }> {
+    if (!domain) return [];
+    const lines = yaml.split("\n");
+    const result: Array<{ id: string; name: string }> = [];
+
+    let inSection = false;
+    let currentId = "";
+    let currentName = "";
+
+    const flush = () => {
+      if (currentId) result.push({ id: currentId, name: currentName });
+      currentId = "";
+      currentName = "";
+    };
+
+    for (const line of lines) {
+      // Top-level section change
+      const topMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
+      if (topMatch) {
+        flush();
+        inSection = topMatch[1] === domain;
+        continue;
+      }
+      if (!inSection) continue;
+
+      // Start of a new list item — finalize the previous one
+      if (/^\s*-\s/.test(line)) flush();
+
+      const idMatch = line.match(
+        /^\s+(?:-\s+)?id:\s*["']?(\S+?)["']?\s*$/,
+      );
+      if (idMatch) {
+        currentId = idMatch[1];
+        continue;
+      }
+      const nameMatch = line.match(
+        /^\s+(?:-\s+)?name:\s*["']?(.+?)["']?\s*$/,
+      );
+      if (nameMatch) {
+        currentName = nameMatch[1];
+        continue;
+      }
+    }
+    flush();
+
+    return result;
   }
 
   /** Render a multi-line textarea for LAMBDA / JSON entries. */
