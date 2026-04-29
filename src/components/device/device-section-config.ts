@@ -312,11 +312,12 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         color: var(--esphome-primary);
       }
 
-      /* "Show advanced settings" toggle row, shown above the form when
+      /* "Show advanced settings" toggle row, shown below the form when
          the section has any advanced entries (at any depth). */
       .advanced-toggle-row {
         display: flex;
-        justify-content: flex-end;
+        justify-content: flex-start;
+        margin-top: var(--wa-space-s);
         font-size: var(--wa-font-size-s);
       }
 
@@ -1051,6 +1052,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
           />
         </div>
       </div>
+      <div class="form">${visibleEntries.map((entry) => this._renderEntry(entry))}</div>
       ${hasAdvanced
         ? html`<div class="advanced-toggle-row">
             <wa-switch
@@ -1064,7 +1066,6 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
             </wa-switch>
           </div>`
         : nothing}
-      <div class="form">${visibleEntries.map((entry) => this._renderEntry(entry))}</div>
       ${this._error ? html`<p class="error">${this._error}</p>` : nothing}
       <div class="actions">
         <button
