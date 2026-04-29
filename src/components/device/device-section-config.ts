@@ -1,10 +1,18 @@
 import { consume } from "@lit/context";
-import { mdiChevronDown, mdiChevronUp, mdiContentSave, mdiHelpCircleOutline, mdiOpenInNew } from "@mdi/js";
+import {
+  mdiChevronDown,
+  mdiChevronUp,
+  mdiClose,
+  mdiContentSave,
+  mdiHelpCircleOutline,
+  mdiOpenInNew,
+  mdiPlus,
+} from "@mdi/js";
 import { css, html, LitElement, nothing } from "lit";
 import toast from "sonner-js";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../../api/index.js";
-import type { ConfigEntry } from "../../api/types.js";
+import type { BoardCatalogEntry, BoardPin, ConfigEntry } from "../../api/types.js";
 import { ConfigEntryType } from "../../api/types.js";
 
 // Local type — SectionConfigResponse is not yet available in the WebSocket backend
@@ -36,9 +44,11 @@ import "@home-assistant/webawesome/dist/components/switch/switch.js";
 registerMdiIcons({
   "chevron-down": mdiChevronDown,
   "chevron-up": mdiChevronUp,
+  close: mdiClose,
   "content-save": mdiContentSave,
   "help-circle-outline": mdiHelpCircleOutline,
   "open-in-new": mdiOpenInNew,
+  plus: mdiPlus,
 });
 
 @customElement("esphome-device-section-config")
@@ -58,6 +68,10 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
 
   @property({ type: Number })
   fromLine?: number;
+
+  /** Optional board metadata; used to render PIN selectors with proper filtering. */
+  @property({ attribute: false })
+  board: BoardCatalogEntry | null = null;
 
   @state()
   private _config: SectionConfigResponse | null = null;
@@ -292,6 +306,62 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
         flex-direction: column;
         gap: var(--wa-space-m);
         margin-top: var(--wa-space-m);
+      }
+
+      .multi-row {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-2xs);
+      }
+
+      .multi-row wa-input {
+        flex: 1;
+      }
+
+      .multi-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 4px 10px;
+        background: transparent;
+        border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+        border-radius: var(--wa-border-radius-m);
+        color: var(--wa-color-text-quiet);
+        font-family: inherit;
+        font-size: var(--wa-font-size-xs);
+        cursor: pointer;
+        transition: background 0.12s, border-color 0.12s, color 0.12s;
+      }
+
+      .multi-btn:hover {
+        background: var(--wa-color-surface-lowered);
+        color: var(--wa-color-text-normal);
+      }
+
+      .multi-btn wa-icon {
+        font-size: 14px;
+      }
+
+      .multi-add {
+        align-self: flex-start;
+        margin-top: var(--wa-space-2xs);
+      }
+
+      .textarea-field {
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: var(--wa-font-size-xs);
+        padding: var(--wa-space-s);
+        border-radius: var(--wa-border-radius-m);
+        border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+        background: var(--wa-color-surface-default);
+        color: var(--wa-color-text-normal);
+        resize: vertical;
+        min-height: 80px;
+      }
+
+      .textarea-field.invalid {
+        border-color: var(--esphome-error);
       }
 
       .alert-entry {
@@ -619,35 +689,61 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   }
 
   private _renderEntry(entry: ConfigEntry) {
+    // Layout-only entries: render before any value-driven branches.
+    if (entry.type === ConfigEntryType.DIVIDER) {
+      return html`<wa-divider></wa-divider>`;
+    }
+    if (entry.type === ConfigEntryType.LABEL) {
+      return html`<p class="label-entry">${this._labelFor(entry)}</p>`;
+    }
+    if (entry.type === ConfigEntryType.ALERT) {
+      return html`<div class="alert-entry">${this._labelFor(entry)}</div>`;
+    }
+
+    // Multi-value entries get a list editor regardless of underlying type.
+    if (entry.multi_value) {
+      return this._renderMultiValueField(entry);
+    }
+
+    // Any entry with options becomes a dropdown — independent of `type`.
+    // The backend signals "use a dropdown" by populating `options`; the
+    // underlying value type (string, integer, etc.) is unchanged.
+    if (entry.options && entry.options.length > 0) {
+      return this._renderSelectField(entry);
+    }
+
     switch (entry.type) {
-      case ConfigEntryType.DIVIDER:
-        return html`<wa-divider></wa-divider>`;
-
-      case ConfigEntryType.LABEL:
-        return html`<p class="label-entry">${entry.label}</p>`;
-
-      case ConfigEntryType.ALERT:
-        return html`<div class="alert-entry">${entry.label}</div>`;
-
       case ConfigEntryType.BOOLEAN:
         return this._renderBooleanField(entry);
 
       case ConfigEntryType.SELECT:
-        return this._renderSelectField(entry);
+        // Backwards-compat: if the deprecated SELECT type is used without
+        // options, fall through to a string input rather than a broken select.
+        return this._renderStringField(entry, "text");
 
       case ConfigEntryType.SECURE_STRING:
         return this._renderStringField(entry, "password");
 
       case ConfigEntryType.INTEGER:
-        return this._renderNumberField(entry);
-
       case ConfigEntryType.FLOAT:
         return this._renderNumberField(entry);
 
-      case ConfigEntryType.ICON:
+      case ConfigEntryType.PIN:
+        return this._renderPinField(entry);
+
+      case ConfigEntryType.COLOR:
+        return this._renderStringField(entry, "color");
+
+      case ConfigEntryType.MAC_ADDRESS:
         return this._renderStringField(entry, "text");
 
-      case ConfigEntryType.STRING:
+      case ConfigEntryType.LAMBDA:
+      case ConfigEntryType.JSON:
+        return this._renderTextareaField(entry);
+
+      // ICON, ID, TRIGGER, TIME_PERIOD, STRING, UNKNOWN → text input
+      // (richer pickers are a follow-up — schemas don't yet expose enough
+      // info for cross-component ID/trigger lookups).
       default:
         return this._renderStringField(entry, "text");
     }
@@ -743,6 +839,159 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   }
 
   /**
+   * Render a list editor for a `multi_value` entry. Stores values as
+   * `string[]` and lets the user add/remove rows. The underlying type
+   * still drives validation but rendering uses a basic text input — a
+   * richer per-type sub-renderer is a follow-up.
+   */
+  private _renderMultiValueField(entry: ConfigEntry) {
+    const raw = this._values[entry.key];
+    const items: string[] = Array.isArray(raw)
+      ? raw.map((v) => String(v))
+      : [];
+    const invalid = this._errorFor(entry.key) !== null;
+    return html`
+      <div class="field">
+        ${this._renderLabel(entry)}
+        ${items.length === 0
+          ? html`<p class="field-description">${this._localize("device.multi_value_empty")}</p>`
+          : nothing}
+        ${items.map(
+          (item, i) => html`
+            <div class="multi-row">
+              <wa-input
+                class=${invalid ? "invalid" : ""}
+                .value=${item}
+                ?disabled=${this._saving}
+                @input=${(e: Event) =>
+                  this._updateMultiItem(entry.key, i, (e.target as HTMLInputElement).value)}
+              ></wa-input>
+              <button
+                type="button"
+                class="multi-btn"
+                ?disabled=${this._saving}
+                aria-label=${this._localize("device.multi_value_remove")}
+                @click=${() => this._removeMultiItem(entry.key, i)}
+              >
+                <wa-icon library="mdi" name="close"></wa-icon>
+              </button>
+            </div>
+          `,
+        )}
+        <button
+          type="button"
+          class="multi-btn multi-add"
+          ?disabled=${this._saving}
+          @click=${() => this._addMultiItem(entry.key)}
+        >
+          <wa-icon library="mdi" name="plus"></wa-icon>
+          ${this._localize("device.multi_value_add")}
+        </button>
+        ${this._fieldError(entry.key)}
+      </div>
+    `;
+  }
+
+  /**
+   * Render a GPIO pin selector backed by the device's board metadata.
+   *
+   * Pins are filtered by `entry.pin_features` (every required feature
+   * must be present on the pin). Pins marked `available=false` are kept
+   * in the list but disabled, with their `occupied_by` / `notes` shown
+   * as supporting text so the user understands why they can't pick them.
+   */
+  private _renderPinField(entry: ConfigEntry) {
+    // No board context — fall back to a plain text input so the field
+    // remains editable (the user might know the pin name even without
+    // the board metadata loaded).
+    if (!this.board || this.board.pins.length === 0) {
+      return this._renderStringField(entry, "text");
+    }
+
+    const value = String(this._values[entry.key] ?? "");
+    const invalid = this._errorFor(entry.key) !== null;
+    const required = entry.pin_features ?? [];
+    const matchesFeatures = (pin: BoardPin) =>
+      required.every((f) => pin.features.includes(f));
+
+    const visible = this.board.pins.filter(matchesFeatures);
+
+    return html`
+      <div class="field">
+        ${this._renderLabel(entry)}
+        <wa-select
+          class=${invalid ? "invalid" : ""}
+          value=${value}
+          ?disabled=${this._saving}
+          @change=${(e: Event) =>
+            this._setValue(entry.key, (e.target as HTMLSelectElement).value)}
+        >
+          ${visible.map((pin) => {
+            const disabled = pin.available === false;
+            const supporting =
+              pin.occupied_by || pin.notes || (disabled ? this._localize("device.pin_unavailable") : "");
+            const optValue = `GPIO${pin.gpio}`;
+            const label = pin.label || optValue;
+            return html`<wa-option
+              value=${optValue}
+              ?disabled=${disabled}
+              title=${supporting || ""}
+            >
+              ${label}${supporting ? html` — <em>${supporting}</em>` : nothing}
+            </wa-option>`;
+          })}
+        </wa-select>
+        ${this._fieldError(entry.key)}
+      </div>
+    `;
+  }
+
+  /** Render a multi-line textarea for LAMBDA / JSON entries. */
+  private _renderTextareaField(entry: ConfigEntry) {
+    const value = String(this._values[entry.key] ?? "");
+    const invalid = this._errorFor(entry.key) !== null;
+    return html`
+      <div class="field">
+        ${this._renderLabel(entry)}
+        <textarea
+          class="textarea-field ${invalid ? "invalid" : ""}"
+          rows="4"
+          ?disabled=${this._saving}
+          .value=${value}
+          placeholder=${String(entry.default_value ?? "")}
+          @input=${(e: Event) =>
+            this._setValue(entry.key, (e.target as HTMLTextAreaElement).value)}
+        ></textarea>
+        ${this._fieldError(entry.key)}
+      </div>
+    `;
+  }
+
+  // ─── multi_value helpers ────────────────────────────────────────
+
+  private _addMultiItem(key: string) {
+    const current = Array.isArray(this._values[key])
+      ? (this._values[key] as unknown[])
+      : [];
+    this._setValue(key, [...current, ""]);
+  }
+
+  private _removeMultiItem(key: string, idx: number) {
+    const current = Array.isArray(this._values[key])
+      ? (this._values[key] as unknown[])
+      : [];
+    this._setValue(key, current.filter((_, i) => i !== idx));
+  }
+
+  private _updateMultiItem(key: string, idx: number, value: string) {
+    const current = Array.isArray(this._values[key])
+      ? [...(this._values[key] as unknown[])]
+      : [];
+    current[idx] = value;
+    this._setValue(key, current);
+  }
+
+  /**
    * Render the label for a config entry, including the required indicator
    * and a help icon (when there's a description and/or help_link).
    *
@@ -755,11 +1004,33 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
     const hasHelp = !!(entry.description || entry.help_link);
     return html`
       <label class="field-label">
-        ${entry.label}
+        ${this._labelFor(entry)}
         ${entry.required ? html`<span class="required">*</span>` : nothing}
         ${hasHelp ? this._renderHelp(entry) : nothing}
       </label>
     `;
+  }
+
+  /**
+   * Resolve the label for an entry. Preference order:
+   *  1. translation_key (with translation_params) — if it resolves to
+   *     something other than the raw key, use it.
+   *  2. entry.label
+   *  3. Title-cased entry.key as last-resort fallback.
+   */
+  private _labelFor(entry: ConfigEntry): string {
+    if (entry.translation_key) {
+      const params = (entry.translation_params || undefined) as
+        | Record<string, string | number>
+        | undefined;
+      const translated = this._localize(entry.translation_key, params);
+      if (translated && translated !== entry.translation_key) return translated;
+    }
+    if (entry.label) return entry.label;
+    return entry.key
+      .split("_")
+      .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+      .join(" ");
   }
 
   private _renderHelp(entry: ConfigEntry) {

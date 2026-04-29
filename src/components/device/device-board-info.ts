@@ -276,6 +276,7 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
               .configuration=${this.configuration}
               .sectionKey=${this.selectedSection}
               .fromLine=${this.selectedFromLine}
+              .board=${this.board}
             ></esphome-device-section-config>
           `
         : html`
