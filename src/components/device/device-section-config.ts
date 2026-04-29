@@ -1033,7 +1033,8 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
             <div class="multi-row">
               <wa-input
                 class=${invalid ? "invalid" : ""}
-                value=${item}
+                .value=${item}
+                .defaultValue=${item}
                 ?disabled=${this._saving}
                 @input=${(e: Event) =>
                   this._updateMultiItem(
