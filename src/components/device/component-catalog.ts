@@ -54,19 +54,21 @@ export class ESPHomeComponentCatalog extends LitElement {
   @property()
   yaml = "";
 
-  /** When set, locks the catalog to a single category and hides the
-   *  category sidebar. Used by the "Add core configuration" dialog
-   *  (`lockedCategory="core"`) so the same UI can drive both flows
-   *  without showing irrelevant filter options. */
-  @property({ attribute: "locked-category" })
-  lockedCategory = "";
+  /** When non-empty, locks the catalog to these categories (logical
+   *  OR across the list) and hides the category sidebar. The
+   *  "Add core configuration" dialog passes `CORE_CATEGORIES` so
+   *  the same UI can drive both flows without showing irrelevant
+   *  filter options. */
+  @property({ attribute: false })
+  lockedCategories: string[] = [];
 
-  /** Hides the given category server-side. The normal "Add component"
-   *  dialog passes `excludeCategory="core"` so core components only
-   *  appear in their dedicated dialog. Ignored when `lockedCategory`
-   *  is set (a positive filter already restricts the set). */
-  @property({ attribute: "exclude-category" })
-  excludeCategory = "";
+  /** Categories to hide server-side. The normal "Add component"
+   *  dialog passes `CORE_CATEGORIES` so the core/ota/time/update
+   *  entries only appear in their dedicated dialog. Ignored when
+   *  `lockedCategories` is set (a positive filter already restricts
+   *  the set). */
+  @property({ attribute: false })
+  excludeCategories: string[] = [];
 
   @state()
   private _components: ComponentCatalogEntry[] = [];
@@ -166,16 +168,19 @@ export class ESPHomeComponentCatalog extends LitElement {
     this._loading = true;
     try {
       const query = this._search.trim() || undefined;
-      // `lockedCategory` (set by the parent — e.g. "core" for the
-      // core-config dialog) wins over the user's sidebar selection.
-      // Otherwise fall back to the in-component filter, with "all"
-      // meaning "no filter".
-      const category =
-        this.lockedCategory ||
-        (this._category !== "all" ? this._category : undefined);
-      const exclude_category =
-        !this.lockedCategory && this.excludeCategory
-          ? this.excludeCategory
+      // `lockedCategories` (set by the parent — e.g. CORE_CATEGORIES
+      // for the core-config dialog) wins over the user's sidebar
+      // selection. Otherwise fall back to the in-component filter,
+      // with "all" meaning "no filter".
+      const locked = this.lockedCategories.length > 0;
+      const category: string | string[] | undefined = locked
+        ? this.lockedCategories
+        : this._category !== "all"
+          ? this._category
+          : undefined;
+      const exclude_category: string[] | undefined =
+        !locked && this.excludeCategories.length > 0
+          ? this.excludeCategories
           : undefined;
       const platform = this.platform || undefined;
       const board_id = this.boardId || undefined;
@@ -529,12 +534,12 @@ export class ESPHomeComponentCatalog extends LitElement {
     }
 
     const categories = this._buildCategories();
-    // When the parent locks us to a single category (e.g. core-config
-    // dialog passes `lockedCategory="core"`), the sidebar's filter
-    // options are noise — the only category that matters is already
-    // pinned. Hide the sidebar entirely so the catalog acts like a
-    // simple filtered list.
-    const showSidebar = !this.lockedCategory;
+    // When the parent locks us to a category set (e.g. core-config
+    // dialog passes `CORE_CATEGORIES`), the sidebar's filter options
+    // are noise — the categories that matter are already pinned.
+    // Hide the sidebar entirely so the catalog acts like a simple
+    // filtered list.
+    const showSidebar = this.lockedCategories.length === 0;
 
     return html`
       ${showSidebar

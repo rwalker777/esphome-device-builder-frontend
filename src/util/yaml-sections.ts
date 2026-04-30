@@ -15,23 +15,25 @@ export interface CategorizedSections {
 }
 
 // ESPHome system/platform keys → Core configuration. This list MUST
-// stay in sync with the backend's `category: "core"` (defined in
+// stay in sync with `CORE_CATEGORIES` in `api/types.ts` and the
+// backend's `category: "core"` (defined in
 // `script/sync_components.py` → `_CATEGORY_OVERRIDES`) so the
 // navigator's "Core" group lists exactly the components the
 // "Add core configuration" dialog offers.
 //
-// Two umbrella YAML keys (`ota`, `time`) appear here without
-// matching catalog entries — those domains only have platform
-// variants (`ota.esphome`, `time.sntp`, …) in the catalog, but the
-// top-level YAML block they sit in is still firmly "core" and the
-// navigator needs to categorize it correctly.
+// Three umbrella YAML keys (`ota`, `time`, `update`) appear here
+// without matching catalog entries — those domains only have
+// platform variants (`ota.esphome`, `time.sntp`, `update.http_request`,
+// …) in the catalog, but the top-level YAML block they sit in is
+// still firmly "core" and the navigator needs to categorize it
+// correctly.
 export const CORE_KEYS = new Set([
   // Target platforms
   "esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x", "nrf52", "host",
   // ESPHome infrastructure
   "esphome", "logger", "api", "ota", "wifi", "ethernet", "mqtt", "mdns",
   "network", "web_server", "captive_portal", "improv_serial",
-  "safe_mode", "debug", "preferences", "time",
+  "safe_mode", "debug", "preferences", "time", "update",
   // Device-wide config keys (not strictly components — no C++
   // implementation — but they share the top-level YAML namespace
   // alongside real components).

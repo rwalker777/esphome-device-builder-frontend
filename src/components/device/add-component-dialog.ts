@@ -2,9 +2,10 @@ import { consume } from "@lit/context";
 import { mdiArrowLeft, mdiClose } from "@mdi/js";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type {
-  BoardCatalogEntry,
-  ComponentCatalogEntry,
+import {
+  CORE_CATEGORIES,
+  type BoardCatalogEntry,
+  type ComponentCatalogEntry,
 } from "../../api/types.js";
 import type { ESPHomeAPI } from "../../api/index.js";
 import { findAddedSection } from "../../util/yaml-sections.js";
@@ -53,17 +54,17 @@ export class ESPHomeAddComponentDialog extends LitElement {
   @property()
   yaml = "";
 
-  /** When set (e.g. `"core"`) the dialog locks the catalog to that
-   *  single category, hides the category sidebar, and switches its
-   *  title to the matching localization key. The "Add core
-   *  configuration" entry point sets `lockedCategory="core"` so the
-   *  same dialog handles both the regular and core flows.
+  /** When non-empty, the dialog locks the catalog to those
+   *  categories, hides the category sidebar, and switches its title
+   *  to the core-config localization keys. The "Add core
+   *  configuration" entry point sets `lockedCategories=CORE_CATEGORIES`
+   *  so the same dialog handles both the regular and core flows.
    *
-   *  When empty, the dialog also tells the catalog to *exclude* the
-   *  `core` category — those components belong to the dedicated
+   *  When empty, the dialog tells the catalog to *exclude*
+   *  `CORE_CATEGORIES` — those components belong to the dedicated
    *  core dialog, not the regular component selector. */
-  @property({ attribute: "locked-category" })
-  lockedCategory = "";
+  @property({ attribute: false })
+  lockedCategories: string[] = [];
 
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
@@ -231,9 +232,10 @@ export class ESPHomeAddComponentDialog extends LitElement {
   protected render() {
     const isForm = this._selected !== null;
     // The same dialog drives both the regular catalog flow and the
-    // "Add core configuration" flow — `lockedCategory="core"` flips
-    // the title text and tells the catalog to lock its filter.
-    const isCore = this.lockedCategory === "core";
+    // "Add core configuration" flow — a non-empty
+    // `lockedCategories` flips the title text and tells the catalog
+    // to lock its filter to that set.
+    const isCore = this.lockedCategories.length > 0;
     const headerKey = isCore
       ? this.boardName
         ? "device.add_config_dialog_title"
@@ -279,8 +281,8 @@ export class ESPHomeAddComponentDialog extends LitElement {
           .platform=${this.platform}
           .boardId=${this.board?.id ?? ""}
           .yaml=${this.yaml}
-          .lockedCategory=${this.lockedCategory}
-          .excludeCategory=${this.lockedCategory ? "" : "core"}
+          .lockedCategories=${this.lockedCategories}
+          .excludeCategories=${isCore ? [] : CORE_CATEGORIES}
         ></esphome-component-catalog>
         ${isForm
           ? html`<esphome-add-component-form

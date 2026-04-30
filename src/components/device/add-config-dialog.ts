@@ -1,6 +1,6 @@
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import type { BoardCatalogEntry } from "../../api/types.js";
+import { CORE_CATEGORIES, type BoardCatalogEntry } from "../../api/types.js";
 
 import "./add-component-dialog.js";
 import type { ESPHomeAddComponentDialog } from "./add-component-dialog.js";
@@ -55,7 +55,7 @@ export class ESPHomeAddConfigDialog extends LitElement {
     // sibling regular dialog (otherwise it would also pick up our
     // core-locked one and route the wrong open() call).
     return html`<esphome-add-component-dialog
-      locked-category="core"
+      .lockedCategories=${CORE_CATEGORIES}
       .boardName=${this.boardName}
       .configuration=${this.configuration}
       .platform=${this.platform}

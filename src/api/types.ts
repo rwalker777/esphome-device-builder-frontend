@@ -202,8 +202,50 @@ export enum ComponentCategory {
   CORE = "core",
   BUS = "bus",
   AUTOMATION = "automation",
+  // Platform-domain umbrellas — `ota.*` / `time.*` components carry
+  // these as their category. The regular component selector hides
+  // them since the OTA / time / update blocks belong in the core
+  // dialog (see CORE_CATEGORIES below).
+  OTA = "ota",
+  TIME = "time",
+  // Other platform domains tagged from the schema by the sync
+  // script. Listed so frontend code can reference them by enum.
+  AUDIO_ADC = "audio_adc",
+  AUDIO_DAC = "audio_dac",
+  CANBUS = "canbus",
+  INFRARED = "infrared",
+  MEDIA_SOURCE = "media_source",
+  ONE_WIRE = "one_wire",
+  PACKET_TRANSPORT = "packet_transport",
+  STEPPER = "stepper",
+  WATER_HEATER = "water_heater",
   MISC = "misc",
 }
+
+/**
+ * Categories considered "core configuration" — these belong to the
+ * dedicated "Add core configuration" dialog and are filtered OUT of
+ * the regular component selector. Includes:
+ *
+ * - `core` — backend-tagged core infrastructure (api, wifi, logger,
+ *   target platforms, substitutions, …).
+ * - `ota` / `time` / `update` — platform-domain umbrellas whose
+ *   top-level YAML blocks (`ota:`, `time:`, `update:`) are
+ *   conceptually core. The catalog has no standalone entry for these
+ *   domains, only platform variants (`ota.esphome`, `time.sntp`,
+ *   `update.http_request`, …) which all carry the umbrella as their
+ *   category.
+ *
+ * The frontend's CORE_KEYS in `util/yaml-sections.ts` is the
+ * YAML-key-level counterpart (which umbrella keys are categorized
+ * as "Core" in the navigator) and stays aligned with this list.
+ */
+export const CORE_CATEGORIES: ComponentCategory[] = [
+  ComponentCategory.CORE,
+  ComponentCategory.OTA,
+  ComponentCategory.TIME,
+  ComponentCategory.UPDATE,
+];
 
 export interface ComponentCatalogEntry {
   id: string;
