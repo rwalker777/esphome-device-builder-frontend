@@ -52,9 +52,6 @@ export class ESPHomeDeviceEditor extends LitElement {
   @property({ attribute: false })
   board: BoardCatalogEntry | null = null;
 
-  @property({ type: Boolean })
-  justCreated = false;
-
   @state()
   private _isMobile = false;
 
@@ -244,7 +241,6 @@ export class ESPHomeDeviceEditor extends LitElement {
               <esphome-device-board-info
                 .board=${this.board}
                 .yaml=${this.yaml}
-                .justCreated=${this.justCreated}
                 .configuration=${this.configuration}
                 .selectedSection=${this.selectedSection}
                 .selectedFromLine=${this.selectedFromLine}

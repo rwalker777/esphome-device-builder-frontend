@@ -1,6 +1,7 @@
 import { consume } from "@lit/context";
 import {
   mdiArrowDecisionOutline,
+  mdiCogOutline,
   mdiMemory,
   mdiOpenInNew,
   mdiPlusCircleOutline,
@@ -12,25 +13,23 @@ import type { LocalizeFunc } from "../../common/localize.js";
 import { localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
-import {
-  categorizeSections,
-  parseYamlAutomations,
-  parseYamlTopLevelSections,
-} from "../../util/yaml-sections.js";
 import type { ESPHomeAddAutomationDialog } from "./add-automation-dialog.js";
 import type { ESPHomeAddComponentDialog } from "./add-component-dialog.js";
+import type { ESPHomeAddConfigDialog } from "./add-config-dialog.js";
 import type { ESPHomeDeviceSectionConfig } from "./device-section-config.js";
 
 import "@home-assistant/webawesome/dist/components/badge/badge.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "./add-automation-dialog.js";
 import "./add-component-dialog.js";
+import "./add-config-dialog.js";
 import "./device-section-config.js";
 
 registerMdiIcons({
   "open-in-new": mdiOpenInNew,
   memory: mdiMemory,
   "arrow-decision-outline": mdiArrowDecisionOutline,
+  "cog-outline": mdiCogOutline,
   "plus-circle-outline": mdiPlusCircleOutline,
 });
 
@@ -45,9 +44,6 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
 
   @property()
   yaml = "";
-
-  @property({ type: Boolean })
-  justCreated = false;
 
   @property()
   configuration = "";
@@ -66,6 +62,9 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
 
   @query("esphome-add-automation-dialog")
   private _addAutomationDialog!: ESPHomeAddAutomationDialog;
+
+  @query("esphome-add-config-dialog")
+  private _addConfigDialog!: ESPHomeAddConfigDialog;
 
   private _reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -249,14 +248,6 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
   protected render() {
     if (!this.board) return nothing;
 
-    const { components } = categorizeSections(parseYamlTopLevelSections(this.yaml));
-    const inlineAutomations = parseYamlAutomations(this.yaml);
-    const hasComponents = components.length > 0;
-    const hasAutomations = inlineAutomations.length > 0;
-
-    const showAddComponent = this.justCreated && !hasComponents;
-    const showAddAutomations = hasComponents && !hasAutomations;
-
     return html`
       ${!this.selectedSection
         ? html`
@@ -302,52 +293,34 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
             ></esphome-device-section-config>
           `
         : html`
-            ${showAddComponent
-              ? html`
-                  <div class="step-section">
-                    <h4 class="step-title">
-                      ${this._localize("device.step_add_component")}
-                    </h4>
-                    <p class="step-desc">
-                      ${this._localize("device.step_add_component_desc")}
-                    </p>
-                    <div
-                      class="action-item"
-                      @click=${() => this._addComponentDialog.open()}
-                    >
-                      <div>
-                        <wa-icon library="mdi" name="memory"></wa-icon>
-                        <p>${this._localize("device.add_component")}</p>
-                      </div>
-                      <wa-icon library="mdi" name="plus-circle-outline"></wa-icon>
-                    </div>
-                  </div>
-                `
-              : nothing}
-            ${showAddAutomations
-              ? html`
-                  <div class="step-section">
-                    <h4 class="step-title">
-                      ${this._localize("device.step_add_automations")}
-                    </h4>
-                    <p class="step-desc">
-                      ${this._localize("device.step_add_automations_desc")}
-                    </p>
-                    <div
-                      class="action-item"
-                      @click=${() => this._addAutomationDialog.open()}
-                    >
-                      <div>
-                        <wa-icon library="mdi" name="arrow-decision-outline"></wa-icon>
-                        <p>${this._localize("device.add_automation")}</p>
-                      </div>
-                      <wa-icon library="mdi" name="plus-circle-outline"></wa-icon>
-                    </div>
-                  </div>
-                `
-              : nothing}
+            ${this._renderStepSection({
+              title: this._localize("device.step_core"),
+              desc: this._localize("device.step_core_desc"),
+              icon: "cog-outline",
+              action: this._localize("device.add_core_configuration"),
+              onClick: () => this._addConfigDialog?.open(),
+            })}
+            ${this._renderStepSection({
+              title: this._localize("device.step_components"),
+              desc: this._localize("device.step_components_desc"),
+              icon: "memory",
+              action: this._localize("device.add_component"),
+              onClick: () => this._addComponentDialog?.open(),
+            })}
+            ${this._renderStepSection({
+              title: this._localize("device.step_automations"),
+              desc: this._localize("device.step_automations_desc"),
+              icon: "arrow-decision-outline",
+              action: this._localize("device.add_automation"),
+              onClick: () => this._addAutomationDialog?.open(),
+            })}
           `}
 
+      <esphome-add-config-dialog
+        .boardName=${this.board.name}
+        .configuration=${this.configuration}
+        .platform=${this.board.esphome.platform}
+      ></esphome-add-config-dialog>
       <esphome-add-component-dialog
         .boardName=${this.board.name}
         .configuration=${this.configuration}
@@ -359,6 +332,34 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
         .boardName=${this.board.name}
         .configuration=${this.configuration}
       ></esphome-add-automation-dialog>
+    `;
+  }
+
+  /**
+   * Render one of the three numbered "next steps" panels in the
+   * unselected content pane (Core / Components / Automations).
+   * Each renders a heading, longer description, and a primary CTA
+   * that opens the matching add-* dialog.
+   */
+  private _renderStepSection(opts: {
+    title: string;
+    desc: string;
+    icon: string;
+    action: string;
+    onClick: () => void;
+  }) {
+    return html`
+      <div class="step-section">
+        <h4 class="step-title">${opts.title}</h4>
+        <p class="step-desc">${opts.desc}</p>
+        <div class="action-item" @click=${opts.onClick}>
+          <div>
+            <wa-icon library="mdi" name=${opts.icon}></wa-icon>
+            <p>${opts.action}</p>
+          </div>
+          <wa-icon library="mdi" name="plus-circle-outline"></wa-icon>
+        </div>
+      </div>
     `;
   }
 

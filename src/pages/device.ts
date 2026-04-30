@@ -60,9 +60,6 @@ export class ESPHomePageDevice extends LitElement {
   @property()
   id = "";
 
-  @property({ type: Boolean })
-  justCreated = false;
-
   @state()
   private _layout: DeviceLayoutMode = "both";
 
@@ -336,7 +333,6 @@ export class ESPHomePageDevice extends LitElement {
             .layout=${this._layout}
             .deviceTitle=${deviceTitle}
             .board=${this._board}
-            .justCreated=${this.justCreated}
             .highlightRange=${this._highlightRange}
             .scrollToHighlight=${this._scrollToHighlight}
             .configuration=${this.id}
