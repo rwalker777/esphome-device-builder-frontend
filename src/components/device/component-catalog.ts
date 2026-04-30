@@ -671,22 +671,32 @@ export class ESPHomeComponentCatalog extends LitElement {
     const visibleTotal = excluded.size
       ? visibleCats.reduce((sum, c) => sum + c.count, 0)
       : this._total;
+    // Resolve each category's display label first (i18n key when one
+    // exists, otherwise the backend-provided fallback), then sort
+    // alphabetically by what the user actually reads. The backend
+    // sorts by component count which doesn't help discovery — finding
+    // "Sensor" in a 30-entry list is much faster when it's in
+    // alphabetical order. "All" stays pinned at the top.
+    const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+    const sortedCats = visibleCats
+      .map((cat) => {
+        const key = `device.component_category_${cat.id}`;
+        const translated = this._localize(key);
+        return {
+          id: cat.id,
+          label: translated !== key ? translated : cat.name,
+          count: cat.count,
+        };
+      })
+      .sort((a, b) => collator.compare(a.label, b.label));
     const cats = [
       {
         id: "all",
         label: this._localize("device.component_category_all"),
         count: visibleTotal,
       },
+      ...sortedCats,
     ];
-    for (const cat of visibleCats) {
-      const key = `device.component_category_${cat.id}`;
-      const translated = this._localize(key);
-      cats.push({
-        id: cat.id,
-        label: translated !== key ? translated : cat.name,
-        count: cat.count,
-      });
-    }
     return cats;
   }
 
