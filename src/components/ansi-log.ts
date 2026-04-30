@@ -234,22 +234,7 @@ export class ESPHomeAnsiLog extends LitElement {
   }
 
   protected render() {
-    // Flatten: a single "line" from upstream may contain embedded newlines,
-    // so split into visual lines, trim leading whitespace (so every line
-    // starts at the same left offset), and drop empty ones.
-    const visual: string[] = [];
-    for (const raw of this.lines) {
-      // Normalize line endings and strip carriage returns
-      const normalized = raw.replace(/\r\n?/g, "\n");
-      for (const part of normalized.split("\n")) {
-        // Strip ANSI codes and whitespace from edges, then re-add interior ANSI codes
-        const stripped = this._cleanLine(part);
-        if (stripped.replace(/\u001b\[[0-9;]*m/g, "").trim().length > 0) {
-          visual.push(stripped);
-        }
-      }
-    }
-
+    const visual = this._chunksToVisualLines(this.lines);
     return html`
       <div class="log-container" @scroll=${this._handleScroll}>
         ${visual.length === 0 && this.placeholder
@@ -260,11 +245,44 @@ export class ESPHomeAnsiLog extends LitElement {
   }
 
   /**
-   * Clean a log line: strip leading/trailing whitespace while preserving
-   * ANSI escape sequences that are interleaved with the text content.
+   * Fold an incoming stream of subprocess output chunks into the
+   * sequence of "visual" lines we want to render. The backend splits
+   * stdout at every `\n` _or_ `\r` and forwards each chunk including
+   * its terminator, which means progress updates (esptool's
+   * `Writing at 0x10000... (5%)\r`) arrive as CR-terminated chunks.
+   * Same rules the old ESPHome dashboard uses:
+   *   - A chunk that ends with `\r` "owns" the last visual line; the
+   *     next chunk (unless it's a bare `\n`) replaces that line in
+   *     place — that's how progress bars overwrite themselves.
+   *   - A bare `\n` chunk (the trailing half of a `\r\n` pair)
+   *     finalises the line in place — no replacement.
+   *   - Everything else is a new line appended to the bottom.
+   * Empty visual lines are dropped so stray newlines don't punch
+   * blank gaps into the output.
+   */
+  private _chunksToVisualLines(chunks: string[]): string[] {
+    const visual: string[] = [];
+    let prevEndedInCR = false;
+    for (const chunk of chunks) {
+      if (prevEndedInCR && chunk !== "\n" && visual.length > 0) {
+        visual.pop();
+      }
+      const text = this._cleanLine(chunk.replace(/[\r\n]+$/, ""));
+      if (text.replace(/\u001b\[[0-9;]*m/g, "").length > 0) {
+        visual.push(text);
+      }
+      prevEndedInCR = chunk.endsWith("\r");
+    }
+    return visual;
+  }
+
+  /**
+   * Strip leading whitespace + ANSI escapes and trailing whitespace
+   * from one chunk, preserving the ANSI escapes that sit interior to
+   * the visible text. Helps lines line up at the same left offset
+   * regardless of how the upstream tool indents.
    */
   private _cleanLine(line: string): string {
-    // Remove all leading whitespace and ANSI codes, then all trailing whitespace
     return line.replace(/^(?:\u001b\[[0-9;]*m|\s)*/g, "").replace(/\s+$/, "");
   }
 
