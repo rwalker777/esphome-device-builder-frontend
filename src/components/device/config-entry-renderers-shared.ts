@@ -98,6 +98,26 @@ export function renderStringField(
 ) {
   const value = String(ctx.getAt(path) ?? "");
   const invalid = ctx.errorAt(path) !== null;
+  const placeholder = String(entry.default_value ?? "");
+  // Password inputs render the dedicated component so they get a
+  // reveal/hide toggle. Keeping the show-state inside the component
+  // means the form's re-renders don't blow it away.
+  if (inputType === "password") {
+    return html`
+      <div class="field" data-field-key=${path.join(".")}>
+        ${renderLabel(entry, ctx)}
+        <esphome-password-input
+          .value=${value}
+          .invalid=${invalid}
+          .disabled=${ctx.disabled}
+          .placeholder=${placeholder}
+          @input=${(e: CustomEvent<{ value: string }>) =>
+            ctx.emitChange(path, e.detail.value)}
+        ></esphome-password-input>
+        ${renderFieldError(path, ctx)}
+      </div>
+    `;
+  }
   return html`
     <div class="field" data-field-key=${path.join(".")}>
       ${renderLabel(entry, ctx)}
@@ -106,7 +126,7 @@ export function renderStringField(
         class=${invalid ? "invalid" : ""}
         .value=${value}
         ?disabled=${ctx.disabled}
-        placeholder=${String(entry.default_value ?? "")}
+        placeholder=${placeholder}
         @input=${(e: Event) => ctx.emitChange(path, (e.target as HTMLInputElement).value)}
       />
       ${renderFieldError(path, ctx)}
