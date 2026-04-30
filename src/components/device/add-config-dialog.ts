@@ -51,6 +51,11 @@ export class ESPHomeAddConfigDialog extends LitElement {
   @property()
   platform = "";
 
+  /** Device's board id — sent to `getComponents` for forward-compat
+   *  board-level filtering once the backend grows it. */
+  @property({ attribute: "board-id" })
+  boardId = "";
+
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
 
@@ -390,6 +395,7 @@ export class ESPHomeAddConfigDialog extends LitElement {
       const response = await this._api.getComponents({
         category: "core",
         platform: this.platform || undefined,
+        board_id: this.boardId || undefined,
         limit: 100,
       });
       this._sections = response.components.map((c) => ({

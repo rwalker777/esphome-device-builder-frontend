@@ -37,6 +37,14 @@ export class ESPHomeComponentCatalog extends LitElement {
   @property()
   platform = "";
 
+  /** Device's board id (e.g. "esp32-c6-devkitc-1"). Forwarded to the
+   * backend so once components grow board-level constraints the
+   * catalog can narrow down to what this board can actually run.
+   * Currently a no-op filter on the BE; sending it now so we don't
+   * have to plumb it through later. */
+  @property({ attribute: "board-id" })
+  boardId = "";
+
   @state()
   private _components: ComponentCatalogEntry[] = [];
 
@@ -116,7 +124,14 @@ export class ESPHomeComponentCatalog extends LitElement {
       const query = this._search.trim() || undefined;
       const category = this._category !== "all" ? this._category : undefined;
       const platform = this.platform || undefined;
-      const response = await this._api.getComponents({ query, category, platform, limit: 50 });
+      const board_id = this.boardId || undefined;
+      const response = await this._api.getComponents({
+        query,
+        category,
+        platform,
+        board_id,
+        limit: 50,
+      });
       this._components = response.components;
       this._categories = response.categories;
       this._total = response.total;
