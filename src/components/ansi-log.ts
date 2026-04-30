@@ -74,10 +74,24 @@ function detectLogLevelColor(line: string): string | undefined {
   return match ? LOG_LEVEL_COLORS[match[1]] : undefined;
 }
 
+/**
+ * Match every ANSI escape sequence we care about as one of three
+ * shapes:
+ *   - CSI: `ESC [` <params> <intermediate> <final> — group 1 is the
+ *     final byte. SGR (`m`) drives colors; everything else (cursor
+ *     positioning, erase-line, DECTCEM `?25l/?25h`, ...) we silently
+ *     discard so it doesn't leak into the rendered text.
+ *   - OSC: `ESC ]` ... terminator — terminal title sets, hyperlinks,
+ *     etc. Always discarded.
+ *   - Two-char escapes: `ESC` + a single control char. Also discarded.
+ * Final-byte / intermediate / parameter ranges follow ECMA-48.
+ */
+const ANSI_ESCAPE_RE =
+  /\u001b\[[\x30-\x3f]*[\x20-\x2f]*([\x40-\x7e])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[NOPVWX^_=>]/g;
+
 /** Parse a single log line with ANSI codes into styled spans. */
 function parseAnsiLine(line: string): AnsiSpan[] {
   const spans: AnsiSpan[] = [];
-  const regex = /\u001b\[([0-9;]*)m/g;
   let lastIndex = 0;
   let currentColor: string | undefined;
   let currentBg: string | undefined;
@@ -86,7 +100,7 @@ function parseAnsiLine(line: string): AnsiSpan[] {
 
   let match: RegExpExecArray | null;
 
-  while ((match = regex.exec(line)) !== null) {
+  while ((match = ANSI_ESCAPE_RE.exec(line)) !== null) {
     // Push text before this escape
     if (match.index > lastIndex) {
       spans.push({
@@ -98,37 +112,48 @@ function parseAnsiLine(line: string): AnsiSpan[] {
       });
     }
 
-    // Parse SGR codes
-    const codes = match[1].split(";").map(Number);
-    for (const code of codes) {
-      if (code === 0) {
-        currentColor = undefined;
-        currentBg = undefined;
-        bold = false;
-        dim = false;
-      } else if (code === 1) {
-        bold = true;
-      } else if (code === 2) {
-        dim = true;
-      } else if (code === 22) {
-        bold = false;
-        dim = false;
-      } else if (code >= 30 && code <= 37) {
-        currentColor = ANSI_COLORS[code];
-      } else if (code >= 90 && code <= 97) {
-        currentColor = ANSI_COLORS[code];
-      } else if (code === 39) {
-        currentColor = undefined;
-      } else if (code >= 40 && code <= 47) {
-        currentBg = ANSI_BG_COLORS[code];
-      } else if (code >= 100 && code <= 107) {
-        currentBg = ANSI_BG_COLORS[code];
-      } else if (code === 49) {
-        currentBg = undefined;
+    // Group 1 is the CSI final byte (only set for CSI matches).
+    // We only act on SGR (final byte `m`); everything else (cursor
+    // moves, erase commands, OSC, single-char escapes) is silently
+    // consumed — the bytes between this match and the next one are
+    // dropped from the output.
+    if (match[1] === "m") {
+      // Pull params from inside `ESC [ ... m`. `match[0].slice(2, -1)`
+      // is the substring between `ESC[` and `m`.
+      const params = match[0].slice(2, -1);
+      const codes = params
+        .split(";")
+        .map((p) => (p === "" ? 0 : Number(p)));
+      for (const code of codes) {
+        if (code === 0) {
+          currentColor = undefined;
+          currentBg = undefined;
+          bold = false;
+          dim = false;
+        } else if (code === 1) {
+          bold = true;
+        } else if (code === 2) {
+          dim = true;
+        } else if (code === 22) {
+          bold = false;
+          dim = false;
+        } else if (code >= 30 && code <= 37) {
+          currentColor = ANSI_COLORS[code];
+        } else if (code >= 90 && code <= 97) {
+          currentColor = ANSI_COLORS[code];
+        } else if (code === 39) {
+          currentColor = undefined;
+        } else if (code >= 40 && code <= 47) {
+          currentBg = ANSI_BG_COLORS[code];
+        } else if (code >= 100 && code <= 107) {
+          currentBg = ANSI_BG_COLORS[code];
+        } else if (code === 49) {
+          currentBg = undefined;
+        }
       }
     }
 
-    lastIndex = regex.lastIndex;
+    lastIndex = ANSI_ESCAPE_RE.lastIndex;
   }
 
   // Push remaining text
@@ -268,7 +293,7 @@ export class ESPHomeAnsiLog extends LitElement {
         visual.pop();
       }
       const text = this._cleanLine(chunk.replace(/[\r\n]+$/, ""));
-      if (text.replace(/\u001b\[[0-9;]*m/g, "").length > 0) {
+      if (text.replace(ANSI_ESCAPE_RE, "").trim().length > 0) {
         visual.push(text);
       }
       prevEndedInCR = chunk.endsWith("\r");
@@ -283,7 +308,12 @@ export class ESPHomeAnsiLog extends LitElement {
    * regardless of how the upstream tool indents.
    */
   private _cleanLine(line: string): string {
-    return line.replace(/^(?:\u001b\[[0-9;]*m|\s)*/g, "").replace(/\s+$/, "");
+    return line
+      .replace(
+        /^(?:\u001b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[NOPVWX^_=>]|\s)*/g,
+        "",
+      )
+      .replace(/\s+$/, "");
   }
 
   private _renderLine(line: string) {
