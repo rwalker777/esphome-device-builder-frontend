@@ -1,6 +1,6 @@
 import { consume } from "@lit/context";
 import { mdiArrowCollapseAll, mdiArrowExpandAll, mdiMemory, mdiOpenInNew, mdiPlus } from "@mdi/js";
-import { css, html, LitElement } from "lit";
+import { css, html, LitElement, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ComponentCatalogEntry } from "../../api/types.js";
 import { ComponentCategory } from "../../api/types.js";
@@ -53,6 +53,20 @@ export class ESPHomeComponentCatalog extends LitElement {
    *  once it's in the YAML. */
   @property()
   yaml = "";
+
+  /** When set, locks the catalog to a single category and hides the
+   *  category sidebar. Used by the "Add core configuration" dialog
+   *  (`lockedCategory="core"`) so the same UI can drive both flows
+   *  without showing irrelevant filter options. */
+  @property({ attribute: "locked-category" })
+  lockedCategory = "";
+
+  /** Hides the given category server-side. The normal "Add component"
+   *  dialog passes `excludeCategory="core"` so core components only
+   *  appear in their dedicated dialog. Ignored when `lockedCategory`
+   *  is set (a positive filter already restricts the set). */
+  @property({ attribute: "exclude-category" })
+  excludeCategory = "";
 
   @state()
   private _components: ComponentCatalogEntry[] = [];
@@ -152,20 +166,23 @@ export class ESPHomeComponentCatalog extends LitElement {
     this._loading = true;
     try {
       const query = this._search.trim() || undefined;
-      const category = this._category !== "all" ? this._category : undefined;
+      // `lockedCategory` (set by the parent — e.g. "core" for the
+      // core-config dialog) wins over the user's sidebar selection.
+      // Otherwise fall back to the in-component filter, with "all"
+      // meaning "no filter".
+      const category =
+        this.lockedCategory ||
+        (this._category !== "all" ? this._category : undefined);
+      const exclude_category =
+        !this.lockedCategory && this.excludeCategory
+          ? this.excludeCategory
+          : undefined;
       const platform = this.platform || undefined;
       const board_id = this.boardId || undefined;
-      // TEMP debug — remove once we've confirmed prop wiring.
-      // eslint-disable-next-line no-console
-      console.debug(
-        "[catalog] fetch",
-        { platform, board_id, query, category },
-        "from props",
-        { thisPlatform: this.platform, thisBoardId: this.boardId },
-      );
       const response = await this._api.getComponents({
         query,
         category,
+        exclude_category,
         platform,
         board_id,
         limit: 50,
@@ -466,28 +483,36 @@ export class ESPHomeComponentCatalog extends LitElement {
     }
 
     const categories = this._buildCategories();
+    // When the parent locks us to a single category (e.g. core-config
+    // dialog passes `lockedCategory="core"`), the sidebar's filter
+    // options are noise — the only category that matters is already
+    // pinned. Hide the sidebar entirely so the catalog acts like a
+    // simple filtered list.
+    const showSidebar = !this.lockedCategory;
 
     return html`
-      <div class="sidebar">
-        <p class="sidebar-label">${this._localize("device.component_categories")}</p>
-        ${categories.map(
-          ({ id, label, count }) => html`
-            <button
-              class="category-btn ${this._category === id ? "category-btn--active" : ""}"
-              type="button"
-              @click=${() => {
-                this._category = id;
-                this._fetchComponents();
-              }}
-            >
-              <span class="category-btn-inner">
-                <span>${label}</span>
-                <span class="category-count">${count}</span>
-              </span>
-            </button>
-          `
-        )}
-      </div>
+      ${showSidebar
+        ? html`<div class="sidebar">
+            <p class="sidebar-label">${this._localize("device.component_categories")}</p>
+            ${categories.map(
+              ({ id, label, count }) => html`
+                <button
+                  class="category-btn ${this._category === id ? "category-btn--active" : ""}"
+                  type="button"
+                  @click=${() => {
+                    this._category = id;
+                    this._fetchComponents();
+                  }}
+                >
+                  <span class="category-btn-inner">
+                    <span>${label}</span>
+                    <span class="category-count">${count}</span>
+                  </span>
+                </button>
+              `
+            )}
+          </div>`
+        : nothing}
       <div class="main">
         <input
           type="search"

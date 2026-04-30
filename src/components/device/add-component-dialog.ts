@@ -53,6 +53,18 @@ export class ESPHomeAddComponentDialog extends LitElement {
   @property()
   yaml = "";
 
+  /** When set (e.g. `"core"`) the dialog locks the catalog to that
+   *  single category, hides the category sidebar, and switches its
+   *  title to the matching localization key. The "Add core
+   *  configuration" entry point sets `lockedCategory="core"` so the
+   *  same dialog handles both the regular and core flows.
+   *
+   *  When empty, the dialog also tells the catalog to *exclude* the
+   *  `core` category — those components belong to the dedicated
+   *  core dialog, not the regular component selector. */
+  @property({ attribute: "locked-category" })
+  lockedCategory = "";
+
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
 
@@ -218,12 +230,17 @@ export class ESPHomeAddComponentDialog extends LitElement {
 
   protected render() {
     const isForm = this._selected !== null;
-    // TEMP debug — confirm dialog is receiving board/platform props.
-    // eslint-disable-next-line no-console
-    console.debug(
-      "[add-component-dialog] render",
-      { platform: this.platform, boardId: this.board?.id, hasBoard: !!this.board },
-    );
+    // The same dialog drives both the regular catalog flow and the
+    // "Add core configuration" flow — `lockedCategory="core"` flips
+    // the title text and tells the catalog to lock its filter.
+    const isCore = this.lockedCategory === "core";
+    const headerKey = isCore
+      ? this.boardName
+        ? "device.add_config_dialog_title"
+        : "device.add_config"
+      : this.boardName
+        ? "device.add_component_dialog_title"
+        : "device.add_component";
     // Keep the catalog mounted permanently so its state (search query, scroll
     // position, expanded card) survives the round trip into the form view —
     // hide it with `hidden` rather than swapping it out of the DOM. The form
@@ -247,8 +264,8 @@ export class ESPHomeAddComponentDialog extends LitElement {
           ${isForm
             ? this._selected!.name
             : this.boardName
-              ? this._localize("device.add_component_dialog_title", { name: this.boardName })
-              : this._localize("device.add_component")}
+              ? this._localize(headerKey, { name: this.boardName })
+              : this._localize(headerKey)}
         </span>
         ${this._returnTo
           ? html`<div class="return-banner">
@@ -262,6 +279,8 @@ export class ESPHomeAddComponentDialog extends LitElement {
           .platform=${this.platform}
           .boardId=${this.board?.id ?? ""}
           .yaml=${this.yaml}
+          .lockedCategory=${this.lockedCategory}
+          .excludeCategory=${this.lockedCategory ? "" : "core"}
         ></esphome-component-catalog>
         ${isForm
           ? html`<esphome-add-component-form

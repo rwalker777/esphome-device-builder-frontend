@@ -574,6 +574,10 @@ export class ESPHomeAPI {
   async getComponents(args?: {
     query?: string;
     category?: string;
+    /** Inverse of ``category`` — used by the regular component
+     *  selector to hide ``core`` entries (those live in the
+     *  dedicated "Add core configuration" dialog instead). */
+    exclude_category?: string;
     platform?: string;
     board_id?: string;
     offset?: number;
