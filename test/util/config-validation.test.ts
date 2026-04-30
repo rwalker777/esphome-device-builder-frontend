@@ -155,4 +155,31 @@ describe("validateEntries", () => {
     const errors = validateEntries(entries, { temperature: {} });
     expect(errors.size).toBe(0);
   });
+
+  it("does not require nested children of an untouched optional group", () => {
+    // web_server.auth in real life: the auth block is optional but
+    // its username/password children are required. The user must be
+    // able to skip auth entirely — only validate it when they've
+    // populated at least one field inside.
+    const entries = [
+      makeEntry({
+        key: "auth",
+        type: ConfigEntryType.NESTED,
+        required: false,
+        config_entries: [
+          makeEntry({ key: "username", required: true }),
+          makeEntry({ key: "password", required: true }),
+        ],
+      }),
+    ];
+    // Untouched: auth value is undefined / no child keys present.
+    expect(validateEntries(entries, {}).size).toBe(0);
+    expect(validateEntries(entries, { auth: {} }).size).toBe(0);
+    // Once the user types into one field the other required
+    // siblings get validated again.
+    const partial = validateEntries(entries, {
+      auth: { username: "admin" },
+    });
+    expect(partial.get("auth.password")?.code).toBe("validation.required");
+  });
 });

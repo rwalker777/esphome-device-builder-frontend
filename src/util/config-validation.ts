@@ -140,6 +140,17 @@ function _validateEntriesRecursive(
         child !== null && typeof child === "object" && !Array.isArray(child)
           ? (child as Record<string, unknown>)
           : {};
+      // Optional nested groups (e.g. `web_server.auth`) often have
+      // required CHILDREN (`auth.username`, `auth.password`). Don't
+      // flag those as missing when the user hasn't populated the
+      // group at all — that would force them to fill in nested
+      // fields just to opt OUT of the optional block. A group is
+      // "untouched" when no key under it has been set; once the
+      // user types into any field we recurse normally so the
+      // remaining required siblings get validated.
+      if (!entry.required && Object.keys(childValues).length === 0) {
+        continue;
+      }
       _validateEntriesRecursive(
         entry.config_entries ?? [],
         childValues,
