@@ -26,6 +26,32 @@ function applyWaTheme(): void {
   document.head.appendChild(style);
 }
 
+/**
+ * Inject ESPHome-specific theme bridges that need to live at the
+ * document level so CSS custom properties cascade into every
+ * shadow root.
+ *
+ * `--esphome-svg-filter` adapts monochrome SVG icons (the ESPHome
+ * component-catalog illustrations) to dark mode: in light mode it
+ * stays `none`, in dark mode it inverts colours (with a
+ * complementary hue rotation so any colour-tinted strokes survive
+ * the round trip). Components apply it via
+ * `filter: var(--esphome-svg-filter)` on `img[src$=".svg"]`.
+ */
+function applyEspHomeTokens(): void {
+  const style = document.createElement("style");
+  style.id = "esphome-tokens";
+  style.textContent = `
+    :root {
+      --esphome-svg-filter: none;
+    }
+    .wa-dark {
+      --esphome-svg-filter: invert(1) hue-rotate(180deg);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 /** sonner-js renders toasts inside a shadow root attached to a
  *  `<div data-sonner-toasters>` it lazily appends to <body>. Document-level
  *  styles can't reach in there, so we inject our overrides directly into the
@@ -64,4 +90,5 @@ function applySonnerOverrides(): void {
 
 // Execute immediately on import
 applyWaTheme();
+applyEspHomeTokens();
 applySonnerOverrides();

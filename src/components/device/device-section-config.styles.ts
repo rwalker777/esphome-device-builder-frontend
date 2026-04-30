@@ -53,6 +53,12 @@ export const deviceSectionConfigStyles = css`
     object-fit: contain;
   }
 
+  /* Match the catalog's dark-mode treatment for the same monochrome
+     SVG illustrations — see component-catalog.ts for the rationale. */
+  .section-image img[src$=".svg"] {
+    filter: var(--esphome-svg-filter, none);
+  }
+
   .section-title {
     margin: 0;
     font-size: var(--wa-font-size-l);

@@ -103,21 +103,59 @@ export class ESPHomeComponentCatalog extends LitElement {
   private _debouncedSearch = debounce(() => this._fetchComponents(), 300);
 
   /**
-   * Catalog list with single-instance components hidden once they're
-   * already in the YAML — `esphome:` shouldn't show up after it's
-   * been added. Multi-conf components (most platform components,
-   * `output`, `sensor`, ...) always stay visible since multiple
-   * instances are valid. Platform-style ids (those containing a `.`)
-   * are also always visible — even when `multi_conf` is false on a
-   * single platform, the parent block can still hold other platforms.
+   * Catalog list with two filters applied client-side:
+   *
+   *   1. Single-instance components are hidden once they're already
+   *      in the YAML — `esphome:` shouldn't show up after it's been
+   *      added. Multi-conf components (most platform components,
+   *      `output`, `sensor`, …) and platform-style ids (anything
+   *      containing a `.`) always stay visible.
+   *
+   *   2. In core-locked mode (the "Add core configuration" dialog),
+   *      platform variants whose dependencies aren't satisfied get
+   *      hidden — `time.zigbee` requires the `zigbee` component,
+   *      `ota.zephyr_mcumgr` requires the nRF52-only `zephyr` build,
+   *      and so on. A dep counts as satisfied when it's either (a)
+   *      already configured in the user's YAML or (b) one of the
+   *      core-compatible IDs the response itself contains (so
+   *      `time.sntp` shows because `network` is in the response, but
+   *      `time.gps` is hidden because `gps` is a misc component that
+   *      neither the user nor the core dialog brings in).
    */
   private get _visibleComponents(): ComponentCatalogEntry[] {
-    if (!this.yaml) return this._components;
-    const present = parseTopLevelComponents(this.yaml);
+    const present = this.yaml
+      ? parseTopLevelComponents(this.yaml)
+      : new Set<string>();
+    const lockedToCore = this.lockedCategories.length > 0;
+    // The set of IDs that the core dialog can offer right now —
+    // every component currently in the response. A dep that points
+    // to one of these is satisfiable from inside this same flow.
+    const coreCompatible = lockedToCore
+      ? new Set(this._components.map((c) => c.id))
+      : null;
+
     return this._components.filter((c) => {
-      if (c.multi_conf) return true;
-      if (c.id.includes(".")) return true;
-      return !present.has(c.id);
+      // (1) Hide single-instance components already configured.
+      const isSingleInstance = !c.multi_conf && !c.id.includes(".");
+      if (isSingleInstance && present.has(c.id)) return false;
+
+      // (2) Core-locked: drop platform variants whose deps the user
+      //     can't reasonably satisfy from this dialog. We only apply
+      //     this to platform-style ids (`time.zigbee`, `ota.zephyr_mcumgr`,
+      //     …); the bare core entries (api, wifi, …) shouldn't trip
+      //     it because they don't have peer-component deps.
+      if (
+        coreCompatible &&
+        c.id.includes(".") &&
+        c.dependencies.length > 0
+      ) {
+        const allSatisfied = c.dependencies.every(
+          (dep) => coreCompatible.has(dep) || present.has(dep),
+        );
+        if (!allSatisfied) return false;
+      }
+
+      return true;
     });
   }
 
@@ -444,6 +482,17 @@ export class ESPHomeComponentCatalog extends LitElement {
         object-fit: contain;
       }
 
+      /* ESPHome's monochrome line-art SVG illustrations are
+         black-on-transparent — invisible against the dark surface
+         in dark mode. --esphome-svg-filter is none in light mode
+         and invert(1)+hue-rotate(180deg) in dark mode, defined at
+         the document root in apply-theme.ts. The attribute selector
+         scopes this to SVGs only — JPGs / PNGs (board photos, etc.)
+         keep their original colours. */
+      .component-image img[src$=".svg"] {
+        filter: var(--esphome-svg-filter, none);
+      }
+
       .component-card-header-text {
         flex: 1;
         min-width: 0;
@@ -588,8 +637,24 @@ export class ESPHomeComponentCatalog extends LitElement {
   }
 
   private _buildCategories() {
-    const cats = [{ id: "all", label: this._localize("device.component_category_all"), count: this._total }];
-    for (const cat of this._categories) {
+    // Hide categories the parent told us to exclude (e.g. the regular
+    // "Add component" dialog passes CORE_CATEGORIES so the sidebar
+    // doesn't list "Core" / "Update" / "OTA" / "Time" buttons that
+    // would return empty results — those live in the dedicated core
+    // dialog instead). The total count is also adjusted to match.
+    const excluded = new Set(this.excludeCategories);
+    const visibleCats = this._categories.filter((c) => !excluded.has(c.id));
+    const visibleTotal = excluded.size
+      ? visibleCats.reduce((sum, c) => sum + c.count, 0)
+      : this._total;
+    const cats = [
+      {
+        id: "all",
+        label: this._localize("device.component_category_all"),
+        count: visibleTotal,
+      },
+    ];
+    for (const cat of visibleCats) {
       const key = `device.component_category_${cat.id}`;
       const translated = this._localize(key);
       cats.push({
