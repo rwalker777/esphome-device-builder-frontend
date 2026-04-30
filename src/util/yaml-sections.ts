@@ -14,17 +14,28 @@ export interface CategorizedSections {
   automations: YamlSection[];
 }
 
-// ESPHome system/platform keys → Core configuration. Exported so the
-// add-config dialog can fetch exactly this set from the catalog —
-// the backend's `category: "core"` is narrower than what the
-// frontend treats as core, so filtering by category alone misses
-// half the list (ota, time, mdns, ...).
+// ESPHome system/platform keys → Core configuration. This list MUST
+// stay in sync with the backend's `category: "core"` (defined in
+// `script/sync_components.py` → `_CATEGORY_OVERRIDES`) so the
+// navigator's "Core" group lists exactly the components the
+// "Add core configuration" dialog offers.
+//
+// Two umbrella YAML keys (`ota`, `time`) appear here without
+// matching catalog entries — those domains only have platform
+// variants (`ota.esphome`, `time.sntp`, …) in the catalog, but the
+// top-level YAML block they sit in is still firmly "core" and the
+// navigator needs to categorize it correctly.
 export const CORE_KEYS = new Set([
-  "esphome", "esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx",
-  "logger", "api", "ota", "wifi", "ethernet", "mqtt", "mdns",
+  // Target platforms
+  "esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x", "nrf52", "host",
+  // ESPHome infrastructure
+  "esphome", "logger", "api", "ota", "wifi", "ethernet", "mqtt", "mdns",
   "network", "web_server", "captive_portal", "improv_serial",
-  "safe_mode", "debug", "preferences", "external_components",
-  "packages", "substitutions", "dashboard_import", "time",
+  "safe_mode", "debug", "preferences", "time",
+  // Device-wide config keys (not strictly components — no C++
+  // implementation — but they share the top-level YAML namespace
+  // alongside real components).
+  "external_components", "packages", "substitutions", "dashboard_import",
   // `globals:` is technically a list of typed variables, but in
   // practice it acts as device-wide config metadata (variable
   // declarations, similar to substitutions) — we want it living next
