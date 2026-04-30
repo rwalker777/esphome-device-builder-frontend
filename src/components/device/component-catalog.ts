@@ -1,6 +1,6 @@
 import { consume } from "@lit/context";
 import { mdiArrowCollapseAll, mdiArrowExpandAll, mdiMemory, mdiOpenInNew, mdiPlus } from "@mdi/js";
-import { css, html, LitElement, type PropertyValues } from "lit";
+import { css, html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ComponentCatalogEntry } from "../../api/types.js";
 import { ComponentCategory } from "../../api/types.js";
@@ -105,37 +105,20 @@ export class ESPHomeComponentCatalog extends LitElement {
     });
   }
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    // Re-fetch on (re)connect — the parent dialog drops this element when
-    // it swaps in the configure-form view, so the next time we come back
-    // we need to refill the list. Without this we'd sit in `_loading=true`
-    // forever and render the placeholder string.
-    if (this._initialLoad) {
-      this._fetchComponents();
-    }
-  }
-
   /**
-   * Refetch when our filter inputs change. The parent device page
-   * loads the board catalog asynchronously, so the very first
-   * `_fetchComponents()` (kicked off in `connectedCallback`) often
-   * runs before `platform` / `boardId` have arrived from upstream —
-   * the request goes out with both filters empty and the user sees
-   * the unfiltered catalog. When those props subsequently land, we
-   * refetch with the right filters in place.
+   * Trigger initial or refresh load of the catalog. Called by the
+   * parent dialog's `open()` — we deliberately do NOT fetch in
+   * `connectedCallback` or in response to prop changes, because the
+   * catalog stays mounted (hidden) inside the dialog and its parents
+   * mount on page load. Eager fetching there would (a) burn 1+
+   * `components/get_components` calls per page load even when the
+   * user never opens the dialog, and (b) race the device-page's
+   * async board load — the very first request would go out with
+   * empty `platform` / `board_id` filters. Lazy load on open dodges
+   * both problems: by the time the user clicks "Add component" the
+   * board has long since arrived, and we issue exactly one request
+   * per dialog open.
    */
-  protected updated(changedProperties: PropertyValues) {
-    super.updated(changedProperties);
-    if (
-      changedProperties.has("platform") ||
-      changedProperties.has("boardId")
-    ) {
-      this._fetchComponents();
-    }
-  }
-
-  /** Trigger initial or refresh load of the catalog. */
   public load() {
     this._fetchComponents();
   }
