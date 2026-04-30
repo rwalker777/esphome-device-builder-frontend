@@ -47,6 +47,16 @@ const LANGUAGES: { value: LanguageChoice; labelKey: string }[] = [
   { value: "nl", labelKey: "settings.language_nl" },
 ];
 
+/** Recursively close every open popover in `root` and its shadow trees. */
+function closeAllOpenPopovers(root: Document | ShadowRoot) {
+  for (const el of root.querySelectorAll<HTMLElement>("[popover]")) {
+    if (el.matches(":popover-open")) el.hidePopover?.();
+  }
+  for (const el of root.querySelectorAll<HTMLElement>("*")) {
+    if (el.shadowRoot) closeAllOpenPopovers(el.shadowRoot);
+  }
+}
+
 interface CommandAction {
   id: string;
   group: string;
@@ -102,6 +112,11 @@ export class ESPHomeCommandPalette extends LitElement {
   }
 
   open() {
+    // Any open wa-select / wa-dropdown sits in the browser top layer
+    // via the popover API and would float above us regardless of
+    // z-index. Walk the document + every shadow root and close them
+    // before showing the palette.
+    closeAllOpenPopovers(document);
     this._open = true;
     this._query = "";
     this._selectedId = "";
