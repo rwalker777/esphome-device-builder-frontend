@@ -1,0 +1,210 @@
+name: Release
+
+# Tags the version, drafts release notes, builds the Python wheel
+# containing the prebuilt frontend, attaches the wheel + sdist to
+# the GitHub release, and opens / updates a single bump PR on the
+# backend repo so it picks up the new wheel URL.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (e.g. 0.2.0)"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: "Version number (e.g. 0.2.0)"
+        required: true
+        type: string
+    secrets:
+      PRIVILEGED_GITHUB_TOKEN:
+        required: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22.x"
+  BACKEND_REPO: esphome/device-builder-dashboard-backend
+  PACKAGE_NAME: esphome-device-builder-frontend
+  WHEEL_NAME: esphome_device_builder_frontend
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Tag and draft release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ inputs.version }}" -m "Release ${{ inputs.version }}"
+          git push origin "${{ inputs.version }}"
+
+      - name: Generate release notes
+        uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-drafter.yml
+          version: ${{ inputs.version }}
+          tag: ${{ inputs.version }}
+          publish: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-attach:
+    name: Build wheel and attach to release
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python3 -m pip install build tomli tomli-w
+
+      - name: Stamp version into pyproject.toml and package.json
+        shell: python
+        run: |
+          import json
+          import tomli
+          import tomli_w
+
+          version = "${{ inputs.version }}"
+
+          with open("pyproject.toml", "rb") as f:
+            pyproject = tomli.load(f)
+          pyproject["project"]["version"] = version
+          with open("pyproject.toml", "wb") as f:
+            tomli_w.dump(pyproject, f)
+
+          with open("package.json") as f:
+            pkg = json.load(f)
+          pkg["version"] = version
+          with open("package.json", "w") as f:
+            json.dump(pkg, f, indent=2)
+            f.write("\n")
+
+      - name: Build frontend bundle
+        run: npm run build
+
+      - name: Build wheel and sdist
+        run: |
+          rm -rf build *.egg-info
+          python3 -m build --wheel --sdist
+
+      - name: Attach to release
+        run: gh release upload "${{ inputs.version }}" dist/*.whl dist/*.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bump-backend:
+    name: Open bump PR on backend
+    needs: build-and-attach
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BACKEND_REPO }}
+          token: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}
+          path: backend
+
+      - name: Get release notes
+        id: notes
+        run: |
+          NOTES=$(gh release view "${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --json body --jq '.body')
+          {
+            echo "body<<NOTES_EOF"
+            echo "$NOTES"
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update backend pyproject.toml
+        working-directory: backend
+        env:
+          VERSION: ${{ inputs.version }}
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          WHEEL_NAME: ${{ env.WHEEL_NAME }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          package = os.environ["PACKAGE_NAME"]
+          wheel = os.environ["WHEEL_NAME"]
+          repo = os.environ["REPO"]
+          url = (
+              f"https://github.com/{repo}/releases/download/"
+              f"{version}/{wheel}-{version}-py3-none-any.whl"
+          )
+          dep = f'"{package} @ {url}"'
+
+          path = Path("pyproject.toml")
+          text = path.read_text()
+
+          # Replace any existing pin (URL form or bare ==), or insert
+          # at the top of the dependencies array if not yet present.
+          pattern = re.compile(
+              rf'^\s*"{re.escape(package)}\s*[@=].*?",?\s*$',
+              re.MULTILINE,
+          )
+          text, replaced = pattern.subn(f"  {dep},", text)
+          if replaced == 0:
+              text = re.sub(
+                  r"(dependencies\s*=\s*\[)",
+                  rf"\1\n  {dep},",
+                  text,
+                  count=1,
+              )
+
+          path.write_text(text)
+          PY
+
+      - name: Open / update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: backend
+          token: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}
+          # Stable branch — every release pushes onto the same
+          # branch, so peter-evans updates the existing PR rather
+          # than leaving stale ones around.
+          branch: auto-bump-frontend
+          delete-branch: true
+          commit-message: "Bump frontend to ${{ inputs.version }}"
+          title: "Bump frontend to ${{ inputs.version }}"
+          body: |
+            Bumps `${{ env.PACKAGE_NAME }}` to [`${{ inputs.version }}`](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.version }}).
+
+            ${{ steps.notes.outputs.body }}
+          labels: |
+            dependencies
+            frontend

@@ -1,0 +1,5 @@
+include README.md
+include LICENSE
+graft esphome_device_builder_frontend
+recursive-exclude * *.py[co]
+recursive-exclude * *.map

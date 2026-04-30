@@ -1,0 +1,41 @@
+name-template: "$RESOLVED_VERSION"
+tag-template: "$RESOLVED_VERSION"
+change-template: "- $TITLE (by @$AUTHOR in #$NUMBER)"
+
+exclude-contributors:
+  - dependabot
+  - dependabot[bot]
+  - github-actions
+  - github-actions[bot]
+
+categories:
+  - title: "⚠ Breaking changes"
+    labels:
+      - breaking-change
+
+  - title: "🚀 Features and enhancements"
+    labels:
+      - feature
+      - enhancement
+      - new-feature
+
+  - title: "🐛 Bug fixes"
+    labels:
+      - bugfix
+      - bug
+
+  - title: "🧰 Maintenance and dependency bumps"
+    collapse-after: 5
+    labels:
+      - ci
+      - documentation
+      - maintenance
+      - dependencies
+
+template: |
+  $CHANGES
+
+
+  ## :bow: Contributors
+
+  $CONTRIBUTORS

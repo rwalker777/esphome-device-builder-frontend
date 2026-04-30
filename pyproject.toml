@@ -1,0 +1,43 @@
+[project]
+name = "esphome-device-builder-frontend"
+# Set by GH action on release — kept at 0.0.0 in source so an
+# accidental local `python -m build` doesn't clash with a real
+# released wheel.
+version = "0.0.0"
+description = "Prebuilt web frontend for the ESPHome Device Builder Dashboard"
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  {name = "The ESPHome Authors", email = "esphome@openhomefoundation.org"},
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Home Automation",
+]
+
+[project.urls]
+Homepage = "https://github.com/esphome/device-builder-dashboard-frontend"
+Issues = "https://github.com/esphome/device-builder-dashboard-backend/issues"
+Repository = "https://github.com/esphome/device-builder-dashboard-frontend"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+platforms = ["any"]
+zip-safe = false
+include-package-data = true
+
+# The package is the build output directory itself — `npm run build`
+# populates `esphome_device_builder_frontend/` with `__init__.py`
+# (sourced from public/) plus all the hashed JS bundles and
+# `index.html`. setuptools picks up everything via include-package-data
+# + MANIFEST.in.
+[tool.setuptools.packages.find]
+include = ["esphome_device_builder_frontend"]

@@ -1,5 +1,13 @@
 node_modules/
+# Built JS bundles. `npm run build` populates this directory; it
+# doubles as the Python package source for the wheel.
+esphome_device_builder_frontend/
+# Legacy build dir (kept in gitignore in case anything still drops
+# files here during development).
 dist/
+# Python build artefacts produced by `python -m build`.
+build/
+*.egg-info/
 .cache/
 *.tsbuildinfo
 .DS_Store

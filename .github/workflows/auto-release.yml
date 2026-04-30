@@ -1,0 +1,81 @@
+name: Auto Release
+
+# Nightly cron at 01:00 UTC. If at least 2 commits have landed on
+# main since the last published release, bump the patch version and
+# trigger release.yml.
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      should_release: ${{ steps.check.outputs.go }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count commits since last release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST=$(gh release list --exclude-drafts --limit 1 \
+            --json createdAt,tagName --jq '.[0]' 2>/dev/null || echo "")
+
+          if [ -z "$LATEST" ]; then
+            echo "No previous release; cutting initial release."
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            echo "last_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DATE=$(echo "$LATEST" | jq -r '.createdAt')
+          TAG=$(echo "$LATEST" | jq -r '.tagName')
+          COUNT=$(git log --since="$DATE" --oneline | wc -l)
+
+          echo "Latest release: $TAG ($DATE)"
+          echo "Commits since: $COUNT"
+          echo "last_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -ge 2 ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "Only $COUNT commit(s) — skipping."
+          fi
+
+      - name: Compute next patch version
+        id: next
+        if: steps.check.outputs.go == 'true'
+        run: |
+          LAST="${{ steps.check.outputs.last_tag }}"
+          if [ -z "$LAST" ]; then
+            NEW="0.1.0"
+          else
+            VER="${LAST#v}"
+            MAJOR=$(echo "$VER" | cut -d. -f1)
+            MINOR=$(echo "$VER" | cut -d. -f2)
+            PATCH=$(echo "$VER" | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+            NEW="$MAJOR.$MINOR.$PATCH"
+          fi
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEW"
+
+  trigger-release:
+    needs: check-and-release
+    if: needs.check-and-release.outputs.should_release == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.check-and-release.outputs.version }}
+    secrets:
+      PRIVILEGED_GITHUB_TOKEN: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}

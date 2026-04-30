@@ -3,7 +3,13 @@ const rspack = require("@rspack/core");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const SRC_DIR = path.resolve(ROOT_DIR, "src");
-const OUTPUT_DIR = path.resolve(ROOT_DIR, "dist");
+// Build output lives inside the Python package directory so
+// `python -m build` can pick it up directly. Mirrors how
+// music-assistant/frontend wires up its wheel — the JS bundles,
+// index.html, and the package's `__init__.py` end up side-by-side
+// in this folder, which is then included by setuptools as the sole
+// package. The directory is gitignored.
+const OUTPUT_DIR = path.resolve(ROOT_DIR, "esphome_device_builder_frontend");
 const PUBLIC_DIR = path.resolve(ROOT_DIR, "public");
 
 /**
@@ -90,6 +96,14 @@ const createRspackConfig = ({ isProdBuild = false } = {}) => ({
           from: path.resolve(PUBLIC_DIR, "static"),
           to: path.resolve(OUTPUT_DIR, "static"),
           noErrorOnMissing: true,
+        },
+        // Drop the Python package's __init__.py alongside the JS
+        // bundles so `pip install` ships a runnable module pointing
+        // to the static asset root. See public/__init__.py for the
+        // tiny `where()` helper the backend uses to locate it.
+        {
+          from: path.resolve(PUBLIC_DIR, "__init__.py"),
+          to: path.resolve(OUTPUT_DIR, "__init__.py"),
         },
       ],
     }),

@@ -1,8 +1,10 @@
-# ESPHome Device Builder Dashboard Frontend
+# ESPHome Device Builder Dashboard — Frontend
 
 A web-based dashboard for managing, configuring, and deploying ESPHome IoT device firmware. Built with Lit web components and TypeScript.
 
-## Tech Stack
+> **This repository contains the frontend source only.** The dashboard runs as part of the **[ESPHome Device Builder Dashboard backend](https://github.com/esphome/device-builder-dashboard-backend)**, which ships a prebuilt copy of this frontend bundled in. End users should follow the install / run instructions in the backend repo — there's nothing to deploy from here on its own.
+
+## Tech stack
 
 - **[Lit](https://lit.dev/)** — Web components framework
 - **TypeScript** — Strict mode throughout
@@ -11,12 +13,18 @@ A web-based dashboard for managing, configuring, and deploying ESPHome IoT devic
 - **[CodeMirror](https://codemirror.net/)** — YAML editor with syntax highlighting
 - **[Sonner](https://sonner.emilkowal.dev/)** — Toast notifications
 
-## Getting Started
+## Issues
+
+Please file bug reports and feature requests on the **[backend issue tracker](https://github.com/esphome/device-builder-dashboard-backend/issues)** — UI issues live there too so we can triage everything in one place. The new-issue chooser on this repo only surfaces links to the right places.
+
+## Contributing — local development
+
+The rest of this README is for developers working on the frontend itself. If you just want to run the dashboard, head over to the [backend repo](https://github.com/esphome/device-builder-dashboard-backend) and follow its setup.
 
 ### Prerequisites
 
-- Node.js (with npm)
-- An ESPHome backend running on `localhost:6052`
+- Node.js 22+ (with npm)
+- A running ESPHome backend on `localhost:6052` — clone and run [device-builder-dashboard-backend](https://github.com/esphome/device-builder-dashboard-backend) in dev mode in a separate terminal
 
 ### Install
 
@@ -24,45 +32,74 @@ A web-based dashboard for managing, configuring, and deploying ESPHome IoT devic
 npm install
 ```
 
-### Development
+### Dev server
 
 ```bash
 npm run dev
 ```
 
-Starts a dev server at `http://localhost:5173` with HMR. API calls are proxied to the ESPHome backend at `localhost:6052`.
+Starts an HMR dev server at `http://localhost:5173`. WebSocket and REST traffic are proxied to the backend at `localhost:6052`.
 
-### Production Build
+### Production build
 
 ```bash
 npm run build
 ```
 
-Outputs optimized assets to `dist/`.
+Outputs the bundled assets into `esphome_device_builder_frontend/` — that directory doubles as the Python package source for the wheel that ships with the backend release. The `__init__.py` exposing the asset path is sourced from `public/__init__.py` and copied into place by the bundler.
 
-### Other Scripts
+To produce the wheel locally (matches what CI builds on release):
 
-| Script           | Description                       |
-| ---------------- | --------------------------------- |
-| `npm run lint`   | TypeScript type checking          |
-| `npm run format` | Format source files with Prettier |
+```bash
+npm run build
+python3 -m build --wheel
+# wheel ends up in dist/
+```
 
-## Project Structure
+### Other scripts
+
+| Script           | Description                                |
+| ---------------- | ------------------------------------------ |
+| `npm run lint`   | TypeScript type-check (`tsc --noEmit`)     |
+| `npm test`       | Run the Vitest suite once                  |
+| `npm run test:watch` | Run tests in watch mode                |
+| `npm run format` | Format `src/` with Prettier                |
+
+## Project structure
 
 ```
 src/
-├── api/            # HTTP/WebSocket API client and types
+├── api/            # WebSocket/HTTP API client and types
 ├── components/     # Lit web components
 │   ├── device/     # Device editor, navigator, component catalog
 │   └── wizard/     # Device creation wizard steps
 ├── pages/          # Routed page components (dashboard, device, secrets)
 ├── context/        # Lit Context definitions
 ├── common/         # i18n / localization
-├── util/           # Helpers (debounce, YAML parsing, icons, etc.)
+├── util/           # Helpers (debounce, YAML parsing, icons, ...)
 ├── styles/         # Theme and shared styles
 ├── translations/   # Language files (en, fr, nl)
 └── entrypoint.ts   # App bootstrap
+
+public/
+├── __init__.py     # Python package entry — copied into the build
+│                   # output at bundle time so the wheel exposes a
+│                   # `where()` helper pointing at the static assets.
+├── index.html      # HTML shell
+└── static/         # Static assets (favicons, ...)
+
+esphome_device_builder_frontend/   # Build output (gitignored)
 ```
+
+## Releases
+
+Releases are produced by GitHub Actions:
+
+- `release.yml` — manual trigger (or called from `auto-release.yml`). Tags the version, drafts release notes from PR labels, builds the Python wheel, attaches it to the GitHub release, then opens or updates a single bump PR on the backend repo so it can pick up the new wheel URL.
+- `auto-release.yml` — nightly cron that auto-releases when ≥ 2 commits have landed since the last release.
+- `dependabot.yml` + `auto-approve-dependabot.yml` — weekly npm + Actions bumps with auto-approve.
+
+The backend's `pyproject.toml` references the wheel by GitHub release URL (no PyPI), so a release here is everything needed to ship a new dashboard build.
 
 ## Status
 
