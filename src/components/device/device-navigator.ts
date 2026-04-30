@@ -487,6 +487,12 @@ export class ESPHomeDeviceNavigator extends LitElement {
       // Platform-less list item (rare) or top-level group child —
       // show just the parent so the user still has context.
       secondary = item.parentKey;
+    } else if (!item.parentKey && item.key !== primary) {
+      // Top-level single-instance section that has its own id/name
+      // (e.g. `uart:` with `id: modbus_uart`) — surface the section
+      // key (the component domain) so the user still sees what kind
+      // of thing this is.
+      secondary = item.key;
     }
 
     return { primary, secondary };

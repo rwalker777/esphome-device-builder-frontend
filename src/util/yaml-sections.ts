@@ -107,7 +107,27 @@ function _expandListItems(
   }
 
   if (listStarts.length === 0) {
-    return [{ key: section.key, fromLine: section.fromLine, toLine: section.toLine }];
+    // Single-instance section (e.g. `uart:` configured as a flat
+    // dict with `id:`, `tx_pin:` etc. directly under it). Extract a
+    // top-level `id:`/`name:` so the navigator can show them as the
+    // primary label instead of falling back to the bare key.
+    let name = "";
+    let id = "";
+    for (let i = keyIdx + 1; i <= endIdx; i++) {
+      const nameMatch = lines[i].match(/^\s{2}name:\s*["']?(.+?)["']?\s*$/);
+      if (nameMatch) name = nameMatch[1];
+      const idMatch = lines[i].match(/^\s{2}id:\s*["']?(\S+?)["']?\s*$/);
+      if (idMatch) id = idMatch[1];
+    }
+    return [
+      {
+        key: section.key,
+        fromLine: section.fromLine,
+        toLine: section.toLine,
+        name: name || undefined,
+        id: id || undefined,
+      },
+    ];
   }
 
   const items: YamlSection[] = [];
