@@ -9,6 +9,7 @@ import { apiContext, localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
+import { parseTopLevelComponents } from "../../util/yaml-serialize.js";
 import { CORE_KEYS } from "../../util/yaml-sections.js";
 
 // Types for config section catalog — not yet available in the WebSocket backend
@@ -52,6 +53,13 @@ export class ESPHomeAddConfigDialog extends LitElement {
   /** Device's target platform — forwarded so per-platform defaults resolve. */
   @property()
   platform = "";
+
+  /** Current device YAML. Used to hide core components that are
+   *  already configured — every core component (`esphome:`, `wifi:`,
+   *  `api:`, ...) is single-instance, so once one is in the YAML it
+   *  shouldn't appear in this dialog again. */
+  @property()
+  yaml = "";
 
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
@@ -451,9 +459,15 @@ export class ESPHomeAddConfigDialog extends LitElement {
         </div>
       `;
     }
+    // Hide core components that are already in the YAML — they're
+    // single-instance by definition (no `esphome:` v2 alongside the
+    // first one). The catalog is keyed by id which matches the YAML
+    // top-level key for core components.
+    const present = parseTopLevelComponents(this.yaml);
+    const visible = this._sections.filter((s) => !present.has(s.id));
     return html`
       <div class="section-list">
-        ${this._sections.map(
+        ${visible.map(
           (s) => html`
             <button class="section-card" @click=${() => this._selectSection(s)}>
               <div class="section-icon">

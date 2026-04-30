@@ -12,6 +12,7 @@ import { espHomeStyles } from "../../styles/shared.js";
 import { debounce } from "../../util/debounce.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
+import { parseTopLevelComponents } from "../../util/yaml-serialize.js";
 
 import "@home-assistant/webawesome/dist/components/badge/badge.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -46,6 +47,13 @@ export class ESPHomeComponentCatalog extends LitElement {
   @property({ attribute: "board-id" })
   boardId = "";
 
+  /** Current device YAML. Used to hide components that are already
+   *  configured AND are not multi-conf — a single-instance component
+   *  like `esphome:` or `wifi:` shouldn't show up in the catalog
+   *  once it's in the YAML. */
+  @property()
+  yaml = "";
+
   @state()
   private _components: ComponentCatalogEntry[] = [];
 
@@ -77,6 +85,25 @@ export class ESPHomeComponentCatalog extends LitElement {
   private _imageFailed: Set<string> = new Set();
 
   private _debouncedSearch = debounce(() => this._fetchComponents(), 300);
+
+  /**
+   * Catalog list with single-instance components hidden once they're
+   * already in the YAML — `esphome:` shouldn't show up after it's
+   * been added. Multi-conf components (most platform components,
+   * `output`, `sensor`, ...) always stay visible since multiple
+   * instances are valid. Platform-style ids (those containing a `.`)
+   * are also always visible — even when `multi_conf` is false on a
+   * single platform, the parent block can still hold other platforms.
+   */
+  private get _visibleComponents(): ComponentCatalogEntry[] {
+    if (!this.yaml) return this._components;
+    const present = parseTopLevelComponents(this.yaml);
+    return this._components.filter((c) => {
+      if (c.multi_conf) return true;
+      if (c.id.includes(".")) return true;
+      return !present.has(c.id);
+    });
+  }
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -459,14 +486,14 @@ export class ESPHomeComponentCatalog extends LitElement {
           placeholder=${this._localize("device.search_components_placeholder")}
         />
         ${!this._loading
-          ? html`<span class="result-count">${this._components.length} of ${this._total} components</span>`
+          ? html`<span class="result-count">${this._visibleComponents.length} of ${this._total} components</span>`
           : ""}
         <div class="grid-scroll">
           <div class="components-grid">
             ${this._loading
               ? html`<p class="empty">${this._localize("device.loading_components")}</p>`
-              : this._components.length
-                ? this._components.map((c) => this._renderCard(c, c.id === this._expandedId))
+              : this._visibleComponents.length
+                ? this._visibleComponents.map((c) => this._renderCard(c, c.id === this._expandedId))
                 : html`<p class="empty">${this._localize("device.no_components_found")}</p>`}
           </div>
         </div>
