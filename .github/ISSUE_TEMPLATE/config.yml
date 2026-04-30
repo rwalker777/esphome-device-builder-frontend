@@ -24,6 +24,8 @@ contact_links:
       It's the right venue for shaping a request before it becomes
       a tracked backlog item.
 
-  - name: 💬 ESPHome Discord
-    url: https://discord.gg/KhAMKrd
-    about: Chat with users and contributors in real time.
+  - name: 💬 Dashboard Discord channel
+    url: https://discord.gg/Rf2jWGVjaK
+    about: |
+      Direct line to the channel where the new dashboard UI is
+      actively discussed and feedback is collected.

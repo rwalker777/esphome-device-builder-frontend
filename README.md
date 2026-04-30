@@ -22,7 +22,7 @@ Before filing anything, take a look at the **[shared backlog](https://github.com
 The new-issue chooser on this repo only surfaces redirect links — there's no way to file a generic issue here.
 
 - **🐛 Bugs** → [backend issue tracker](https://github.com/esphome/device-builder-dashboard-backend/issues). UI bugs go there too so we can triage everything in one place.
-- **💡 Feature ideas** → [ESPHome org discussions](https://github.com/orgs/esphome/discussions) or the [Discord](https://discord.gg/KhAMKrd). Once a request is shaped enough to be actionable a maintainer adds it to the backlog above.
+- **💡 Feature ideas** → [ESPHome org discussions](https://github.com/orgs/esphome/discussions) or the [dashboard Discord channel](https://discord.gg/Rf2jWGVjaK) where the new UI is actively discussed and feedback is being collected. Once a request is shaped enough to be actionable a maintainer adds it to the backlog above.
 
 ## Contributing — local development
 
