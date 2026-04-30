@@ -12,7 +12,10 @@ import { espHomeStyles } from "../../styles/shared.js";
 import { debounce } from "../../util/debounce.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
-import { parseTopLevelComponents } from "../../util/yaml-serialize.js";
+import {
+  parseConfiguredPlatforms,
+  parseTopLevelComponents,
+} from "../../util/yaml-serialize.js";
 
 import "@home-assistant/webawesome/dist/components/badge/badge.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -126,6 +129,13 @@ export class ESPHomeComponentCatalog extends LitElement {
     const present = this.yaml
       ? parseTopLevelComponents(this.yaml)
       : new Set<string>();
+    // Set of `<domain>.<platform>` keys currently configured —
+    // e.g. when the YAML has `time: [- platform: homeassistant]`
+    // this contains `time.homeassistant`, which lets us hide the
+    // matching catalog card if the platform is single-instance.
+    const presentPlatforms = this.yaml
+      ? parseConfiguredPlatforms(this.yaml)
+      : new Set<string>();
     const lockedToCore = this.lockedCategories.length > 0;
     // The set of IDs that the core dialog can offer right now —
     // every component currently in the response. A dep that points
@@ -136,8 +146,22 @@ export class ESPHomeComponentCatalog extends LitElement {
 
     return this._components.filter((c) => {
       // (1) Hide single-instance components already configured.
-      const isSingleInstance = !c.multi_conf && !c.id.includes(".");
-      if (isSingleInstance && present.has(c.id)) return false;
+      //     Two flavours of single-instance:
+      //       a. bare top-level component (`web_server`, `wifi`) —
+      //          hide when the matching `<id>:` block exists.
+      //       b. platform variant (`time.homeassistant`) — hide
+      //          when the same `<domain>.<platform>` is already
+      //          listed under its umbrella block. Multi-conf
+      //          platform variants (most of them — `output.gpio`,
+      //          `sensor.dht`, …) skip this check and stay visible
+      //          so the user can add another one.
+      if (!c.multi_conf) {
+        if (c.id.includes(".")) {
+          if (presentPlatforms.has(c.id)) return false;
+        } else if (present.has(c.id)) {
+          return false;
+        }
+      }
 
       // (2) Core-locked: drop platform variants whose deps the user
       //     can't reasonably satisfy from this dialog. We only apply

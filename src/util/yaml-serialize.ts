@@ -62,6 +62,50 @@ export function parseTopLevelComponents(yaml: string): Set<string> {
   return present;
 }
 
+/**
+ * Walk the YAML and return the set of platform-qualified ids that
+ * are already configured under their domain umbrella. For example,
+ *
+ *   time:
+ *     - platform: homeassistant
+ *       id: ha_time
+ *     - platform: sntp
+ *
+ * yields `Set { "time.homeassistant", "time.sntp" }`. Used by the
+ * component catalog to hide single-instance platform components
+ * (e.g. `time.homeassistant`) once they're already in use, so the
+ * "Add component" dialog doesn't let the user duplicate them.
+ *
+ * Best-effort scan — looks for top-level keys followed by list
+ * items containing `platform:`. Doesn't try to parse nested
+ * dictionaries or anchors; the catalog filter is forgiving (it
+ * only HIDES things, never blocks the user from adding via YAML).
+ */
+export function parseConfiguredPlatforms(yaml: string): Set<string> {
+  const out = new Set<string>();
+  if (!yaml) return out;
+  const lines = yaml.split("\n");
+  let currentDomain: string | null = null;
+  for (const line of lines) {
+    const top = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s*(?:#.*)?$/);
+    if (top) {
+      currentDomain = top[1];
+      continue;
+    }
+    if (!currentDomain) continue;
+    // Only consider lines indented under the current domain. Two
+    // spaces is the canonical ESPHome indentation; we accept any
+    // leading whitespace to be lenient.
+    const platform = line.match(
+      /^\s+(?:-\s+)?platform:\s*["']?(\S+?)["']?\s*(?:#.*)?$/,
+    );
+    if (platform) {
+      out.add(`${currentDomain}.${platform[1]}`);
+    }
+  }
+  return out;
+}
+
 /** Format a single scalar value, quoting when needed. */
 export function formatYamlScalar(v: unknown): string {
   if (typeof v === "boolean") return String(v);

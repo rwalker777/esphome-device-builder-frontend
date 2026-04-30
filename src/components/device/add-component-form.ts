@@ -257,19 +257,14 @@ export class ESPHomeAddComponentForm extends LitElement {
     const slug = this.component.id.replace(/\./g, "_").toLowerCase();
     const existing = this._collectExistingIds(this.yaml);
 
-    // We start from `_1` whenever multiple instances are possible.
-    // That's true for any component flagged `multi_conf` in the
-    // catalog *and* for every platform-style component (id contains
-    // a `.`, e.g. `output.gpio`, `sensor.dht`) — those almost always
-    // allow multiple, regardless of how the catalog flagged them, so
-    // the numeric suffix from the start lets the user reason about
-    // them as a list. Truly single-instance core components like
-    // `wifi`, `api`, `mqtt` keep the bare slug.
-    const isMulti =
-      this.component.multi_conf || this.component.id.includes(".");
-
-    let candidate = isMulti ? `${slug}_1` : slug;
-    let n = isMulti ? 1 : 0;
+    // Always start from `_1`. Even single-instance components get a
+    // numeric suffix because the bare slug clashes with the
+    // top-level YAML key — `web_server:` block with `id: web_server`
+    // means `id(web_server)` references are ambiguous and can also
+    // collide with ESPHome's auto-generated component-typed
+    // identifiers. The suffix is cheap insurance.
+    let n = 1;
+    let candidate = `${slug}_${n}`;
     while (existing.has(candidate)) {
       n++;
       candidate = `${slug}_${n}`;

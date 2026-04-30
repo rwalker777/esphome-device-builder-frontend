@@ -21,19 +21,23 @@ export interface CategorizedSections {
 // navigator's "Core" group lists exactly the components the
 // "Add core configuration" dialog offers.
 //
-// Three umbrella YAML keys (`ota`, `time`, `update`) appear here
-// without matching catalog entries — those domains only have
-// platform variants (`ota.esphome`, `time.sntp`, `update.http_request`,
-// …) in the catalog, but the top-level YAML block they sit in is
-// still firmly "core" and the navigator needs to categorize it
-// correctly.
+// Two umbrella YAML keys (`ota`, `update`) appear here without
+// matching catalog entries — those domains only have platform
+// variants (`ota.esphome`, `update.http_request`, …) in the
+// catalog, but the top-level YAML block they sit in is still
+// firmly "core" and the navigator needs to categorize it correctly.
+//
+// `time` is NOT here — most devices get the time via the API
+// connection to Home Assistant automatically, so an explicit `time:`
+// block is the exception, not the rule. It's a regular platform
+// component and lives under "Components" in the navigator.
 export const CORE_KEYS = new Set([
   // Target platforms
   "esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x", "nrf52", "host",
   // ESPHome infrastructure
   "esphome", "logger", "api", "ota", "wifi", "ethernet", "mqtt", "mdns",
   "network", "web_server", "captive_portal", "improv_serial",
-  "safe_mode", "debug", "preferences", "time", "update",
+  "safe_mode", "debug", "preferences", "update",
   // Device-wide config keys (not strictly components — no C++
   // implementation — but they share the top-level YAML namespace
   // alongside real components).

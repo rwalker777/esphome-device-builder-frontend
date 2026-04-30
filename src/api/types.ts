@@ -229,12 +229,17 @@ export enum ComponentCategory {
  *
  * - `core` — backend-tagged core infrastructure (api, wifi, logger,
  *   target platforms, substitutions, …).
- * - `ota` / `time` / `update` — platform-domain umbrellas whose
- *   top-level YAML blocks (`ota:`, `time:`, `update:`) are
- *   conceptually core. The catalog has no standalone entry for these
- *   domains, only platform variants (`ota.esphome`, `time.sntp`,
+ * - `ota` / `update` — platform-domain umbrellas whose top-level
+ *   YAML blocks (`ota:`, `update:`) ship firmware-management
+ *   functionality every device needs. The catalog has no standalone
+ *   entry for these domains, only platform variants (`ota.esphome`,
  *   `update.http_request`, …) which all carry the umbrella as their
  *   category.
+ *
+ * `time` is intentionally NOT here — most devices get the time via
+ * the API connection to Home Assistant automatically, so an explicit
+ * `time:` block is the exception. It lives in the regular component
+ * selector under its own "Time" category.
  *
  * The frontend's CORE_KEYS in `util/yaml-sections.ts` is the
  * YAML-key-level counterpart (which umbrella keys are categorized
@@ -243,7 +248,6 @@ export enum ComponentCategory {
 export const CORE_CATEGORIES: ComponentCategory[] = [
   ComponentCategory.CORE,
   ComponentCategory.OTA,
-  ComponentCategory.TIME,
   ComponentCategory.UPDATE,
 ];
 
