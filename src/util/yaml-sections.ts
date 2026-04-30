@@ -21,14 +21,24 @@ const CORE_KEYS = new Set([
   "network", "web_server", "captive_portal", "improv_serial",
   "safe_mode", "debug", "preferences", "external_components",
   "packages", "substitutions", "dashboard_import", "time",
+  // `globals:` is technically a list of typed variables, but in
+  // practice it acts as device-wide config metadata (variable
+  // declarations, similar to substitutions) — we want it living next
+  // to the other config keys, not buried under automations.
+  "globals",
 ]);
 
 // Automation/logic keys → Automations
 // In ESPHome, automations are inline on_* handlers within components.
-// script, globals and interval are the standalone automation-adjacent top-level keys.
-const AUTOMATION_KEYS = new Set([
-  "script", "globals", "interval",
-]);
+// `script` and `interval` are the standalone automation-adjacent
+// top-level keys.
+const AUTOMATION_KEYS = new Set(["script", "interval"]);
+
+// Sections that contain list items but should still be navigated to
+// as a single unit — clicking them takes you to the whole block, not
+// to individual entries inside. Keeps the navigator from listing one
+// nav item per global variable.
+const NON_EXPANDABLE_KEYS = new Set(["globals"]);
 
 export function categorizeSections(sections: YamlSection[]): CategorizedSections {
   const core: YamlSection[] = [];
@@ -95,6 +105,19 @@ function _expandListItems(
   lines: string[],
   section: { key: string; fromLine: number; toLine: number },
 ): YamlSection[] {
+  // Sections marked non-expandable keep their list items hidden from
+  // the navigator — the user navigates to the whole block, not the
+  // individual entries (e.g. globals).
+  if (NON_EXPANDABLE_KEYS.has(section.key)) {
+    return [
+      {
+        key: section.key,
+        fromLine: section.fromLine,
+        toLine: section.toLine,
+      },
+    ];
+  }
+
   const keyIdx = section.fromLine - 1; // 0-indexed line of the top-level key
   const endIdx = section.toLine - 1; // 0-indexed last line (inclusive)
 

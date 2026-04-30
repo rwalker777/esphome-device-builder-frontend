@@ -1,5 +1,9 @@
 import { consume } from "@lit/context";
-import { mdiContentSave, mdiOpenInNew } from "@mdi/js";
+import {
+  mdiContentSave,
+  mdiInformationOutline,
+  mdiOpenInNew,
+} from "@mdi/js";
 import { html, LitElement, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import toast from "sonner-js";
@@ -37,6 +41,7 @@ import { deviceSectionConfigStyles } from "./device-section-config.styles.js";
 
 registerMdiIcons({
   "content-save": mdiContentSave,
+  "information-outline": mdiInformationOutline,
   "open-in-new": mdiOpenInNew,
 });
 
@@ -225,6 +230,11 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
 
     const showAdvanced = this._showAdvanced;
     const hasAdvanced = anyAdvancedEntry(this._config.entries);
+    // Some sections (substitutions, globals, packages) have no
+    // structured form schema — they're free-form YAML by design.
+    // Show the description + a "edit via YAML" notice instead of an
+    // empty form and a no-op save button.
+    const yamlOnly = this._config.entries.length === 0;
 
     return html`
       <div class="section-header">
@@ -254,44 +264,57 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
           />
         </div>
       </div>
-      <esphome-config-entry-form
-        .entries=${this._config.entries}
-        .values=${this._values}
-        .errors=${this._fieldErrors}
-        .board=${this.board}
-        .yaml=${this._yaml}
-        .fromLine=${this.fromLine}
-        .presentComponents=${this._presentComponents}
-        ?disabled=${this._saving}
-        ?show-advanced=${showAdvanced}
-        @value-change=${this._onValueChange}
-      ></esphome-config-entry-form>
-      ${hasAdvanced
-        ? html`<div class="advanced-toggle-row">
-            <wa-switch
-              ?checked=${showAdvanced}
-              @change=${(e: Event) =>
-                this._setShowAdvanced(
-                  (e.target as HTMLInputElement & { checked: boolean }).checked,
-                )}
-            >
-              ${this._localize("device.show_advanced")}
-            </wa-switch>
+      ${yamlOnly
+        ? html`<div class="yaml-only-notice" role="note">
+            <wa-icon library="mdi" name="information-outline"></wa-icon>
+            <p>${this._localize("device.yaml_only_section")}</p>
           </div>`
-        : nothing}
-      ${this._error ? html`<p class="error">${this._error}</p>` : nothing}
-      <div class="actions">
-        <button
-          class="save-button"
-          ?disabled=${this._saving || !this._dirty}
-          @click=${this._onSave}
-        >
-          <wa-icon library="mdi" name="content-save"></wa-icon>
-          ${this._saving
-            ? this._localize("device.saving")
-            : this._localize("device.save")}
-        </button>
-      </div>
+        : html`
+            <esphome-config-entry-form
+              .entries=${this._config.entries}
+              .values=${this._values}
+              .errors=${this._fieldErrors}
+              .board=${this.board}
+              .yaml=${this._yaml}
+              .fromLine=${this.fromLine}
+              .presentComponents=${this._presentComponents}
+              ?disabled=${this._saving}
+              ?show-advanced=${showAdvanced}
+              @value-change=${this._onValueChange}
+            ></esphome-config-entry-form>
+            ${hasAdvanced
+              ? html`<div class="advanced-toggle-row">
+                  <wa-switch
+                    ?checked=${showAdvanced}
+                    @change=${(e: Event) =>
+                      this._setShowAdvanced(
+                        (
+                          e.target as HTMLInputElement & {
+                            checked: boolean;
+                          }
+                        ).checked,
+                      )}
+                  >
+                    ${this._localize("device.show_advanced")}
+                  </wa-switch>
+                </div>`
+              : nothing}
+            ${this._error
+              ? html`<p class="error">${this._error}</p>`
+              : nothing}
+            <div class="actions">
+              <button
+                class="save-button"
+                ?disabled=${this._saving || !this._dirty}
+                @click=${this._onSave}
+              >
+                <wa-icon library="mdi" name="content-save"></wa-icon>
+                ${this._saving
+                  ? this._localize("device.saving")
+                  : this._localize("device.save")}
+              </button>
+            </div>
+          `}
     `;
   }
 

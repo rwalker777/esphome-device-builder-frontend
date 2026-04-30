@@ -150,4 +150,31 @@ export const deviceSectionConfigStyles = css`
     justify-content: center;
     padding: var(--wa-space-xl);
   }
+
+  /* Stand-in shown when a section has no editable form fields
+     (substitutions, globals, packages) — tells the user to edit
+     this part via the YAML pane instead of presenting an empty
+     form. */
+  .yaml-only-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--wa-space-s);
+    padding: var(--wa-space-s) var(--wa-space-m);
+    border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+    background: var(--wa-color-surface-lowered);
+    border-radius: var(--wa-border-radius-m);
+    color: var(--wa-color-text-normal);
+    font-size: var(--wa-font-size-s);
+    line-height: 1.5;
+  }
+
+  .yaml-only-notice wa-icon {
+    flex-shrink: 0;
+    font-size: 20px;
+    color: var(--esphome-primary);
+  }
+
+  .yaml-only-notice p {
+    margin: 0;
+  }
 `;
