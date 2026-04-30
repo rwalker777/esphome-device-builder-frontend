@@ -13,6 +13,9 @@ import type { LocalizeFunc } from "../common/localize.js";
 import type { ESPHomeCommandDialog } from "../components/command-dialog.js";
 import type { NavSectionName } from "../components/device/device-board-info.js";
 import type { DeviceLayoutMode } from "../components/device/device-editor.js";
+// `NavSectionName` is consumed by the section-show event handler; the
+// page itself doesn't pass it down anymore now that the step CTAs
+// always render.
 import { DeviceInstallController } from "../components/device/device-install-controller.js";
 import type { ESPHomeFirmwareInstallDialog } from "../components/firmware-install-dialog.js";
 import type { ESPHomeUnsavedChangesDialog } from "../components/unsaved-changes-dialog.js";
@@ -294,15 +297,6 @@ export class ESPHomePageDevice extends LitElement {
       this.id ||
       this._localize("dashboard.create_device");
 
-    // Map navigator open-section indices (0/1/2) to the named set the
-    // board-info "Show <section>" CTAs use to decide which buttons
-    // need rendering. Indices match the order the navigator emits
-    // (core / components / automations).
-    const expandedNavSections = new Set<NavSectionName>();
-    if (this._openSections.has(0)) expandedNavSections.add("core");
-    if (this._openSections.has(1)) expandedNavSections.add("components");
-    if (this._openSections.has(2)) expandedNavSections.add("automations");
-
     return html`
       <!-- Mobile drawer -->
       <div
@@ -367,7 +361,6 @@ export class ESPHomePageDevice extends LitElement {
             .selectedSection=${this._selectedSection}
             .selectedFromLine=${this._selectedFromLine}
             .justCreated=${this._justCreated}
-            .expandedNavSections=${expandedNavSections}
             @just-created-dismiss=${this._dismissJustCreated}
             ?hasPendingChanges=${this._device?.has_pending_changes === true}
             ?hasUpdateAvailable=${this._device?.update_available === true}

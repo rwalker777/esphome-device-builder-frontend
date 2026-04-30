@@ -63,14 +63,6 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
   @property({ type: Boolean })
   justCreated = false;
 
-  /** Which navigator sections are currently expanded. Used to hide
-   *  the matching "Show <section>" CTA when the section is already
-   *  open in the navigator — the button has nothing to add at that
-   *  point, so showing it just nudges the user to click for no
-   *  effect. */
-  @property({ attribute: false })
-  expandedNavSections: Set<NavSectionName> = new Set();
-
   @property({ attribute: false })
   selectedSection: string | null = null;
 
@@ -458,26 +450,21 @@ export class ESPHomeDeviceBoardInfo extends LitElement {
     action: string;
     section: NavSectionName;
   }) {
-    const alreadyExpanded = this.expandedNavSections.has(opts.section);
     return html`
       <div class="step-section">
         <h4 class="step-title">${opts.title}</h4>
         <p class="step-desc">${opts.desc}</p>
-        ${alreadyExpanded
-          ? nothing
-          : html`
-              <button
-                type="button"
-                class="action-item"
-                @click=${() => this._onShowNavSection(opts.section)}
-              >
-                <div>
-                  <wa-icon library="mdi" name=${opts.icon}></wa-icon>
-                  <p>${opts.action}</p>
-                </div>
-                <wa-icon library="mdi" name="arrow-left"></wa-icon>
-              </button>
-            `}
+        <button
+          type="button"
+          class="action-item"
+          @click=${() => this._onShowNavSection(opts.section)}
+        >
+          <div>
+            <wa-icon library="mdi" name=${opts.icon}></wa-icon>
+            <p>${opts.action}</p>
+          </div>
+          <wa-icon library="mdi" name="arrow-left"></wa-icon>
+        </button>
       </div>
     `;
   }
