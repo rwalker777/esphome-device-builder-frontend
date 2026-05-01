@@ -19,7 +19,9 @@ on:
         required: true
         type: string
     secrets:
-      PRIVILEGED_GITHUB_TOKEN:
+      ESPHOME_GITHUB_APP_ID:
+        required: true
+      ESPHOME_GITHUB_APP_PRIVATE_KEY:
         required: true
 
 env:
@@ -125,12 +127,26 @@ jobs:
     needs: build-and-attach
     runs-on: ubuntu-latest
     steps:
+      - name: Create backend app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.ESPHOME_GITHUB_APP_ID || vars.ESPHOME_GITHUB_APP_ID }}
+          private-key: ${{ secrets.ESPHOME_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            device-builder-dashboard-backend
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
       - name: Checkout backend
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ env.BACKEND_REPO }}
-          token: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: backend
+          persist-credentials: false
 
       - name: Get release notes
         id: notes
@@ -194,7 +210,7 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           path: backend
-          token: ${{ secrets.PRIVILEGED_GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           # Stable branch — every release pushes onto the same
           # branch, so peter-evans updates the existing PR rather
           # than leaving stale ones around.
