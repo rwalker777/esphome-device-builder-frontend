@@ -2,7 +2,7 @@
 
 A web-based dashboard for managing, configuring, and deploying ESPHome IoT device firmware. Built with Lit web components and TypeScript.
 
-> **This repository contains the frontend source only.** The dashboard runs as part of the **[ESPHome Device Builder Dashboard backend](https://github.com/esphome/device-builder-dashboard-backend)**, which ships a prebuilt copy of this frontend bundled in. End users should follow the install / run instructions in the backend repo — there's nothing to deploy from here on its own.
+> **This repository contains the frontend source only.** The dashboard runs as part of the **[ESPHome Device Builder Dashboard](https://github.com/esphome/device-builder)**, which ships a prebuilt copy of this frontend bundled in. End users should follow the install / run instructions in the backend repo — there's nothing to deploy from here on its own.
 
 ## Tech stack
 
@@ -21,17 +21,17 @@ Before filing anything, take a look at the **[shared backlog](https://github.com
 
 The new-issue chooser on this repo only surfaces redirect links — there's no way to file a generic issue here.
 
-- **🐛 Bugs** → [backend issue tracker](https://github.com/esphome/device-builder-dashboard-backend/issues). UI bugs go there too so we can triage everything in one place.
+- **🐛 Bugs** → [backend issue tracker](https://github.com/esphome/device-builder/issues). UI bugs go there too so we can triage everything in one place.
 - **💡 Feature ideas** → [ESPHome org discussions](https://github.com/orgs/esphome/discussions) or the [dashboard Discord channel](https://discord.gg/Rf2jWGVjaK) where the new UI is actively discussed and feedback is being collected. Once a request is shaped enough to be actionable a maintainer adds it to the backlog above.
 
 ## Contributing — local development
 
-The rest of this README is for developers working on the frontend itself. If you just want to run the dashboard, head over to the [backend repo](https://github.com/esphome/device-builder-dashboard-backend) and follow its setup.
+The rest of this README is for developers working on the frontend itself. If you just want to run the dashboard, head over to the [backend repo](https://github.com/esphome/device-builder) and follow its setup.
 
 ### Prerequisites
 
 - Node.js 22+ (with npm)
-- A running ESPHome backend on `localhost:6052` — clone and run [device-builder-dashboard-backend](https://github.com/esphome/device-builder-dashboard-backend) in dev mode in a separate terminal
+- A running ESPHome Device builder backend on `localhost:6052` — clone and run [device-builder](https://github.com/esphome/device-builder) in dev mode in a separate terminal
 
 ### Install
 
