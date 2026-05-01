@@ -224,6 +224,42 @@ export class ESPHomeLogsDialog extends LitElement {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.3; }
       }
+
+      /* Mobile overrides — placed last so same-specificity rules
+         in this file win source-order against the desktop defaults.
+         :host wa-dialog::part(dialog) lands at (0,1,2), beating both
+         wa-dialog's internal .dialog (0,1,0) and the user-agent's
+         dialog:modal (0,1,1) without needing !important. */
+      @media (max-width: 700px) {
+        :host wa-dialog::part(dialog) {
+          position: fixed;
+          inset: 0;
+          /* width/height are explicit because wa-dialog's
+             width: var(--width) and the UA's
+             max-height: calc(100% - ...) would otherwise keep the
+             dialog at its desktop size. The vh declaration is the
+             fallback for pre-2022 Safari / Chrome / Firefox that
+             don't recognise dvh; modern browsers pick the dvh line
+             which adjusts as iOS Safari's URL bar collapses. */
+          width: 100vw;
+          height: 100vh;
+          height: 100dvh;
+          max-width: none;
+          max-height: none;
+          margin: 0;
+          border-radius: 0;
+        }
+
+        .logs-content {
+          height: 100%;
+          max-height: none;
+          min-height: 0;
+        }
+
+        .term-btn.expand-btn {
+          display: none;
+        }
+      }
     `,
   ];
 
@@ -284,7 +320,7 @@ export class ESPHomeLogsDialog extends LitElement {
               : ""}
             <span class="spacer"></span>
             <button
-              class="term-btn term-btn--ghost"
+              class="term-btn term-btn--ghost expand-btn"
               @click=${this._toggleExpanded}
             >
               <wa-icon library="mdi" name=${this._expanded ? "arrow-collapse" : "arrow-expand"}></wa-icon>
