@@ -1,5 +1,7 @@
 import { consume } from "@lit/context";
 import {
+  mdiArrowCollapse,
+  mdiArrowExpand,
   mdiContentSave,
   mdiDockLeft,
   mdiDockRight,
@@ -24,6 +26,8 @@ import "../yaml-diff.js";
 import "./device-board-info.js";
 
 registerMdiIcons({
+  "arrow-collapse": mdiArrowCollapse,
+  "arrow-expand": mdiArrowExpand,
   "content-save": mdiContentSave,
   "layout-left": mdiDockLeft,
   "layout-right": mdiDockRight,
@@ -46,6 +50,13 @@ export class ESPHomeDeviceEditor extends LitElement {
   @property()
   layout: DeviceLayoutMode = "both";
 
+  /** Forwarded from the page so the editor can shrink its own header
+   *  chrome when both side panels are out of view (navigator hidden +
+   *  YAML-only layout). With nothing else on screen the title bar
+   *  ate vertical space the user couldn't reclaim. */
+  @property({ type: Boolean })
+  navCollapsed = false;
+
   @property()
   deviceTitle = "";
 
@@ -60,21 +71,31 @@ export class ESPHomeDeviceEditor extends LitElement {
   @state()
   private _isMobile = false;
 
+  @state()
+  private _fullscreen = false;
+
   private _mql = window.matchMedia("(max-width: 900px)");
 
   private _onMqlChange = (e: MediaQueryListEvent) => {
     this._isMobile = e.matches;
   };
 
-  /** Cmd/Ctrl+S → save the YAML if there are unsaved changes. Listens at
-   *  the document level so the shortcut works regardless of which child
-   *  (CodeMirror, navigator, etc.) currently has focus. */
+  /** Cmd/Ctrl+S → save the YAML if there are unsaved changes. Also
+   *  ESC to exit fullscreen so the editor matches the logs dialog
+   *  pattern. Listens at the document level so the shortcut works
+   *  regardless of which child (CodeMirror, navigator, etc.) currently
+   *  has focus. */
   private _onGlobalKeyDown = (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       if (this.yaml !== this.savedYaml) {
         this._onSave();
       }
+      return;
+    }
+    if (e.key === "Escape" && this._fullscreen) {
+      e.preventDefault();
+      this._fullscreen = false;
     }
   };
 
@@ -142,6 +163,14 @@ export class ESPHomeDeviceEditor extends LitElement {
         : effectiveLayout === "left"
           ? "editor-layout--left"
           : "editor-layout--right";
+    /* When the user has hidden the navigator AND chosen YAML-only,
+       the only thing on screen is the YAML editor — the bulky title
+       bar is just chrome at that point. Compact it (less padding,
+       smaller title) so the editor reclaims the vertical space.
+       Mobile already has its own header treatment so we leave that
+       alone. */
+    const compactHeader =
+      !this._isMobile && this.navCollapsed && effectiveLayout === "right";
 
     // Single, calm title — guidance for empty / partially-filled
     // devices belongs in the content pane (the cards / step prompts),
@@ -152,7 +181,7 @@ export class ESPHomeDeviceEditor extends LitElement {
 
     return html`
       <section class="card">
-        <header class="card-header">
+        <header class="card-header ${compactHeader ? "card-header--compact" : ""}">
           <slot name="mobile-menu"></slot>
           <div class="editor-header-main">
             <h2 class="editor-header-title">${title}</h2>
@@ -202,6 +231,24 @@ export class ESPHomeDeviceEditor extends LitElement {
                 <wa-icon library="mdi" name="layout-right"></wa-icon>
               </button>
             </div>
+            ${this._isMobile
+              ? nothing
+              : html`<button
+                  type="button"
+                  class="fullscreen-toggle"
+                  aria-pressed=${this._fullscreen}
+                  @click=${this._toggleFullscreen}
+                  title=${this._localize(
+                    this._fullscreen
+                      ? "device.editor_collapse"
+                      : "device.editor_expand",
+                  )}
+                >
+                  <wa-icon
+                    library="mdi"
+                    name=${this._fullscreen ? "arrow-collapse" : "arrow-expand"}
+                  ></wa-icon>
+                </button>`}
           </div>
         </header>
         <div class="card-body">
@@ -331,6 +378,16 @@ export class ESPHomeDeviceEditor extends LitElement {
         composed: true,
       })
     );
+  }
+
+  private _toggleFullscreen() {
+    this._fullscreen = !this._fullscreen;
+  }
+
+  protected willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("_fullscreen")) {
+      this.toggleAttribute("fullscreen", this._fullscreen);
+    }
   }
 
   /**
