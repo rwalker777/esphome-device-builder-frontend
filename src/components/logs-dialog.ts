@@ -1,5 +1,5 @@
 import { consume } from "@lit/context";
-import { mdiArrowCollapse, mdiArrowExpand, mdiClose, mdiDeleteSweep, mdiDownload, mdiPlay, mdiStop } from "@mdi/js";
+import { mdiArrowCollapse, mdiArrowExpand, mdiClose, mdiDeleteSweep, mdiDownload, mdiPlay, mdiPulse, mdiStop } from "@mdi/js";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../api/index.js";
@@ -20,6 +20,7 @@ registerMdiIcons({
   play: mdiPlay,
   stop: mdiStop,
   "delete-sweep": mdiDeleteSweep,
+  pulse: mdiPulse,
 });
 
 @customElement("esphome-logs-dialog")
@@ -46,6 +47,12 @@ export class ESPHomeLogsDialog extends LitElement {
 
   @state()
   private _expanded = false;
+
+  @state()
+  private _showStates = true;
+
+  @state()
+  private _passive = false;
 
   @state()
   _lines: string[] = [];
@@ -202,6 +209,16 @@ export class ESPHomeLogsDialog extends LitElement {
         border-color: var(--term-fg-muted);
       }
 
+      /* Tint the states toggle with the accent palette while the
+         "show states" mode is on so the user can tell at a glance
+         whether component state lines are flowing. Same palette as
+         --start so it visually reads as "this is active". */
+      .term-btn--ghost.is-active {
+        background: color-mix(in srgb, var(--term-accent), transparent 85%);
+        color: var(--term-accent);
+        border-color: color-mix(in srgb, var(--term-accent), transparent 60%);
+      }
+
       .term-btn--start {
         background: color-mix(in srgb, var(--term-accent), transparent 85%);
         color: var(--term-accent);
@@ -303,6 +320,12 @@ export class ESPHomeLogsDialog extends LitElement {
     this._lines = [];
     this._streaming = false;
     this._expanded = false;
+    /* Reset to the default each open. Persisting "hide states" across
+       a close/reopen would surprise the user — the dialog is supposed
+       to behave the same way every time it pops up unless the user
+       explicitly flips the toggle this session. */
+    this._showStates = true;
+    this._passive = false;
     this._streamId = "";
     this._dialog.open = true;
     this._startStreaming();
@@ -314,6 +337,12 @@ export class ESPHomeLogsDialog extends LitElement {
     this._lines = [];
     this._streaming = true;
     this._expanded = false;
+    this._showStates = true;
+    /* Web Serial drives output directly into ``_lines`` via
+       ``streamSerialToDialog`` — there's no backend ``esphome logs``
+       subprocess to pass ``--no-states`` to, so the toggle is hidden
+       in passive mode to avoid implying state filtering is available. */
+    this._passive = true;
     this._streamId = "";
     this._dialog.open = true;
   }
@@ -325,6 +354,9 @@ export class ESPHomeLogsDialog extends LitElement {
 
   protected render() {
     const title = this._localize("dashboard.logs_title", { name: this.name });
+    const toggleLabel = this._localize(
+      this._showStates ? "dashboard.logs_hide_states" : "dashboard.logs_show_states",
+    );
 
     return html`
       <wa-dialog
@@ -343,6 +375,19 @@ export class ESPHomeLogsDialog extends LitElement {
               ? html`<span class="streaming-dot"></span>`
               : ""}
             <span class="spacer"></span>
+            ${this._passive
+              ? ""
+              : html`
+                  <button
+                    class="term-btn term-btn--ghost ${this._showStates ? "is-active" : ""}"
+                    @click=${this._toggleShowStates}
+                    title=${toggleLabel}
+                    aria-pressed=${this._showStates ? "true" : "false"}
+                  >
+                    <wa-icon library="mdi" name="pulse"></wa-icon>
+                    ${this._localize("dashboard.logs_states")}
+                  </button>
+                `}
             <button
               class="term-btn term-btn--ghost expand-btn"
               @click=${this._toggleExpanded}
@@ -385,33 +430,38 @@ export class ESPHomeLogsDialog extends LitElement {
   private _startStreaming() {
     if (this._streaming) return;
     this._streaming = true;
-    this._lines = [];
 
-    this._streamId = this._api.logs(this.configuration, this._port, {
-      onOutput: (line: string) => {
-        this._lines = [...this._lines, line];
+    this._streamId = this._api.logs(
+      this.configuration,
+      this._port,
+      {
+        onOutput: (line: string) => {
+          this._lines = [...this._lines, line];
+        },
+        onResult: () => {
+          this._streaming = false;
+          this._streamId = "";
+        },
+        onError: () => {
+          this._streaming = false;
+          this._streamId = "";
+        },
       },
-      onResult: () => {
-        this._streaming = false;
-        this._streamId = "";
-      },
-      onError: () => {
-        this._streaming = false;
-        this._streamId = "";
-      },
-    });
+      { noStates: !this._showStates },
+    );
   }
 
-  private _stopStreaming() {
+  private _stopStreaming(): Promise<void> {
     const streamId = this._streamId;
     this._streaming = false;
     this._streamId = "";
-    if (streamId) {
-      // Tell the backend to kill the subprocess. If the WS isn't open
-      // anymore there's nothing to cancel server-side anyway, so swallow
-      // any error from the call.
-      this._api.stopStream(streamId).catch(() => {});
-    }
+    if (!streamId) return Promise.resolve();
+    // Tell the backend to kill the subprocess. If the WS isn't open
+    // anymore there's nothing to cancel server-side anyway, so swallow
+    // any error from the call. Returns a promise so callers that need
+    // to wait for the cancel to land (e.g. the states toggle, which
+    // immediately spawns a fresh stream) can await it.
+    return this._api.stopStream(streamId).catch(() => undefined).then(() => undefined);
   }
 
   private _downloadLogs() {
@@ -429,6 +479,21 @@ export class ESPHomeLogsDialog extends LitElement {
 
   private _toggleExpanded() {
     this._expanded = !this._expanded;
+  }
+
+  private async _toggleShowStates() {
+    this._showStates = !this._showStates;
+    /* The --no-states flag is set on the esphome subprocess at spawn
+       time, so flipping the toggle has to tear down the current
+       stream and start a fresh one. Await the cancel so the backend
+       has actually killed the old subprocess before we spawn the new
+       one — otherwise a fast double-toggle could leave two log
+       readers attached to the device API at once. Only restart if we
+       were actively streaming — if the user already hit Stop, leave
+       the buffer alone and let them hit Start themselves. */
+    if (!this._streamId) return;
+    await this._stopStreaming();
+    this._startStreaming();
   }
 
   private _clearLogs() {
