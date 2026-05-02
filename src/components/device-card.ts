@@ -585,13 +585,22 @@ export class ESPHomeDeviceCard extends LitElement {
                         </button>
                       `
                     : nothing}
-                <button
-                  class="action-btn action-btn--ghost"
-                  @click=${() => this._emit("open-logs")}
-                >
-                  <wa-icon library="mdi" name="console"></wa-icon>
-                  ${this._localize("dashboard.drawer_logs")}
-                </button>
+                ${this.webUrl
+                  ? html`<button
+                      class="action-btn action-btn--ghost action-btn--tile"
+                      @click=${() => this._emit("open-logs")}
+                      aria-label=${this._localize("dashboard.drawer_logs")}
+                      title=${this._localize("dashboard.drawer_logs")}
+                    >
+                      <wa-icon library="mdi" name="console"></wa-icon>
+                    </button>`
+                  : html`<button
+                      class="action-btn action-btn--ghost"
+                      @click=${() => this._emit("open-logs")}
+                    >
+                      <wa-icon library="mdi" name="console"></wa-icon>
+                      ${this._localize("dashboard.drawer_logs")}
+                    </button>`}
                 ${this.webUrl
                   ? html`<a
                       class="action-btn action-btn--ghost action-btn--tile"
