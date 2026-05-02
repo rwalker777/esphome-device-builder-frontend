@@ -3,8 +3,10 @@ import {
   mdiAlertCircle,
   mdiCheckCircle,
   mdiClose,
+  mdiPlaylistCheck,
   mdiRefresh,
   mdiStop,
+  mdiTimerSand,
 } from "@mdi/js";
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
@@ -13,8 +15,16 @@ import { JobStatus, JobType } from "../api/types.js";
 import type { FirmwareJob } from "../api/types.js";
 import type { LocalizeFunc } from "../common/localize.js";
 import type { ESPHomeAnsiLog } from "./ansi-log.js";
-import { apiContext, darkModeContext, localizeContext } from "../context/index.js";
+import type { ConfiguredDevice } from "../api/types.js";
+import {
+  apiContext,
+  darkModeContext,
+  devicesContext,
+  firmwareJobsContext,
+  localizeContext,
+} from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
+import { firmwareJobDisplayName } from "../util/firmware-job-display.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
@@ -27,6 +37,8 @@ registerMdiIcons({
   refresh: mdiRefresh,
   "check-circle": mdiCheckCircle,
   "alert-circle": mdiAlertCircle,
+  "playlist-check": mdiPlaylistCheck,
+  "timer-sand": mdiTimerSand,
 });
 
 export type CommandType = "install" | "compile" | "validate" | "clean" | "reset";
@@ -53,6 +65,20 @@ export class ESPHomeCommandDialog extends LitElement {
   @consume({ context: apiContext })
   private _api!: ESPHomeAPI;
 
+  /** Live snapshot of every backend firmware job, keyed by job_id.
+   *  Drives the "queued — another task is running" overlay so we can
+   *  tell the user the current dialog is waiting in line instead of
+   *  silently sitting on an empty log. */
+  @consume({ context: firmwareJobsContext, subscribe: true })
+  @state()
+  private _jobs: Map<string, FirmwareJob> = new Map();
+
+  /** Configured devices — used to resolve the running job's friendly
+   *  name for the queued-overlay's "waiting for: <device>" hint. */
+  @consume({ context: devicesContext, subscribe: true })
+  @state()
+  private _devices: ConfiguredDevice[] = [];
+
   @property()
   configuration = "";
 
@@ -66,6 +92,14 @@ export class ESPHomeCommandDialog extends LitElement {
 
   /** Active job ID (for cancel). Not used for validate. */
   private _jobId = "";
+  /** Latest known status of the followed job. Primed from the
+   *  ``firmware/install`` (etc.) response so the queued overlay can
+   *  render immediately on open instead of waiting for the matching
+   *  ``job_queued`` event to land in ``firmwareJobsContext``. The
+   *  context value takes precedence once it arrives — see
+   *  ``_isQueued`` below. */
+  @state()
+  private _jobStatus: JobStatus | null = null;
   /** Stream message ID (for both validate streaming and follow_job streaming). */
   private _streamId = "";
   /** Install target port — "OTA" for network, an actual port for server-serial. */
@@ -153,12 +187,65 @@ export class ESPHomeCommandDialog extends LitElement {
         max-height: 70vh;
         overflow: hidden;
       }
+      /* Wrapper that owns the queued overlay's positioning context.
+         Anchoring on this (rather than .content) means the overlay
+         covers only the log area — the toolbar / banner stay
+         interactive even on narrow viewports where their height
+         doesn't match the previous hard-coded offset. */
+      .log-area {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
       esphome-ansi-log {
         flex: 1;
         min-height: 0;
         --log-height: 100%;
       }
       esphome-ansi-log::part(container) { border-radius: 0; }
+
+      /* Queued-overlay — covers the empty log area while the job is
+         waiting in line behind another firmware task. The dialog
+         deliberately doesn't auto-close so the user can keep watching;
+         the "View firmware tasks" button gives them a quick out. */
+      .queued-overlay {
+        position: absolute;
+        inset: 0;
+        background: var(--term-bg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 24px;
+        text-align: center;
+        font-family: "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", monospace;
+        color: var(--term-fg);
+        z-index: 1;
+      }
+      .queued-overlay wa-icon[name="timer-sand"] {
+        font-size: 48px;
+        color: var(--term-accent);
+        animation: queued-pulse 2s ease-in-out infinite;
+      }
+      @keyframes queued-pulse {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .queued-overlay wa-icon[name="timer-sand"] { animation: none; }
+      }
+      .queued-title {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .queued-message {
+        font-size: 13px;
+        color: var(--term-fg-muted);
+        max-width: 420px;
+        line-height: 1.5;
+      }
 
       .status-banner {
         display: flex;
@@ -245,6 +332,7 @@ export class ESPHomeCommandDialog extends LitElement {
     this._lines = [];
     this._statusMessage = "";
     this._jobId = "";
+    this._jobStatus = null;
     this._detachStream();
     this._dialog.open = true;
     this._resetAnsiLogScroll();
@@ -276,6 +364,10 @@ export class ESPHomeCommandDialog extends LitElement {
     this._lines = [];
     this._statusMessage = "";
     this._jobId = job.job_id;
+    /* Prime from the job we were handed so the queued overlay can
+       render on the very first paint instead of after the next
+       context update. */
+    this._jobStatus = job.status;
     // Cancel any prior follow before starting a new one. Without
     // this, every reopen of the dialog (clicking the busy spinner
     // again while a job is still running) layered on a fresh
@@ -315,12 +407,80 @@ export class ESPHomeCommandDialog extends LitElement {
     return html`
       <wa-dialog label=${this._title} light-dismiss @wa-after-hide=${this._onDialogHide}>
         <div class="content">
-          <esphome-ansi-log .lines=${this._lines} ?light=${!this._darkMode}></esphome-ansi-log>
+          <div class="log-area">
+            <esphome-ansi-log .lines=${this._lines} ?light=${!this._darkMode}></esphome-ansi-log>
+            ${this._renderQueuedOverlay()}
+          </div>
           ${this._renderBanner()}
           ${this._renderToolbar()}
         </div>
       </wa-dialog>
     `;
+  }
+
+  /** True when this dialog is following a job that's still in the
+   *  queue — backend serialises firmware work, so an Install kicked
+   *  off while another job is running sits at QUEUED until its turn. */
+  private get _isQueued(): boolean {
+    if (!this._jobId) return false;
+    /* Context wins once it has the entry — the backend may transition
+       the job (e.g. QUEUED → RUNNING) before we'd see it locally.
+       The locally-primed ``_jobStatus`` only fills the gap before the
+       first context update. */
+    const ctxStatus = this._jobs.get(this._jobId)?.status;
+    return (ctxStatus ?? this._jobStatus) === JobStatus.QUEUED;
+  }
+
+  /** The job currently holding the firmware queue, if any. Used to
+   *  tell the user *which* device they're waiting on so they can
+   *  decide whether to cancel the in-flight task. */
+  private get _runningJob(): FirmwareJob | null {
+    for (const job of this._jobs.values()) {
+      if (job.status === JobStatus.RUNNING) return job;
+    }
+    return null;
+  }
+
+  private _jobDisplayName(job: FirmwareJob): string {
+    return firmwareJobDisplayName(job, this._devices, this._localize);
+  }
+
+  private _renderQueuedOverlay() {
+    if (!this._isQueued) return nothing;
+    const running = this._runningJob;
+    return html`
+      <div class="queued-overlay" role="status" aria-live="polite">
+        <wa-icon library="mdi" name="timer-sand"></wa-icon>
+        <div class="queued-title">
+          ${this._localize("command.queued_title")}
+        </div>
+        <div class="queued-message">
+          ${running
+            ? this._localize("command.queued_waiting_for", {
+                name: this._jobDisplayName(running),
+              })
+            : this._localize("command.queued_message")}
+        </div>
+        <button class="term-btn term-btn--start" @click=${this._openFirmwareJobs}>
+          <wa-icon library="mdi" name="playlist-check"></wa-icon>
+          ${this._localize("command.queued_view_all")}
+        </button>
+      </div>
+    `;
+  }
+
+  private _openFirmwareJobs() {
+    /* Closing the command dialog frees the user to interact with the
+       firmware-tasks list (cancel the running job, see the full
+       queue, etc.) — the dialog's follow_job stream will reattach if
+       they click back into this device's job from the tasks list. */
+    this.close();
+    this.dispatchEvent(
+      new CustomEvent("open-firmware-jobs", {
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _renderBanner() {
@@ -431,6 +591,11 @@ export class ESPHomeCommandDialog extends LitElement {
     }
 
     this._jobId = job.job_id;
+    /* Prime status from the API response so the queued overlay shows
+       up immediately. The matching ``job_queued`` event will lands in
+       ``firmwareJobsContext`` shortly after and the getter will
+       prefer that live value going forward. */
+    this._jobStatus = job.status;
     this._followJob(job.job_id);
   }
 
