@@ -81,6 +81,7 @@ const paginatedRowModel = getPaginationRowModel<DeviceRow>();
 const DEFAULT_HIDDEN_COLUMNS: VisibilityState = {
   comment: false,
   version: false,
+  ip: false,
 };
 
 @customElement("esphome-device-table")
@@ -213,7 +214,8 @@ export class ESPHomeDeviceTable extends LitElement {
     return (
       (d.friendly_name || d.name).toLowerCase().includes(q) ||
       d.config.toLowerCase().includes(q) ||
-      d.ip.toLowerCase().includes(q) ||
+      d.address.toLowerCase().includes(q) ||
+      d.ip_addresses.some((ip) => ip.toLowerCase().includes(q)) ||
       d.platform.toLowerCase().includes(q)
     );
   };
@@ -247,7 +249,9 @@ export class ESPHomeDeviceTable extends LitElement {
         status: d.state,
         name: d.name,
         friendly_name: d.friendly_name,
-        ip: d.ip || d.address || "",
+        address: d.address || "",
+        ip: d.ip || "",
+        ip_addresses: d.ip_addresses,
         platform: d.target_platform || "",
         version: d.current_version || "",
         comment: d.comment || "",
