@@ -143,6 +143,9 @@
     "install_method_back": "Back",
     "table_columns": "Columns",
     "table_toggle_columns": "Toggle columns",
+    "view_cards": "Card view",
+    "view_table": "List view",
+    "view_toggle_group_label": "View",
     "table_col_status": "Status",
     "table_col_name": "Name",
     "table_col_address": "Address",
@@ -568,17 +571,33 @@
     "more_options_with_count": "More options ({count} firmware task(s) active)"
   },
   "command_palette": {
-    "placeholder": "Type a command or search…",
+    "placeholder": "Type a command — or / to search YAML content",
     "no_results": "No results found",
     "group_navigation": "Navigation",
     "group_devices": "Devices",
+    "group_yaml_matches": "YAML matches",
     "go_dashboard": "Go to dashboard",
     "group_language": "Language",
     "show_yaml_diff_button": "Show YAML diff button",
     "hide_yaml_diff_button": "Hide YAML diff button",
     "navigate_hint": "to navigate",
     "select_hint": "to select",
-    "close_hint": "to close"
+    "close_hint": "to close",
+    "yaml_search_hint": "search YAML content",
+    "switch_to_yaml": "Switch to YAML content search",
+    "switch_to_commands": "Switch to command search"
+  },
+  "yaml_search": {
+    "searching": "Searching…",
+    "no_matches": "No matches",
+    "match_count_singular": "match",
+    "match_count_plural": "matches",
+    "switch_to_yaml": "Search YAML content",
+    "switch_to_devices": "Search devices",
+    "placeholder": "Search YAML content…",
+    "back_to_devices": "Back to device search",
+    "no_match_yaml_preview": "Try YAML search — found {count} match across your configs",
+    "no_match_yaml_preview_plural": "Try YAML search — found {count} matches across your configs"
   },
   "settings": {
     "title": "Settings",

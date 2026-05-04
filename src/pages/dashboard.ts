@@ -1,7 +1,9 @@
 import { consume } from "@lit/context";
 import {
+  mdiArrowLeft,
   mdiCheckboxMultipleMarkedOutline,
   mdiClipboardTextSearchOutline,
+  mdiCodeBraces,
   mdiMagnify,
   mdiPlus,
   mdiTable,
@@ -31,7 +33,16 @@ import {
   recentJobsContext,
 } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
+import { YamlSearchController } from "../components/yaml-search-controller.js";
+import { matchesDeviceName } from "../util/device-search.js";
+import {
+  forEachYamlMatch,
+  yamlEmptyMessageKey,
+  yamlHitHref,
+  yamlHitLabel,
+} from "../util/yaml-search-helpers.js";
 import { firmwareJobDisplayName } from "../util/firmware-job-display.js";
+import { navigate } from "../util/navigation.js";
 import { clearJustCreated } from "../util/just-created.js";
 import { consumePendingHighlight } from "../util/pending-highlight.js";
 import { postInstallShowLogsHandler } from "../util/post-install-logs.js";
@@ -82,8 +93,10 @@ import "../components/wizard/create-config-dialog.js";
 import type { ESPHomeCreateConfigDialog } from "../components/wizard/create-config-dialog.js";
 
 registerMdiIcons({
+  "arrow-left": mdiArrowLeft,
   "checkbox-multiple-marked-outline": mdiCheckboxMultipleMarkedOutline,
   "clipboard-text-search-outline": mdiClipboardTextSearchOutline,
+  "code-braces": mdiCodeBraces,
   magnify: mdiMagnify,
   plus: mdiPlus,
   "view-grid": mdiViewGrid,
@@ -122,6 +135,47 @@ export class ESPHomePageDashboard extends LitElement {
 
   @state() private _showDiscovered = false;
   @state() private _search = "";
+
+  /**
+   * When true, the search input drives a fleet-wide YAML-content
+   * search (``yaml/search`` WS command) instead of the
+   * client-side device-name filter. The card grid / table is
+   * replaced by a hit list — one row per matching line — that
+   * routes click to ``/device/<config>?line=<n>``. Toggled by
+   * clicking the leading icon in the search input or the inline
+   * hint button below it (magnify ↔ code-braces). The shared
+   * ``YamlSearchController`` is used here and in the palette.
+   *
+   * Three ways to enter YAML mode, all flipping this flag:
+   *   - click the magnify icon (becomes code-braces).
+   *   - click the inline hint button below the search box.
+   *   - hit ``/`` while the input is empty — the slash is
+   *     swallowed, the box stays empty, the user types their
+   *     YAML query directly. Mirrors the command palette's
+   *     ``/`` prefix shortcut.
+   */
+  @state() private _yamlMode = false;
+
+  /**
+   * Sticky count of YAML-content hits for the empty-state
+   * "Try YAML search — N matches" affordance.
+   *
+   * Latched: only updates when ``_yamlSearch.hits`` arrives as a
+   * non-null array, so the pivot doesn't flicker as the
+   * controller invalidates ``hits = null`` on each keystroke
+   * during the 150ms debounce window. Reset to ``0`` only on
+   * genuine "preview is gone" transitions (empty query, devices
+   * suddenly match the query) — not on per-keystroke debounce.
+   */
+  @state() private _yamlPreviewCount = 0;
+  /**
+   * The trailing-edge ``YamlSearchController`` powering YAML
+   * mode. ``getApi`` is a callback so the ``@consume``-injected
+   * ``_api`` field is read at call time — Lit fills it after the
+   * initial property setup, so capturing it eagerly would
+   * freeze a ``null`` reference.
+   */
+  private _yamlSearch = new YamlSearchController(this, () => this._api);
   @state() private _installMethodOpen = false;
   @state() private _installMethodDevice: ConfiguredDevice | null = null;
   @state() private _installMethodMode: "install" | "logs" = "install";
@@ -203,6 +257,7 @@ export class ESPHomePageDashboard extends LitElement {
       this._loadPreferences();
     }
   }
+
 
   private _onSerialSetup = () => this._detectAndOpenWizard();
   private _onShowIgnoredChanged = (e: Event) => {
@@ -318,6 +373,18 @@ export class ESPHomePageDashboard extends LitElement {
 
   static styles = [espHomeStyles, dashboardStyles];
 
+  /**
+   * True when device-name search is the active filter — i.e.
+   * the user is *not* in YAML mode and the device list has
+   * loaded. View-agnostic on purpose: the YAML-content preview
+   * is meaningful in both cards and table view (the user can
+   * be searching from either), so the eligibility gate should
+   * not gate on ``_view``.
+   */
+  private get _isDeviceSearchActive(): boolean {
+    return !this._yamlMode && this._devicesLoaded;
+  }
+
   protected render() {
     if (!this._devicesLoaded) {
       return this._view === DashboardView.TABLE
@@ -325,14 +392,22 @@ export class ESPHomePageDashboard extends LitElement {
         : cardSkeletonTemplate;
     }
 
+    if (this._yamlMode) {
+      // YAML mode replaces the device-grid / device-table with a
+      // hit list regardless of the underlying view preference.
+      // Toolbar still renders so the user can flip back via the
+      // mode toggle on the search input.
+      return html`
+        ${this._renderBanner()} ${this._renderDiscoveredGrid()}
+        ${this._renderYamlToolbar()} ${this._renderYamlMode()}
+        ${this._renderDrawer()} ${this._renderSelectBarOrFab()} ${this._renderDialogs()}
+      `;
+    }
+
     const q = this._search.trim().toLowerCase();
     const sorted = this._sortedDevices;
     const filtered = q
-      ? sorted.filter(
-          (d) =>
-            (d.friendly_name || d.name).toLowerCase().includes(q) ||
-            d.configuration.toLowerCase().includes(q)
-        )
+      ? sorted.filter((d) => matchesDeviceName(d, q))
       : sorted;
 
     return html`
@@ -347,6 +422,97 @@ export class ESPHomePageDashboard extends LitElement {
         ? this._renderCardGrid(filtered)
         : this._renderTable()}
       ${this._renderDrawer()} ${this._renderSelectBarOrFab()} ${this._renderDialogs()}
+    `;
+  }
+
+  /**
+   * Toolbar shown in YAML mode — same search input + view-toggle
+   * row as the cards-view toolbar, but the count line counts
+   * matched *lines* instead of devices. The view toggle stays
+   * visible (with ``{}`` showing as the active segment) so the
+   * user always has a one-click path back to cards / list.
+   */
+  private _renderYamlToolbar() {
+    const hits = this._yamlSearch.hits;
+    const matchCount =
+      hits === null
+        ? null
+        : hits.reduce((sum, hit) => sum + hit.matches.length, 0);
+    const unit =
+      matchCount === 1
+        ? this._localize("yaml_search.match_count_singular")
+        : this._localize("yaml_search.match_count_plural");
+    return html`
+      <div class="toolbar">
+        <div class="toolbar-row">
+          ${this._renderSearchInput()} ${this._renderViewToggle()}
+        </div>
+        ${this._renderDiscoveryHint()}
+        ${matchCount !== null
+          ? html`<span class="device-count"
+              ><strong>${matchCount}</strong> ${unit}</span
+            >`
+          : ""}
+      </div>
+    `;
+  }
+
+  /**
+   * YAML-mode body — empty-state copy or a list of hit rows. Each
+   * row links to ``/device/<config>?line=<n>`` so click /
+   * cmd-click / middle-click all do the right thing without
+   * hand-rolling a click handler.
+   */
+  private _renderYamlMode() {
+    const hits = this._yamlSearch.hits;
+    const query = this._search.trim();
+    // Three empty-state branches; pick the right copy explicitly
+    // rather than threading nullables through a ternary so a
+    // future maintainer can read the cases at a glance.
+    if (!query) {
+      // Initial entry into YAML mode: no query yet, show the
+      // input placeholder text as a centred hint.
+      return this._renderYamlEmptyState("yaml_search.placeholder");
+    }
+    const emptyKey = yamlEmptyMessageKey(hits);
+    if (emptyKey) {
+      // ``yaml_search.searching`` (debounce / in-flight) or
+      // ``yaml_search.no_matches`` (fetched, no hits).
+      return this._renderYamlEmptyState(emptyKey);
+    }
+    // hits is non-empty here — render the rows.
+    return html`
+      <div class="yaml-hits">
+        ${forEachYamlMatch(
+          hits,
+          (hit, match) => html`
+            <a
+              class="yaml-hit"
+              href=${yamlHitHref(hit, match)}
+              @click=${(e: MouseEvent) => {
+                // Plain left-click → SPA navigate; let middle /
+                // cmd / shift-click fall through to the browser
+                // for new-tab / new-window behaviour.
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                navigate(yamlHitHref(hit, match));
+              }}
+            >
+              <wa-icon library="mdi" name="code-braces"></wa-icon>
+              <span class="yaml-hit-label">${yamlHitLabel(hit, match)}</span>
+            </a>
+          `
+        )}
+      </div>
+    `;
+  }
+
+  private _renderYamlEmptyState(messageKey: string) {
+    return html`
+      <div class="empty-search">
+        <wa-icon class="empty-search-icon" library="mdi" name="code-braces"></wa-icon>
+        <p class="empty-search-desc">${this._localize(messageKey)}</p>
+      </div>
     `;
   }
 
@@ -379,9 +545,7 @@ export class ESPHomePageDashboard extends LitElement {
     const isTable = this._view === DashboardView.TABLE;
     return sorted
       .filter((d) => {
-        const name = d.friendly_name || d.name;
-        if (name.toLowerCase().includes(q)) return true;
-        if (d.configuration.toLowerCase().includes(q)) return true;
+        if (matchesDeviceName(d, q)) return true;
         if (!isTable) return false;
         return (
           d.address.toLowerCase().includes(q) ||
@@ -496,22 +660,69 @@ export class ESPHomePageDashboard extends LitElement {
 
   private _renderViewToggle() {
     const view = this._view;
+    const yaml = this._yamlMode;
+    const cardsLabel = this._localize("dashboard.view_cards");
+    const tableLabel = this._localize("dashboard.view_table");
+    const yamlLabel = this._localize("yaml_search.switch_to_yaml");
+    // Three-way segmented control: device-list view (cards or
+    // table) plus a YAML-content-search mode. Only one button
+    // shows ``active`` at a time. Clicking cards / table while
+    // in YAML mode flips out of YAML and sets the chosen view;
+    // clicking ``{}`` flips into YAML mode and the underlying
+    // ``_view`` is preserved for when the user returns.
     return html`
-      <div class="view-toggle">
+      <div
+        class="view-toggle"
+        role="group"
+        aria-label=${this._localize("dashboard.view_toggle_group_label")}
+      >
         <button
-          class="view-toggle-btn ${view === DashboardView.CARDS ? "active" : ""}"
-          @click=${() => this._setView(DashboardView.CARDS)}
+          class="view-toggle-btn ${!yaml && view === DashboardView.CARDS ? "active" : ""}"
+          type="button"
+          title=${cardsLabel}
+          aria-label=${cardsLabel}
+          aria-pressed=${!yaml && view === DashboardView.CARDS ? "true" : "false"}
+          @click=${() => this._enterDeviceView(DashboardView.CARDS)}
         >
           <wa-icon library="mdi" name="view-grid"></wa-icon>
         </button>
         <button
-          class="view-toggle-btn ${view === DashboardView.TABLE ? "active" : ""}"
-          @click=${() => this._setView(DashboardView.TABLE)}
+          class="view-toggle-btn ${!yaml && view === DashboardView.TABLE ? "active" : ""}"
+          type="button"
+          title=${tableLabel}
+          aria-label=${tableLabel}
+          aria-pressed=${!yaml && view === DashboardView.TABLE ? "true" : "false"}
+          @click=${() => this._enterDeviceView(DashboardView.TABLE)}
         >
           <wa-icon library="mdi" name="table"></wa-icon>
         </button>
+        <button
+          class="view-toggle-btn ${yaml ? "active" : ""}"
+          type="button"
+          title=${yamlLabel}
+          aria-label=${yamlLabel}
+          aria-pressed=${yaml ? "true" : "false"}
+          @click=${() => this._setSearchMode(true)}
+        >
+          <wa-icon library="mdi" name="code-braces"></wa-icon>
+        </button>
       </div>
     `;
+  }
+
+  /**
+   * Click on a device-view segment (cards or table).
+   *
+   * If the user was in YAML mode, flip out of YAML mode while
+   * *preserving* the typed query — same behaviour as the
+   * leading-icon toggle and the back-link affordance, so all
+   * exit paths feel consistent. Only the explicit Esc keystroke
+   * clears the query (``Esc`` reads as "abandon"). Then switch
+   * the device view.
+   */
+  private _enterDeviceView(view: DashboardView) {
+    if (this._yamlMode) this._setSearchMode(false);
+    this._setView(view);
   }
 
   private _renderSelectToggle() {
@@ -542,12 +753,26 @@ export class ESPHomePageDashboard extends LitElement {
     // ``wa-input`` carries a built-in cross-browser clear button via
     // ``with-clear`` — no need to hand-roll one or work around
     // Firefox not rendering ``::-webkit-search-cancel-button``.
+    //
+    // The leading icon doubles as the mode toggle: click magnify to
+    // flip into YAML-content search (icon swaps to code-braces),
+    // click again to flip back. Keep the icon as the direct
+    // ``slot="start"`` child — wa-input sizes / centres slotted
+    // icons via internal styles that don't reach through a wrapper
+    // element. Make the icon itself a button via role/tabindex/key
+    // handler so it stays accessible without breaking layout.
+    const placeholder = this._yamlMode
+      ? this._localize("yaml_search.placeholder")
+      : this._localize("dashboard.search_placeholder");
+    const toggleLabel = this._localize(
+      this._yamlMode ? "yaml_search.switch_to_devices" : "yaml_search.switch_to_yaml"
+    );
     return html`<div class="search-wrap">
       <wa-input
-        class="search-input"
+        class="search-input ${this._yamlMode ? "search-input--yaml" : ""}"
         type="search"
         with-clear
-        placeholder=${this._localize("dashboard.search_placeholder")}
+        placeholder=${placeholder}
         .value=${this._search}
         @input=${(e: Event) => {
           // ``e.target`` is the ``<wa-input>`` custom-element host,
@@ -555,12 +780,157 @@ export class ESPHomePageDashboard extends LitElement {
           // typed as the ``{ value }`` shape we actually rely on
           // rather than casting to HTMLInputElement (which it isn't).
           this._search = (e.currentTarget as unknown as { value: string }).value;
+          this._syncYamlSearch();
         }}
+        @keydown=${this._onSearchKeyDown}
       >
-        <wa-icon slot="start" library="mdi" name="magnify"></wa-icon>
+        <wa-icon
+          slot="start"
+          class="search-mode-toggle"
+          library="mdi"
+          name=${this._yamlMode ? "code-braces" : "magnify"}
+          role="button"
+          tabindex="0"
+          title=${toggleLabel}
+          aria-label=${toggleLabel}
+          aria-pressed=${this._yamlMode ? "true" : "false"}
+          @click=${this._toggleSearchMode}
+          @keydown=${(e: KeyboardEvent) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              this._toggleSearchMode();
+            }
+          }}
+        ></wa-icon>
       </wa-input>
     </div>`;
   }
+
+  /**
+   * In YAML mode, render a "Back to device search" link below
+   * the search input so the user has an obvious one-click exit
+   * even if they don't realise the segmented view-toggle
+   * affords the same. Returns ``""`` in device mode — discovery
+   * lives in the always-visible ``{}`` view-toggle segment.
+   */
+  private _renderDiscoveryHint() {
+    if (!this._yamlMode) return "";
+    return html`<small class="search-discover-hint">
+      <button
+        type="button"
+        class="search-discover-back"
+        @click=${this._toggleSearchMode}
+      >
+        <wa-icon library="mdi" name="arrow-left"></wa-icon>
+        ${this._localize("yaml_search.back_to_devices")}
+      </button>
+    </small>`;
+  }
+
+  /**
+   * Search-input keyboard shortcuts:
+   *
+   * - ``/`` on an empty input in device mode → flip into YAML
+   *   mode (mirrors the command palette's prefix gate).
+   * - ``Escape`` in YAML mode → flip back to device search and
+   *   clear the query, so the user has a one-key exit that
+   *   matches the same Esc-cancels intuition as the rest of the
+   *   app's dialogs / dropdowns.
+   *
+   * The ``/`` shortcut only fires with no modifier on an empty
+   * input — typing ``/`` mid-string stays a literal slash, and
+   * an already-yaml-mode user typing ``/`` searches for a slash
+   * in their YAML.
+   *
+   * Both paths refocus the input afterwards so the user can keep
+   * typing — wa-input's attribute changes (placeholder, class)
+   * may bounce focus on some browsers.
+   */
+  private _onSearchKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && this._yamlMode) {
+      e.preventDefault();
+      this._setSearchMode(false, "");
+      return;
+    }
+    if (e.key !== "/") return;
+    if (this._yamlMode) return;
+    if (this._search !== "") return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    e.preventDefault();
+    this._setSearchMode(true);
+  };
+
+  @query(".search-input")
+  private _searchInputEl?: HTMLElement & { focus: () => void };
+
+  /**
+   * Land the cursor in the search box.
+   *
+   * ``wa-input``'s host-level ``.focus()`` doesn't reliably
+   * delegate to its inner native input across all browsers, so
+   * also reach into the host's shadow DOM and focus the
+   * ``<input>`` directly. RAF-deferred so the call lands after
+   * Lit has flushed any in-progress re-render (e.g. from a
+   * concurrent ``_yamlMode`` flip that's swapping placeholder /
+   * class on the wa-input).
+   */
+  private _refocusSearchInput() {
+    requestAnimationFrame(() => {
+      const wrap = this._searchInputEl;
+      if (!wrap) return;
+      wrap.focus();
+      const inner = (
+        wrap as HTMLElement & { shadowRoot?: ShadowRoot | null }
+      ).shadowRoot?.querySelector<HTMLInputElement>("input");
+      inner?.focus();
+    });
+  }
+
+  /**
+   * Bridge the current query to the YAML-search controller.
+   *
+   * Called from every place ``_search`` mutates while the user
+   * is in YAML mode (typed input, mode toggle). Empty / whitespace
+   * queries collapse to ``clear()`` so an empty box doesn't fire
+   * a backend round trip; non-empty queries hand off to
+   * ``scheduleQuery``, which owns the 150ms debounce and the
+   * seq-guarded dispatch.
+   */
+  private _syncYamlSearch() {
+    if (!this._yamlMode) {
+      this._yamlSearch.clear();
+      return;
+    }
+    const body = this._search.trim();
+    if (!body) {
+      this._yamlSearch.clear();
+      return;
+    }
+    this._yamlSearch.scheduleQuery(body);
+  }
+
+  /**
+   * Set the search mode + (optionally) the query, then sync the
+   * controller and refocus the input.
+   *
+   * One source of truth for "user did something that changes
+   * the active search mode" — toggle button, ``/`` keystroke,
+   * Escape key, YAML-preview pivot all funnel through here so
+   * none of them can drift on the must-do list (sync the
+   * controller; land the cursor back in the input). When
+   * ``search`` is omitted the existing query is preserved
+   * (toggle case); pass ``""`` explicitly to reset (Escape case).
+   */
+  private _setSearchMode(yamlMode: boolean, search?: string) {
+    this._yamlMode = yamlMode;
+    if (search !== undefined) this._search = search;
+    this._syncYamlSearch();
+    this._refocusSearchInput();
+  }
+
+  private _toggleSearchMode = () => {
+    this._setSearchMode(!this._yamlMode);
+  };
 
   private _renderToolbar(matchCount: number, total: number) {
     const q = this._search.trim();
@@ -575,6 +945,7 @@ export class ESPHomePageDashboard extends LitElement {
           ${this._renderSearchInput()} ${this._renderSelectToggle()}
           ${this._renderViewToggle()}
         </div>
+        ${this._renderDiscoveryHint()}
         <span class="device-count"><strong>${matchCount}</strong> ${unit}${suffix}</span>
       </div>
     `;
@@ -590,16 +961,64 @@ export class ESPHomePageDashboard extends LitElement {
         <p class="empty-search-desc">
           ${this._localize("dashboard.no_results_desc", { query: this._search.trim() })}
         </p>
-        <button
-          class="empty-search-clear"
-          @click=${() => {
-            this._search = "";
-          }}
-        >
-          ${this._localize("dashboard.no_results_clear")}
-        </button>
+        ${this._renderNoResultsExtras()}
       </div>
     `;
+  }
+
+  /**
+   * Shared no-results extras: optional "Try YAML search — N
+   * matches" pivot + a "Clear search" button. Used by both the
+   * cards-view ``_renderEmptySearch`` tile and the table-view
+   * ``no-results-extra`` slot so the affordances stay identical
+   * across views (same copy, same click handlers, same order).
+   */
+  private _renderNoResultsExtras() {
+    return html`
+      ${this._renderYamlPreviewPivot()}
+      <button
+        class="empty-search-clear"
+        @click=${() => {
+          this._search = "";
+        }}
+      >
+        ${this._localize("dashboard.no_results_clear")}
+      </button>
+    `;
+  }
+
+  /**
+   * Render the "Try YAML search — N matches" pivot button.
+   *
+   * One renderer drives both the cards-view empty-search tile
+   * (inlined directly) and the table-view no-results slot (via
+   * ``_renderYamlPreviewPivotInline``).
+   * Returns empty when the controller hasn't returned hits yet
+   * (debounce / in-flight) or when the count is zero — only
+   * surface the pivot when we have a real number to show, the
+   * proof-of-usefulness for the user.
+   */
+  private _renderYamlPreviewPivot() {
+    // Read the *sticky* count, not the live controller hits —
+    // the controller invalidates ``hits = null`` on every
+    // keystroke for the ~150ms debounce, which would make the
+    // pivot blink in/out as the user types. ``_yamlPreviewCount``
+    // is latched in ``updated()`` and only resets on real
+    // "preview gone" transitions.
+    const previewCount = this._yamlPreviewCount;
+    if (previewCount === 0) return "";
+    return html`<button
+      class="empty-search-yaml-pivot"
+      @click=${() => this._setSearchMode(true)}
+    >
+      <wa-icon library="mdi" name="code-braces"></wa-icon>
+      ${this._localize(
+        previewCount === 1
+          ? "yaml_search.no_match_yaml_preview"
+          : "yaml_search.no_match_yaml_preview_plural",
+        { count: previewCount }
+      )}
+    </button>`;
   }
 
   private _renderCardGrid(filtered: ConfiguredDevice[]) {
@@ -693,9 +1112,12 @@ export class ESPHomePageDashboard extends LitElement {
         @enter-select-mode=${(e: CustomEvent<string>) =>
           this._onEnterSelectMode(e.detail)}
       >
-        <div slot="toolbar" class="toolbar-row">
-          ${this._renderSearchInput()} ${this._renderSelectToggle()}
-          ${this._renderViewToggle()}
+        <div slot="toolbar" class="toolbar-stack">
+          <div class="toolbar-row">
+            ${this._renderSearchInput()} ${this._renderSelectToggle()}
+            ${this._renderViewToggle()}
+          </div>
+          ${this._renderDiscoveryHint()}
         </div>
         <button
           slot="actions"
@@ -705,6 +1127,9 @@ export class ESPHomePageDashboard extends LitElement {
           <wa-icon library="mdi" name="plus"></wa-icon>
           ${this._localize("dashboard.create_device")}
         </button>
+        <div slot="no-results-extra" class="yaml-preview-banner">
+          ${this._renderNoResultsExtras()}
+        </div>
       </esphome-device-table>
     `;
   }
@@ -1025,6 +1450,60 @@ export class ESPHomePageDashboard extends LitElement {
       this._pendingAdoptScroll = null;
       this._scheduleScrollIntoView(target);
     }
+    this._maybeFireEmptyStatePreview(changed);
+    // Latch the YAML preview count whenever the controller has
+    // a non-null result. ``hits === null`` (debounce / in-flight)
+    // doesn't update the count, so the pivot button keeps the
+    // last-known number visible across keystrokes instead of
+    // blinking in and out.
+    const hits = this._yamlSearch.hits;
+    if (hits !== null) {
+      const next = hits.reduce((sum, h) => sum + h.matches.length, 0);
+      if (next !== this._yamlPreviewCount) this._yamlPreviewCount = next;
+    }
+  }
+
+  /**
+   * (d) Empty-device-search YAML preview.
+   *
+   * When the user is in device mode and their query matches zero
+   * devices by name, pre-fire a YAML search for the same query so
+   * the empty state can show "Try YAML search — N matches" with a
+   * real count. The controller's debounce + seq guards keep this
+   * from thrashing per keystroke. Skipped in YAML mode (the
+   * regular ``_syncYamlSearch`` path already drives the
+   * controller). Runs in both card *and* table view — the table-
+   * view banner above the table consumes the same preview hits.
+   */
+  private _maybeFireEmptyStatePreview(changed: PropertyValues) {
+    // Trigger only on user-driven changes (typed query / mode
+    // toggle). NOT ``_devices`` — that ref churns on every
+    // ``DEVICE_STATE_CHANGED`` (online/offline transitions),
+    // which doesn't change which devices match the name search.
+    // Driving the preview off ``_devices`` was scheduling a
+    // fresh ``yaml/search`` on every status flap and keeping the
+    // controller in a perpetual debounce / "Searching…" state.
+    if (!changed.has("_search") && !changed.has("_yamlMode")) return;
+    // YAML mode: the controller is being driven by ``_syncYamlSearch``
+    // for the actual user-facing search; this preview path must not
+    // clear or overwrite. Pre-load: nothing to filter against yet.
+    if (!this._isDeviceSearchActive) return;
+    const trimmed = this._search.trim();
+    if (!trimmed) {
+      this._yamlSearch.clear();
+      return;
+    }
+    const lowered = trimmed.toLowerCase();
+    const anyDeviceMatches = this._sortedDevices.some((d) =>
+      matchesDeviceName(d, lowered)
+    );
+    if (anyDeviceMatches) {
+      // Device-name search produced rows — no empty state to fill,
+      // drop any in-flight preview so it doesn't keep firing.
+      this._yamlSearch.clear();
+      return;
+    }
+    this._yamlSearch.scheduleQuery(trimmed);
   }
 
   /** Try to scroll a pending-highlight target into view *now* if the

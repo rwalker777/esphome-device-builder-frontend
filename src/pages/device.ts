@@ -29,6 +29,7 @@ import { setLeaveGuard } from "../util/navigation.js";
 import { postInstallShowLogsHandler } from "../util/post-install-logs.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 import { sectionAtLine, sectionKeyOf } from "../util/yaml-sections.js";
+import { resolveSectionForUrlLine } from "../util/url-line-resolver.js";
 import { devicePageStyles } from "./device-styles.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -383,9 +384,41 @@ export class ESPHomePageDevice extends LitElement {
       const yaml = await this._api.getConfig(this.id);
       this._yaml = yaml;
       this._savedYaml = yaml;
+      this._maybeResolveLineFromUrl();
     } catch (e) {
       console.error("Failed to load YAML:", e);
     }
+  }
+
+  /**
+   * Resolve a ``?line=N`` URL parameter to a concrete section
+   * once the YAML has loaded.
+   *
+   * Direct-link arrivals from the dashboard's YAML hit list
+   * carry only ``?line=N`` (not ``?section=``); the navigator's
+   * highlight + scroll path keys off ``_selectedSection``, so
+   * without a section the editor mounts but never scrolls. Walk
+   * the just-loaded YAML to find the section that contains line
+   * N and pin both ``_selectedSection`` and ``_scrollToHighlight``
+   * — the navigator's existing emit-on-update logic then fires
+   * the scroll-into-view dispatch in CodeMirror.
+   */
+  private _maybeResolveLineFromUrl() {
+    const resolved = resolveSectionForUrlLine(
+      this._yaml,
+      this._selectedFromLine,
+      this._selectedSection
+    );
+    if (!resolved) return;
+    this._selectedSection = resolved.sectionKey;
+    // ``_highlightRange`` is what the editor reads to drive
+    // scroll-into-view; the user-click path sets it via
+    // ``_onYamlHighlight`` from the navigator's ``yaml-highlight``
+    // event, but the navigator's update-from-prop-change path
+    // doesn't emit, so URL-only arrivals would otherwise mount
+    // the editor without ever scrolling.
+    this._highlightRange = resolved.range;
+    this._scrollToHighlight = true;
   }
 
   private _saveYaml() {

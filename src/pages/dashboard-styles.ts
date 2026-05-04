@@ -127,7 +127,7 @@ export const dashboardStyles = css`
   .toolbar {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
     padding: var(--wa-space-l) var(--wa-space-l) 0;
     flex-shrink: 0;
   }
@@ -146,6 +146,145 @@ export const dashboardStyles = css`
     /* wa-input owns its own border / radius / focus ring; we only
        set the font size so it tracks the rest of the toolbar. */
     --font-size-medium: var(--wa-font-size-s);
+  }
+
+  /* The leading wa-icon doubles as the YAML-mode toggle —
+     role=button + tabindex makes it accessible without wrapping
+     it in an HTML button element, which would break wa-input's
+     internal slot=start sizing/centering. Just add a cursor +
+     hover affordance + colour shift when pressed. */
+  .search-mode-toggle {
+    cursor: pointer;
+    border-radius: 4px;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+  .search-mode-toggle:hover {
+    color: var(--wa-color-brand-on-quiet);
+  }
+  .search-mode-toggle:focus-visible {
+    outline: 2px solid var(--wa-color-brand-on-quiet);
+    outline-offset: 1px;
+  }
+  .search-mode-toggle[aria-pressed="true"] {
+    color: var(--wa-color-brand-on-quiet);
+  }
+
+  /* Wrapper for the YAML-mode "Back to device search" link.
+     Single-line, quiet treatment so the affordance reads as a
+     subtle pointer back to the device-name search rather than a
+     primary action. The toolbar's flex gap handles vertical
+     spacing; no extra margin needed. */
+  .search-discover-hint {
+    display: block;
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-xs);
+  }
+  /* Back-to-device-search link in YAML mode. A regular text
+     link — not a kbd cap — because the action is "navigate
+     back", not "press this key". Plain inline so it flows on
+     the same baseline as any leading icon. */
+  .search-discover-back {
+    display: inline;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--wa-color-text-quiet);
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: var(--wa-color-text-quieter, transparent);
+    text-underline-offset: 2px;
+    transition:
+      color 0.15s ease,
+      text-decoration-color 0.15s ease;
+  }
+  .search-discover-back:hover,
+  .search-discover-back:focus-visible {
+    color: var(--wa-color-brand-on-quiet);
+    text-decoration-color: currentColor;
+    outline: none;
+  }
+  .search-discover-back wa-icon {
+    font-size: var(--wa-font-size-s);
+    vertical-align: middle;
+    margin-right: 2px;
+  }
+
+  /* Empty-device-search YAML pivot (option (d)) — sits between
+     the "no devices found" copy and the Clear-search button.
+     Filled brand-tinted button so it reads as the primary
+     forward action rather than a secondary muted hint. */
+  .empty-search-yaml-pivot {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    margin-top: 4px;
+    background: var(--wa-color-brand-fill-quiet);
+    color: var(--wa-color-brand-on-quiet);
+    border: 1px solid var(--wa-color-brand-on-quiet);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-action, 500);
+    transition:
+      background-color 0.15s ease,
+      transform 0.05s ease;
+  }
+  .empty-search-yaml-pivot:hover {
+    background: var(--wa-color-brand-fill-loud);
+    color: var(--wa-color-brand-on-loud);
+  }
+  .empty-search-yaml-pivot:active {
+    transform: translateY(1px);
+  }
+
+  /* Wrapper around the YAML pivot when slotted into the table's
+     no-results-extra slot — gives a small top margin so the
+     pivot sits under the "No results found." text without
+     looking glued to it. */
+  .yaml-preview-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--wa-space-s);
+    margin-top: var(--wa-space-s);
+  }
+
+  /* ─── YAML mode hit list ─── */
+
+  .yaml-hits {
+    display: flex;
+    flex-direction: column;
+    padding: var(--wa-space-m) var(--wa-space-l) var(--wa-space-l);
+    gap: 2px;
+  }
+  .yaml-hit {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    padding: var(--wa-space-xs) var(--wa-space-s);
+    border-radius: 6px;
+    color: var(--wa-color-text-normal);
+    text-decoration: none;
+    font-size: var(--wa-font-size-s);
+    transition: background-color 0.1s ease;
+  }
+  .yaml-hit:hover,
+  .yaml-hit:focus-visible {
+    background: var(--wa-color-surface-raised);
+    outline: none;
+  }
+  .yaml-hit-label {
+    /* Single line, ellipsis on overflow — long YAML lines
+       (lambdas, comments) can run wide. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    font-family: var(--wa-font-family-code, ui-monospace, monospace);
   }
   .device-count {
     font-size: var(--wa-font-size-xs);
