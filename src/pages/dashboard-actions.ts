@@ -2,7 +2,7 @@ import toast from "sonner-js";
 import type { ESPHomeAPI } from "../api/index.js";
 import type {
   ArchivedDevice,
-  BulkDeleteResult,
+  BulkActionResult,
   ConfiguredDevice,
 } from "../api/types.js";
 import type { LocalizeFunc } from "../common/localize.js";
@@ -129,17 +129,35 @@ export function deleteDevice(
   });
 }
 
-export async function deleteBulkDevices(
+/**
+ * Shared per-row success/failure toast handler for bulk WS commands
+ * (``devices/delete_bulk``, ``devices/archive_bulk``). The backend
+ * runs each per-device action independently and returns
+ * ``BulkActionResult[]`` — aggregate the per-row outcomes into one
+ * success-count toast plus one error toast per failed row, instead
+ * of the per-device toasts the single-call paths emit.
+ *
+ * ``catchAllKey`` is the localize key shown when the bulk command
+ * itself rejects (network drop, server-side ``CommandError``) before
+ * any per-row results come back.
+ */
+async function runBulkAction(
   configurations: string[],
   devices: ConfiguredDevice[],
-  api: ESPHomeAPI,
-  localize: LocalizeFunc
+  localize: LocalizeFunc,
+  call: (configurations: string[]) => Promise<BulkActionResult[]>,
+  copy: {
+    catchAllKey: string;
+    successKey: string;
+    failureKey: string;
+    successOptions?: Parameters<typeof toast.success>[1];
+  },
 ) {
-  let results: BulkDeleteResult[];
+  let results: BulkActionResult[];
   try {
-    results = await api.deleteBulkDevices(configurations);
+    results = await call(configurations);
   } catch {
-    toast.error(localize("dashboard.delete_bulk_failed"), { richColors: true });
+    toast.error(localize(copy.catchAllKey), { richColors: true });
     return;
   }
 
@@ -147,15 +165,59 @@ export async function deleteBulkDevices(
   const failed = results.filter((r) => !r.success);
 
   if (succeeded > 0) {
-    toast.success(localize("dashboard.delete_bulk_success", { count: succeeded }), {
-      richColors: true,
-    });
+    toast.success(
+      localize(copy.successKey, { count: succeeded }),
+      { richColors: true, ...copy.successOptions },
+    );
   }
+  // Index by configuration up front so failure-toast naming is
+  // O(failures) instead of O(failures × devices) on big selections.
+  const devicesByConfiguration = new Map(
+    devices.map((d) => [d.configuration, d] as const),
+  );
   for (const result of failed) {
-    const device = devices.find((d) => d.configuration === result.configuration);
+    const device = devicesByConfiguration.get(result.configuration);
     const name = device ? device.friendly_name || device.name : result.configuration;
-    toast.error(localize("dashboard.delete_failed", { name }), { richColors: true });
+    toast.error(
+      localize(copy.failureKey, { name, error: result.error ?? "" }),
+      { richColors: true },
+    );
   }
+}
+
+/**
+ * Archive several devices at once via the ``devices/archive_bulk``
+ * WS command. Per-row results route through ``runBulkAction`` so
+ * the toast shape matches ``deleteBulkDevices``.
+ */
+export async function archiveBulkDevices(
+  configurations: string[],
+  devices: ConfiguredDevice[],
+  api: ESPHomeAPI,
+  localize: LocalizeFunc,
+) {
+  await runBulkAction(configurations, devices, localize, (c) => api.archiveBulkDevices(c), {
+    catchAllKey: "dashboard.archive_bulk_failed",
+    successKey: "dashboard.archive_bulk_success",
+    failureKey: "dashboard.action_archive_failed",
+    successOptions: {
+      description: localize("dashboard.action_archive_success_hint"),
+      duration: 8000,
+    },
+  });
+}
+
+export async function deleteBulkDevices(
+  configurations: string[],
+  devices: ConfiguredDevice[],
+  api: ESPHomeAPI,
+  localize: LocalizeFunc,
+) {
+  await runBulkAction(configurations, devices, localize, (c) => api.deleteBulkDevices(c), {
+    catchAllKey: "dashboard.delete_bulk_failed",
+    successKey: "dashboard.delete_bulk_success",
+    failureKey: "dashboard.delete_failed",
+  });
 }
 
 export async function downloadYaml(
