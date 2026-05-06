@@ -18,6 +18,7 @@ import {
   mdiLockAlert,
   mdiLockClock,
   mdiLockOpenVariant,
+  mdiMapMarkerOutline,
   mdiMemory,
   mdiMessage,
   mdiNetworkOutline,
@@ -73,6 +74,7 @@ registerMdiIcons({
   "lock-alert": mdiLockAlert,
   "lock-clock": mdiLockClock,
   "lock-open-variant": mdiLockOpenVariant,
+  "map-marker-outline": mdiMapMarkerOutline,
   memory: mdiMemory,
   message: mdiMessage,
   "network-outline": mdiNetworkOutline,
@@ -567,6 +569,7 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
         ${this._renderBluetoothMacRow(d)}
         ${this._row("memory", this._localize("dashboard.drawer_platform"), d.target_platform)}
         ${this._renderBuildSizeRow(d)}
+        ${d.area ? this._row("map-marker-outline", this._localize("dashboard.drawer_area"), d.area) : nothing}
       </div>
 
       ${this._renderReachabilitySection()}
