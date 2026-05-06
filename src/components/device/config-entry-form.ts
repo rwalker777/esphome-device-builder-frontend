@@ -269,6 +269,12 @@ export class ESPHomeConfigEntryForm extends LitElement {
       // primitive value" for null-prototype objects. Clear any
       // stale selection rather than leaving the previous primitive
       // displayed against a now-non-primitive YAML state.
+      // Renderers whose value can legitimately be a non-primitive
+      // (PIN's long-form block, FLOAT_WITH_UNIT's unit picker)
+      // opt out of this generic sync via ``data-no-value-sync``
+      // — handled above — and own their selection through
+      // ``_syncSelectedAttr`` against the ``?selected`` Lit
+      // binding instead.
       if (!isPrimitiveOrNullish(value)) {
         const current = Array.isArray(select.value)
           ? select.value[0] ?? ""
