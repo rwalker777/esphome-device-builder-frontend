@@ -2,14 +2,17 @@
  * Filter affordance that narrows the device list to entries
  * carrying every selected label (logical AND).
  *
- * Sits next to the search input in the dashboard toolbar. Hidden
- * when the catalog is empty so an un-tagged fleet doesn't see a
- * dead button. The component owns no filter state itself —
- * selections live on the parent dashboard so the device-filter
- * logic, the URL query string, and the empty-state copy can all
- * read from a single source. Selection changes are emitted as a
- * ``labels-filter-change`` ``CustomEvent<string[]>`` carrying the
- * new full set of selected ids.
+ * Sits next to the search input in the dashboard toolbar. The
+ * trigger renders unconditionally — even on a fleet that hasn't
+ * defined any labels yet — because the popover is the discovery
+ * path for creating the first label; hiding the button on an
+ * empty catalog (the original behaviour) made that affordance
+ * unreachable from the dashboard. The component owns no filter
+ * state itself — selections live on the parent dashboard so the
+ * device-filter logic, the URL query string, and the empty-state
+ * copy can all read from a single source. Selection changes are
+ * emitted as a ``labels-filter-change`` ``CustomEvent<string[]>``
+ * carrying the new full set of selected ids.
  */
 import { consume } from "@lit/context";
 import {
@@ -28,6 +31,7 @@ import {
 } from "../../util/label-chip-template.js";
 import { labelChipStyleString } from "../../util/label-style.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
+import "./label-create-form.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 
@@ -140,13 +144,23 @@ export class ESPHomeLabelsFilter extends LitElement {
         border-color: var(--esphome-primary);
       }
 
+      /* The trigger sits in the right-hand cluster of the dashboard
+         toolbar, so anchoring the popover to the trigger's right
+         edge keeps it inside the viewport — anchoring to the left
+         edge made the popover extend off the right side of the
+         screen. */
       .popover {
         position: absolute;
         z-index: 10;
         top: calc(100% + 4px);
-        left: 0;
-        min-width: 220px;
-        max-width: 320px;
+        right: 0;
+        /* Both bounds clamp to the viewport: on a phone-narrow
+           layout calc(100vw - 32px) can drop below the desired
+           240px floor, so a fixed min-width would force overflow.
+           Using min() lets the floor relax when the viewport is
+           tight, while the max-width keeps the upper bound. */
+        min-width: min(240px, calc(100vw - 32px));
+        max-width: min(320px, calc(100vw - 32px));
         background: var(--wa-color-surface-default);
         border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
         border-radius: var(--wa-border-radius-m);
@@ -216,23 +230,20 @@ export class ESPHomeLabelsFilter extends LitElement {
         color: var(--wa-color-text-quiet);
         padding: var(--wa-space-s);
       }
+
+      /* Divider between the catalog list / empty hint and the
+         "Create new label" affordance. Matches the .clear button's
+         border-top treatment so the popover reads as a vertical
+         stack of distinct sections. */
+      .divider {
+        height: 1px;
+        background: var(--wa-color-surface-border);
+        margin: 4px 0;
+      }
     `,
   ];
 
   protected willUpdate(changed: Map<string, unknown>) {
-    // If the catalog drains while the popover is open (last label
-    // deleted via a push event), force-close so we don't leave the
-    // EscapeController bound and the component in an
-    // open-but-unrenderable state — ``render()`` returns ``nothing``
-    // on an empty catalog, so without this the popover is invisible
-    // but keystrokes still pretend to dismiss it.
-    if (
-      changed.has("_catalog") &&
-      this._catalog.length === 0 &&
-      this._open
-    ) {
-      this._open = false;
-    }
     if (changed.has("_open")) this._escape.set(this._open);
   }
 
@@ -253,7 +264,10 @@ export class ESPHomeLabelsFilter extends LitElement {
   };
 
   protected render() {
-    if (this._catalog.length === 0) return nothing;
+    // Render the trigger unconditionally — even with an empty
+    // catalog, the popover is the path to creating the first
+    // label, so hiding the button entirely would leave that
+    // affordance undiscoverable.
     const selectedSet = new Set(this.selected);
     const count = this.selected.length;
     const label = this._localize("dashboard.filter_labels");
@@ -277,15 +291,16 @@ export class ESPHomeLabelsFilter extends LitElement {
   }
 
   private _renderPopover(selectedSet: Set<string>) {
+    const isEmpty = this._catalog.length === 0;
     return html`
       <div
         class="popover"
         role="group"
         aria-label=${this._localize("dashboard.filter_labels")}
       >
-        ${this._catalog.length === 0
+        ${isEmpty
           ? html`<div class="empty">
-              ${this._localize("dashboard.labels_no_matches")}
+              ${this._localize("dashboard.labels_dialog_empty")}
             </div>`
           : this._catalog.map((label) => {
               const checked = selectedSet.has(label.id);
@@ -311,9 +326,25 @@ export class ESPHomeLabelsFilter extends LitElement {
               ${this._localize("dashboard.filter_clear")}
             </button>`
           : nothing}
+        <div class="divider"></div>
+        <esphome-label-create-form
+          .existingNames=${this._catalog.map((l) => l.name)}
+          ?default-open=${isEmpty}
+          compact
+          @label-created=${this._onLabelCreated}
+        ></esphome-label-create-form>
       </div>
     `;
   }
+
+  private _onLabelCreated = (e: CustomEvent<Label>) => {
+    // Auto-select the freshly-minted label so the filter is
+    // immediately useful — a user who just typed a name and hit
+    // Create clearly intends to filter by it.
+    const id = e.detail.id;
+    if (this.selected.includes(id)) return;
+    this._emit([...this.selected, id]);
+  };
 
   private _toggle = () => {
     this._open = !this._open;
