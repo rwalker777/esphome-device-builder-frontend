@@ -22,6 +22,7 @@ import {
   mdiMemory,
   mdiMessage,
   mdiNetworkOutline,
+  mdiOpenInNew,
   mdiSync,
   mdiTagMultiple,
   mdiTextShort,
@@ -47,6 +48,7 @@ import { espHomeStyles } from "../../styles/shared.js";
 import { getEncryptionState } from "../../util/encryption-state.js";
 import { formatFileSize } from "../../util/format-file-size.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
+import { buildWebUiUrl } from "../../util/web-ui-url.js";
 import {
   ageOf,
   formatSecondsAgo,
@@ -79,6 +81,7 @@ registerMdiIcons({
   memory: mdiMemory,
   message: mdiMessage,
   "network-outline": mdiNetworkOutline,
+  "open-in-new": mdiOpenInNew,
   sync: mdiSync,
   "tag-multiple": mdiTagMultiple,
   "text-short": mdiTextShort,
@@ -324,6 +327,41 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
         color: var(--wa-color-text-normal);
       }
       .ip-toggle wa-icon {
+        font-size: 14px;
+      }
+
+      .ip-value {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-xs);
+      }
+      /* Match the table's .cell-action-btn icon-only target geometry
+         so the drawer link is reachable by keyboard and touch —
+         square hit area, :focus-visible ring, and the same hover
+         affordance the table-cell visit-web button uses. */
+      .ip-visit-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: var(--wa-border-radius-m);
+        color: var(--wa-color-text-quiet);
+        text-decoration: none;
+        transition:
+          background 0.12s,
+          color 0.12s;
+      }
+      .ip-visit-link:hover {
+        background: var(--wa-color-surface-lowered);
+        color: var(--esphome-primary);
+      }
+      .ip-visit-link:focus-visible {
+        outline: 2px solid var(--esphome-primary);
+        outline-offset: 2px;
+        color: var(--esphome-primary);
+      }
+      .ip-visit-link wa-icon {
         font-size: 14px;
       }
 
@@ -827,7 +865,26 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
     const list = d.ip_addresses;
     const label = this._localize("dashboard.drawer_ip_address");
     if (list.length === 0) {
-      return this._row("ip-network-outline", label, "", true);
+      // ``device.address`` (the YAML-declared mDNS hostname) plus a
+      // configured ``web_port`` is enough to build a usable visit-web
+      // URL even before the first resolved A/AAAA record arrives, so
+      // route through ``_renderIpValue`` to surface the link in that
+      // window. Falls back to ``_row``'s muted em-dash when neither
+      // is available.
+      if (!buildWebUiUrl(d)) {
+        return this._row("ip-network-outline", label, "", true);
+      }
+      return html`
+        <div class="row">
+          <div class="icon">
+            <wa-icon library="mdi" name="ip-network-outline"></wa-icon>
+          </div>
+          <div class="content">
+            <div class="label">${label}</div>
+            ${this._renderIpValue(d, "")}
+          </div>
+        </div>
+      `;
     }
     if (list.length === 1) {
       return html`
@@ -837,7 +894,7 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
           </div>
           <div class="content">
             <div class="label">${label}</div>
-            <div class="value mono">${list[0]}</div>
+            ${this._renderIpValue(d, list[0])}
           </div>
         </div>
       `;
@@ -851,7 +908,7 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
         </div>
         <div class="content">
           <div class="label">${label}</div>
-          <div class="value mono">${list[0]}</div>
+          ${this._renderIpValue(d, list[0])}
           ${expanded
             ? list
                 .slice(1)
@@ -874,6 +931,48 @@ export class ESPHomeDeviceDrawerContent extends LitElement {
               : this._localize("dashboard.drawer_ip_show_more", { n: extra })}
           </button>
         </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render the primary IP cell, optionally suffixed with a "Visit web UI"
+   * icon-link.
+   *
+   * The link only renders when ``buildWebUiUrl`` returns a non-empty
+   * URL — i.e. the YAML enabled ``web_server`` and we have a host to
+   * point at. ``buildWebUiUrl`` is the single source of truth for the
+   * host/port/protocol logic shared with the table column and the
+   * row-menu, so the drawer can't drift out of sync with them.
+   *
+   * Pass an empty *ip* to render the ``—`` placeholder alongside the
+   * link; used in the "no resolved IPs yet but ``device.address`` is
+   * known" branch so the visit affordance isn't gated on the first
+   * mDNS A-record.
+   */
+  private _renderIpValue(d: ConfiguredDevice, ip: string) {
+    const url = buildWebUiUrl(d);
+    const isPlaceholder = !ip;
+    const display = ip || "—";
+    if (!url) {
+      return html`<div
+        class="value mono ${isPlaceholder ? "muted" : ""}"
+      >${display}</div>`;
+    }
+    const visitLabel = this._localize("dashboard.action_visit_web_ui");
+    return html`
+      <div class="value mono ip-value ${isPlaceholder ? "muted" : ""}">
+        <span>${display}</span>
+        <a
+          class="ip-visit-link"
+          href=${url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label=${visitLabel}
+          title=${visitLabel}
+        >
+          <wa-icon library="mdi" name="open-in-new"></wa-icon>
+        </a>
       </div>
     `;
   }
