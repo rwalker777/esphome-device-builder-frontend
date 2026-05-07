@@ -20,6 +20,7 @@ import type {
   ArchivedDevice,
   ConfiguredDevice,
   FirmwareJob,
+  Label,
   YamlSearchHit,
 } from "../api/types.js";
 import type { SortingState, VisibilityState } from "@tanstack/lit-table";
@@ -36,6 +37,7 @@ import {
 import { espHomeStyles } from "../styles/shared.js";
 import { YamlSearchController } from "../components/yaml-search-controller.js";
 import { matchesDeviceName } from "../util/device-search.js";
+import { computeLabelUsage, deleteConfirmKey } from "../util/label-usage.js";
 import {
   buildYamlSnippetBlocks,
   yamlEmptyMessageKey,
@@ -217,6 +219,7 @@ export class ESPHomePageDashboard extends LitElement {
     | { kind: "delete-bulk" }
     | { kind: "archive-single"; device: ConfiguredDevice }
     | { kind: "archive-bulk" }
+    | { kind: "delete-label"; label: Label }
     | null = null;
   /** Configuration filename of the most recently adopted device.
    *  Drives a short-lived ``highlight`` attribute on the matching
@@ -242,6 +245,18 @@ export class ESPHomePageDashboard extends LitElement {
   private _sortedDevicesCache: {
     source: ConfiguredDevice[];
     sorted: ConfiguredDevice[];
+  } | null = null;
+  /** Cache for the per-label usage count map (mirrors
+   *  ``_sortedDevicesCache``'s reference-keyed shape). The map
+   *  rebuilds only when ``_devices`` is replaced — every WS event
+   *  that mutates the list does a full reassign — so the
+   *  delete-label confirm dialog's "removes from N devices" copy,
+   *  which calls ``_computeLabelUsage()`` on every render of
+   *  ``_confirmDialogCopy``, doesn't pay the count walk while the
+   *  dialog sits open over an unchanged device list. */
+  private _labelUsageCache: {
+    source: ConfiguredDevice[];
+    map: Record<string, number>;
   } | null = null;
   /** When false (default), discovered devices the user previously
    *  marked as Ignored are hidden from the banner and grid; the
@@ -1093,11 +1108,31 @@ export class ESPHomePageDashboard extends LitElement {
     `;
   }
 
+  /** Per-label-id usage count across the current device list.
+   *  Read by ``_confirmDialogCopy`` when rendering the
+   *  delete-label confirm dialog so the prompt reads "this will
+   *  remove the label from N devices" before the cascade fires.
+   *  Reference-keyed cache off ``_devices`` so the dialog doesn't
+   *  pay the count walk twice if it re-renders while the list is
+   *  unchanged (which is most of the dialog's lifetime). */
+  private _computeLabelUsage(): Record<string, number> {
+    const source = this._devices;
+    if (this._labelUsageCache?.source === source) {
+      return this._labelUsageCache.map;
+    }
+    const map = computeLabelUsage(source);
+    this._labelUsageCache = { source, map };
+    return map;
+  }
+
   private _renderLabelsFilter() {
     return html`<esphome-labels-filter
       .selected=${this._selectedLabels}
       @labels-filter-change=${(e: CustomEvent<string[]>) => {
         this._selectedLabels = e.detail;
+      }}
+      @request-delete-label=${(e: CustomEvent<Label>) => {
+        this._openConfirm({ kind: "delete-label", label: e.detail });
       }}
     ></esphome-labels-filter>`;
   }
@@ -1476,6 +1511,18 @@ export class ESPHomePageDashboard extends LitElement {
           message: t("dashboard.archive_desc", { name }),
           confirm: t("dashboard.archive_confirm"),
           destructive: false,
+        };
+      }
+      case "delete-label": {
+        const usage = this._computeLabelUsage()[p.label.id] ?? 0;
+        return {
+          heading: t("dashboard.labels_delete_title"),
+          message: t(deleteConfirmKey(usage), {
+            name: p.label.name,
+            count: usage,
+          }),
+          confirm: t("dashboard.labels_delete_submit"),
+          destructive: true,
         };
       }
     }
@@ -2162,12 +2209,39 @@ export class ESPHomePageDashboard extends LitElement {
       case "archive-single":
         this._archiveDevice(p.device);
         return;
+      case "delete-label":
+        void this._deleteLabel(p.label);
+        return;
     }
   }
 
   private async _deleteArchivedDevice(device: ArchivedDevice) {
     if (await deleteArchivedDevice(device, this._api, this._localize)) {
       await this._archivedDialog?.refresh();
+    }
+  }
+
+  /** Round-trip ``labels/delete`` and surface a toast on failure.
+   *  The ``LABEL_DELETED`` push from the backend refreshes the
+   *  catalog through ``labelsContext`` — nothing to do locally on
+   *  success. The active filter selection is dropped synchronously
+   *  so a stale chip can't outlive the catalog entry; the alternative
+   *  (silently keeping the id) leaves the filter matching nothing
+   *  with no visible explanation. */
+  private async _deleteLabel(label: Label) {
+    if (!this._api) return;
+    try {
+      await this._api.deleteLabel(label.id);
+      if (this._selectedLabels.includes(label.id)) {
+        this._selectedLabels = this._selectedLabels.filter(
+          (id) => id !== label.id,
+        );
+      }
+    } catch (err) {
+      console.warn("label delete failed", err);
+      toast.error(this._localize("dashboard.labels_delete_failed"), {
+        richColors: true,
+      });
     }
   }
 }
