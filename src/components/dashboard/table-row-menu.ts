@@ -5,6 +5,7 @@ import {
   mdiCheckboxMultipleBlankOutline,
   mdiCheckDecagram,
   mdiConsole,
+  mdiContentDuplicate,
   mdiDelete,
   mdiDownload,
   mdiFileDownloadOutline,
@@ -32,6 +33,7 @@ registerMdiIcons({
   "checkbox-multiple-blank-outline": mdiCheckboxMultipleBlankOutline,
   "check-decagram": mdiCheckDecagram,
   console: mdiConsole,
+  "content-duplicate": mdiContentDuplicate,
   delete: mdiDelete,
   download: mdiDownload,
   "file-download-outline": mdiFileDownloadOutline,
@@ -252,6 +254,13 @@ export class ESPHomeTableRowMenu extends LitElement {
         >
           <wa-icon library="mdi" name="rename-outline"></wa-icon>
           ${this._localize("dashboard.action_rename")}
+        </div>
+        <div
+          class="menu-item ${this.busy ? "menu-item--disabled" : ""}"
+          @click=${this.busy ? undefined : () => this._emit("clone-device")}
+        >
+          <wa-icon library="mdi" name="content-duplicate"></wa-icon>
+          ${this._localize("dashboard.action_clone")}
         </div>
         <div
           class="menu-item ${this.busy ? "menu-item--disabled" : ""}"
