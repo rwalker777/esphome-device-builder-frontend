@@ -389,7 +389,9 @@
       "tuya": "Tuya",
       "shelly": "Shelly"
     },
-    "starter_kit": "Aanbevolen"
+    "starter_kit": "Aanbevolen",
+    "create_general_error": "Het aanmaken van het apparaat is mislukt. Probeer het opnieuw.",
+    "create_with_board_error": "Aanmaken van apparaat voor {board} is mislukt: {message}"
   },
   "device": {
     "navigator_title": "Apparaatnavigator",
