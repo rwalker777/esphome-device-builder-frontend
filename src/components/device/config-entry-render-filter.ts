@@ -47,6 +47,21 @@ export interface RenderFilterOptions {
   showAdvanced: boolean;
   /** Pass-through to ``isEntryVisible`` for cross-component checks. */
   presentComponents?: Set<string>;
+  /**
+   * The device's target platform (``esp32`` / ``esp8266`` /
+   * ``rp2040`` / ...). Forwarded to ``isEntryVisible`` which
+   * applies the actual platform gate against
+   * ``ConfigEntry.supported_platforms``. Keeping the predicate
+   * inside ``isEntryVisible`` (rather than re-implementing it
+   * here) means ``validateEntries``, which also calls
+   * ``isEntryVisible``, stays in lockstep with what the form
+   * paints — no flagging required-and-platform-gated fields the
+   * user can't even see.
+   *
+   * ``null`` / ``undefined`` skips the gate — used by the
+   * add-component dialog when no board is selected yet.
+   */
+  targetPlatform?: string | null;
 }
 
 /**
@@ -88,7 +103,16 @@ export function filterRenderable(
 ): ConfigEntry[] {
   const out: ConfigEntry[] = [];
   for (const entry of entries) {
-    if (!isEntryVisible(entry, values, opts.presentComponents)) continue;
+    if (
+      !isEntryVisible(
+        entry,
+        values,
+        opts.presentComponents,
+        opts.targetPlatform,
+      )
+    ) {
+      continue;
+    }
     if (
       entry.advanced &&
       !opts.showAdvanced &&
