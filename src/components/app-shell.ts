@@ -19,9 +19,12 @@ import {
   ErrorCode,
   JobStatus,
   JobType,
-  OnboardingStepStatus,
   Theme,
 } from "../api/types.js";
+import {
+  isOnboardingPending,
+  shouldAutoShowOnboarding,
+} from "../util/onboarding-gate.js";
 import type {
   AdoptableDevice,
   ConfiguredDevice,
@@ -510,21 +513,22 @@ export class ESPHomeApp extends LitElement {
   /** Load the onboarding snapshot and update both the
    *  always-on data signal (``_onboardingPending`` — gates the
    *  ``Set up Wi-Fi…`` kebab entry in header-actions) and the
-   *  dialog-show signal (``_onboardingShouldShow`` — gated by
-   *  acknowledged-version + session-dismissal). Re-runs on
-   *  reconnect and after every secrets save; the dialog doesn't
-   *  re-open mid-session because ``_onboardingSessionDismissed``
-   *  survives the refresh. */
+   *  dialog-show signal (``_onboardingShouldShow`` — auto-pop
+   *  requires acknowledged-version-behind AND a pending step
+   *  AND no session-dismissal; see ``shouldAutoShowOnboarding``
+   *  for the full predicate). Re-runs on reconnect and after
+   *  every secrets save; the dialog doesn't re-open mid-session
+   *  because ``_onboardingSessionDismissed`` survives the
+   *  refresh. The kebab entry is the manual override for users
+   *  who want the wizard outside of the auto-pop conditions. */
   private async _loadOnboardingState() {
     try {
       const state = await this._api.getOnboardingState();
-      this._onboardingPending = state.steps.some(
-        (s) => s.status === OnboardingStepStatus.PENDING,
+      this._onboardingPending = isOnboardingPending(state);
+      this._onboardingShouldShow = shouldAutoShowOnboarding(
+        state,
+        this._onboardingSessionDismissed,
       );
-      const userBehindCurrent =
-        state.completed_version < state.current_version;
-      this._onboardingShouldShow =
-        userBehindCurrent && !this._onboardingSessionDismissed;
     } catch (err) {
       // Onboarding is non-critical — a transient WS failure here
       // shouldn't block the rest of the dashboard. Clear the
