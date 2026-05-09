@@ -15,6 +15,7 @@ import type { ESPHomeAPI } from "../api/esphome-api.js";
 import {
   ErrorCode,
   type IdentityView,
+  type RemoteBuildBindingMismatchEventData,
   type RemoteBuildPeer,
   type TokenSummary,
 } from "../api/types.js";
@@ -25,10 +26,13 @@ import { readStoredLocale } from "../common/localize.js";
 type LanguageChoice = SupportedLocale | "system";
 import {
   apiContext,
+  buildServerBindingMismatchesContext,
+  buildServerIdentityRotationCounterContext,
   localizeContext,
   remoteBuildEnabledContext,
   yamlDiffButtonContext,
 } from "../context/index.js";
+import { warningBannerStyles } from "../styles/banners.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { formatPinSha256 } from "../util/cert-pin-format.js";
 import { copyToClipboard } from "../util/copy-to-clipboard.js";
@@ -139,6 +143,20 @@ export class ESPHomeSettingsDialog extends LitElement {
   @consume({ context: remoteBuildEnabledContext, subscribe: true })
   @state()
   private _remoteBuildEnabled = false;
+
+  // Phase 3c2d: live alert + cross-tab refresh signals from
+  // app-shell. Both come from the WS event subscription that
+  // app-shell already runs.
+  @consume({ context: buildServerBindingMismatchesContext, subscribe: true })
+  @state()
+  private _buildServerBindingMismatches: RemoteBuildBindingMismatchEventData[] = [];
+
+  @consume({
+    context: buildServerIdentityRotationCounterContext,
+    subscribe: true,
+  })
+  @state()
+  private _buildServerIdentityRotationCounter = 0;
 
   @consume({ context: apiContext })
   private _api?: ESPHomeAPI;
@@ -253,6 +271,64 @@ export class ESPHomeSettingsDialog extends LitElement {
     this._dialog.open = false;
   }
 
+  /**
+   * Cross-tab refresh hook. Two distinct triggers:
+   *
+   * - ``_buildServerIdentityRotationCounter`` increments via
+   *   the matching context whenever app-shell receives a
+   *   ``remote_build_identity_rotated`` event. On change,
+   *   re-fetch the identity so this tab's card matches
+   *   whatever the rotating tab landed on disk.
+   *
+   * - ``_buildServerBindingMismatches`` (the array reference)
+   *   changes whenever app-shell appends a new
+   *   ``remote_build_binding_mismatch`` event. On change,
+   *   re-fetch the tokens list. ``race_loss=true`` actually
+   *   transitions the token's ``bound_dashboard_id`` from
+   *   ``null`` to the winning sender's id; without this
+   *   refresh, the token row's "Waiting for first use" badge
+   *   stays stale until the user closes and reopens Settings.
+   *   ``race_loss=false`` doesn't mutate state on the
+   *   receiver, but the extra fetch is idempotent and the
+   *   tokens list cap is small.
+   *
+   * Both branches gate on ``_section === "build_server"`` rather
+   * than on the loaded-state of the field they refresh. A
+   * loaded-state guard ("only refetch if not null") would skip
+   * the event in two real cases:
+   *
+   * 1. The initial ``_loadBuildServerIdentity`` is in flight when
+   *    the rotation event arrives — the field is still ``null``
+   *    so we'd skip, then the in-flight request lands with
+   *    pre-rotation data.
+   * 2. The user navigated away from the section since loading;
+   *    the field is non-null but stale.
+   *
+   * Section-active is the user-intent signal we actually want.
+   *
+   * For both: ``changed.get(...)`` returns the *previous*
+   * value, which is ``undefined`` on the very first sync (Lit's
+   * first callback after the consumer connects to the
+   * provider). Skip that one — it's the initial value flowing
+   * through, not a real event.
+   */
+  protected updated(changed: Map<string, unknown>) {
+    super.updated(changed);
+    if (this._section !== "build_server") return;
+    if (changed.has("_buildServerIdentityRotationCounter")) {
+      const prev = changed.get("_buildServerIdentityRotationCounter");
+      if (prev !== undefined) {
+        void this._loadBuildServerIdentity();
+      }
+    }
+    if (changed.has("_buildServerBindingMismatches")) {
+      const prev = changed.get("_buildServerBindingMismatches");
+      if (prev !== undefined) {
+        void this._loadBuildServerTokens();
+      }
+    }
+  }
+
   private _selectSection(section: Section) {
     this._section = section;
     // Each role lazy-loads only its own state — opening the
@@ -312,7 +388,7 @@ export class ESPHomeSettingsDialog extends LitElement {
   }
 
   /**
-   * Fetch the receiver identity for the Build host card.
+   * Fetch the receiver identity for the Build server card.
    *
    * Idempotent on the backend (``get_identity`` lazy-creates the
    * cert + key on first call but never rotates), so re-firing on
@@ -321,14 +397,11 @@ export class ESPHomeSettingsDialog extends LitElement {
    * state so the UI can render an explicit error message rather
    * than spinning forever.
    *
-   * **Cross-tab gap**: a rotation triggered from another tab
-   * won't refresh this tab's card until the user closes and
-   * reopens Settings. 3c2c will set up the
-   * ``remote_build_identity_rotated`` event subscription to
-   * cover that case; binding-mismatch alerts in 3c2c MUST
-   * fire while the user sits on the page (so the events
-   * plumbing is mandatory there), and the identity-refresh
-   * piggybacks on the same wiring.
+   * Cross-tab refresh on a rotation from another tab is handled
+   * by ``updated()`` watching the
+   * ``buildServerIdentityRotationCounterContext`` value
+   * app-shell bumps from the
+   * ``remote_build_identity_rotated`` event (3c2d).
    */
   private async _loadBuildServerIdentity(): Promise<void> {
     if (this._api === undefined) {
@@ -528,6 +601,7 @@ export class ESPHomeSettingsDialog extends LitElement {
 
   static styles = [
     espHomeStyles,
+    warningBannerStyles,
     css`
       wa-dialog {
         --width: min(800px, 95vw);
@@ -722,15 +796,76 @@ export class ESPHomeSettingsDialog extends LitElement {
          via .row: zero horizontal padding, rely on the
          container. */
 
-      .phase-banner {
+      /* Per-consumer spacing for warningBannerStyles' .warning-banner. */
+      .warning-banner {
         margin: 0 0 var(--wa-space-m);
+      }
+
+      /* Binding-mismatch alert rows. Same shape as
+         .phase-banner; the per-severity colour stack diverges
+         (warning for race-loss, danger for the loud already-
+         bound case). Two-column layout when the loud case
+         renders a Revoke CTA, single-column otherwise. */
+      .binding-alerts {
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-xs);
+        margin: 0 0 var(--wa-space-m);
+      }
+
+      .binding-alert {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--wa-space-m);
         padding: var(--wa-space-s) var(--wa-space-m);
         border-radius: var(--wa-border-radius-s);
+        border-left: 3px solid;
+        font-size: var(--wa-font-size-s);
+      }
+
+      .binding-alert[data-severity="warning"] {
         background: var(--wa-color-warning-fill-quiet, #fff7e0);
         color: var(--wa-color-warning-text-quiet, #6b4f00);
-        border-left: 3px solid
-          var(--wa-color-warning-border-loud, #f0b400);
-        font-size: var(--wa-font-size-s);
+        border-left-color: var(--wa-color-warning-border-loud, #f0b400);
+      }
+
+      .binding-alert[data-severity="danger"] {
+        background: color-mix(in srgb, var(--esphome-error), transparent 92%);
+        color: var(--esphome-error);
+        border-left-color: var(--esphome-error);
+      }
+
+      .binding-alert-body {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .binding-alert-title {
+        font-weight: var(--wa-font-weight-bold);
+        margin-bottom: var(--wa-space-2xs);
+      }
+
+      .binding-alert-desc {
+        font-size: var(--wa-font-size-xs);
+        line-height: 1.4;
+      }
+
+      .binding-alert-revoke {
+        flex-shrink: 0;
+        align-self: center;
+        padding: 6px 14px;
+        border-radius: var(--wa-border-radius-s);
+        background: var(--esphome-error);
+        color: var(--esphome-on-primary, white);
+        border: none;
+        font: inherit;
+        font-weight: var(--wa-font-weight-bold);
+        font-size: var(--wa-font-size-xs);
+        cursor: pointer;
+      }
+
+      .binding-alert-revoke:hover {
+        background: color-mix(in srgb, var(--esphome-error), black 10%);
       }
 
       .section-intro {
@@ -1142,16 +1277,18 @@ export class ESPHomeSettingsDialog extends LitElement {
    * Receive role: this dashboard letting other dashboards
    * use it to compile firmware. Master enable toggle plus
    * the build-server identity card (cert fingerprint +
-   * listener-bound + rotate). Tokens list + binding-
-   * mismatch alerts land here in 3c2c. Each row carries
-   * its own inline description rather than a section
-   * intro paragraph — matches the visual rhythm of the
-   * Appearance / Editor sections (label + short desc +
-   * control inline) and avoids the wall-of-text feel the
-   * earlier intro paragraph had.
+   * listener-bound + rotate), tokens list, and binding-
+   * mismatch alerts. Each row carries its own inline
+   * description rather than a section intro paragraph —
+   * matches the visual rhythm of the Appearance / Editor
+   * sections (label + short desc + control inline) and
+   * avoids the wall-of-text feel the earlier intro
+   * paragraph had.
    */
   private _renderBuildServer() {
     return html`
+      ${this._renderBuildServerAlerts()}
+
       <div class="row">
         <div class="row-label">
           <span id="remote-build-enable-title" class="row-title">
@@ -1189,6 +1326,70 @@ export class ESPHomeSettingsDialog extends LitElement {
   }
 
   /**
+   * One alert row per recent ``remote_build_binding_mismatch``
+   * event from app-shell's context. ``race_loss=true`` is the
+   * soft case (concurrent first-use; both senders may be
+   * legitimate); ``race_loss=false`` is the loud case (token
+   * was already bound; this is a wrong / stolen bearer) and
+   * carries an inline Revoke CTA. Token labels come from the
+   * loaded tokens list when available; falls back to the bare
+   * token_id if the tokens list hasn't loaded yet (or if the
+   * token has been revoked since the event fired).
+   */
+  private _renderBuildServerAlerts() {
+    if (this._buildServerBindingMismatches.length === 0) return nothing;
+    return html`
+      <div class="binding-alerts">
+        ${this._buildServerBindingMismatches.map((evt) =>
+          this._renderBuildServerAlert(evt)
+        )}
+      </div>
+    `;
+  }
+
+  private _renderBuildServerAlert(evt: RemoteBuildBindingMismatchEventData) {
+    const known = (this._buildServerTokens ?? []).find(
+      (t) => t.token_id === evt.token_id
+    );
+    const labelOrId = known
+      ? known.label
+      : this._localize("settings.build_server_alert_label_unknown", {
+          token_id: evt.token_id,
+        });
+    const titleKey = evt.race_loss
+      ? "settings.build_server_alert_race_loss_title"
+      : "settings.build_server_alert_mismatch_title";
+    const bodyKey = evt.race_loss
+      ? "settings.build_server_alert_race_loss_body"
+      : "settings.build_server_alert_mismatch_body";
+    const severity = evt.race_loss ? "warning" : "danger";
+    return html`
+      <div class="binding-alert" role="alert" data-severity=${severity}>
+        <div class="binding-alert-body">
+          <div class="binding-alert-title">${this._localize(titleKey)}</div>
+          <div class="binding-alert-desc">
+            ${this._localize(bodyKey, {
+              label: labelOrId,
+              peer_ip: evt.peer_ip,
+            })}
+          </div>
+        </div>
+        ${!evt.race_loss && known !== undefined
+          ? html`
+              <button
+                type="button"
+                class="binding-alert-revoke"
+                @click=${() => this._onRevokeRequest(evt.token_id)}
+              >
+                ${this._localize("settings.build_server_alert_revoke")}
+              </button>
+            `
+          : nothing}
+      </div>
+    `;
+  }
+
+  /**
    * Offload role: this dashboard sending its compiles to
    * another dashboard on the network. Manual host entry +
    * discovered-peers list. Pairing + peer-link + scheduler
@@ -1199,7 +1400,7 @@ export class ESPHomeSettingsDialog extends LitElement {
    */
   private _renderBuildOffload() {
     return html`
-      <div class="phase-banner" role="status">
+      <div class="warning-banner" role="status">
         ${this._localize("settings.build_offload_unimplemented_banner")}
       </div>
 
