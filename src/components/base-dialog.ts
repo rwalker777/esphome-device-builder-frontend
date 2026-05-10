@@ -1,11 +1,8 @@
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 
-import { consume } from "@lit/context";
 import { LitElement, css, html } from "lit";
-import { customElement, property, query, state } from "lit/decorators.js";
+import { customElement, property } from "lit/decorators.js";
 
-import type { LocalizeFunc } from "../common/localize.js";
-import { localizeContext } from "../context/index.js";
 import { dialogCloseButtonStyles } from "../styles/dialog-close-button.js";
 
 /**
@@ -14,10 +11,10 @@ import { dialogCloseButtonStyles } from "../styles/dialog-close-button.js";
  * Every dialog in the app spent ~20 lines on identical
  * scaffolding — the ``?open`` binding, the
  * ``?light-dismiss`` busy-gate, the ``@wa-request-close``
- * / ``@wa-after-hide`` wiring, and a custom dialog-close X
- * button in ``slot="header-actions"`` with a disabled-when-
- * busy contract. This element bundles all of that into one
- * place so consumers carry just the dialog title and body.
+ * / ``@wa-after-hide`` wiring, and ``dialogCloseButtonStyles``
+ * to dress the built-in close button. This element bundles
+ * all of that into one place so consumers carry just the
+ * dialog title and body.
  *
  * Reactive open/close: consumers pass ``?open=${this._open}``
  * and listen for ``@after-hide`` to clear local state. The
@@ -31,13 +28,17 @@ import { dialogCloseButtonStyles } from "../styles/dialog-close-button.js";
  * - ``<wa-dialog>``'s ``?light-dismiss`` is disabled, so
  *   outside-click can't dismiss while a WS round-trip is
  *   in flight.
- * - The close-button is ``disabled``.
  * - The wrapper proactively ``preventDefault()``s
- *   ``wa-request-close`` so Escape / programmatic close
- *   are blocked too, even when the consumer doesn't wire
- *   their own ``@request-close`` veto handler. The busy
- *   gate is comprehensive — consumers don't have to
- *   double-cover it.
+ *   ``wa-request-close`` so Escape / X-button click /
+ *   programmatic close are all silently absorbed, even
+ *   when the consumer doesn't wire their own
+ *   ``@request-close`` veto handler. The busy gate is
+ *   comprehensive — consumers don't have to double-cover
+ *   it.
+ * - The built-in close button is visually dimmed via
+ *   ``:host([busy]) wa-dialog::part(close-button__base)``
+ *   so the silent absorption doesn't read as a broken
+ *   button.
  *
  * **Events re-emitted**:
  *
@@ -57,19 +58,19 @@ import { dialogCloseButtonStyles } from "../styles/dialog-close-button.js";
  * All close paths flow through ``wa-request-close`` so
  * busy gate + host veto are evaluated uniformly:
  *
- * - Escape key / outside-click → ``wa-dialog`` fires
- *   ``wa-request-close`` directly.
- * - Custom X button click → wrapper calls
- *   ``waDialog.hide()`` which fires ``wa-request-close``.
- * - Reactive ``?open`` flip → ``wa-dialog`` fires
- *   ``wa-request-close`` as part of its hide sequence.
+ * - Escape key / outside-click / built-in X button →
+ *   ``wa-dialog`` fires ``wa-request-close`` directly.
+ * - Reactive ``?open`` flip from the host → ``wa-dialog``
+ *   fires ``wa-request-close`` as part of its hide
+ *   sequence.
  *
  * The wrapper never mutates its own ``open`` property in
- * response to user actions; closing is the host's
- * responsibility via ``?open=${false}`` (typically wired
- * inside the ``@after-hide`` listener). This keeps a
- * single source of truth on the host so a re-render
- * mid-close can't reopen the dialog.
+ * response to user actions. After a non-vetoed close,
+ * wa-dialog finishes hiding and fires ``wa-after-hide``;
+ * the host's ``@after-hide`` listener is the place to
+ * flip ``_open = false`` and clear local state, which
+ * flows back through the reactive ``?open`` binding so
+ * the next render's ``?open`` matches.
  *
  * **Slots**:
  *
@@ -80,13 +81,22 @@ import { dialogCloseButtonStyles } from "../styles/dialog-close-button.js";
  *   plain ``<div class="actions">`` at the end of the
  *   body, and forcing them to migrate to a slotted footer
  *   would balloon the diff for no behaviour change.
+ *
+ * **Part forwarding**. The inner ``<wa-dialog>`` is wrapped
+ * in this element's shadow DOM, so consumer styles that
+ * targeted ``wa-dialog::part(...)`` directly won't reach
+ * through. ``exportparts="..."`` on the inner element
+ * re-exposes the parts under the same names, addressable
+ * from a migrating consumer as
+ * ``esphome-base-dialog::part(header)`` etc. The
+ * forwarded parts are the ones currently overridden across
+ * the codebase: ``dialog``, ``header``, ``title``, ``body``,
+ * ``footer``, ``close-button``, ``close-button__base``.
+ * Consumers swap ``wa-dialog::part(X)`` →
+ * ``esphome-base-dialog::part(X)`` at migration time.
  */
 @customElement("esphome-base-dialog")
 export class ESPHomeBaseDialog extends LitElement {
-  @consume({ context: localizeContext, subscribe: true })
-  @state()
-  private _localize: LocalizeFunc = (key) => key;
-
   /** Dialog title rendered in the header. Consumers pass
    *  the already-localised string. */
   @property() label = "";
@@ -97,11 +107,19 @@ export class ESPHomeBaseDialog extends LitElement {
 
   /** When ``true``: light-dismiss is disabled and the
    *  close-button is greyed out. Use for "WS round-trip in
-   *  flight; don't let the user orphan it". */
-  @property({ type: Boolean }) busy = false;
-
-  @query("wa-dialog")
-  private _waDialog?: HTMLElement & { hide?: () => void };
+   *  flight; don't let the user orphan it".
+   *
+   *  Reflected to the ``busy`` attribute so the
+   *  ``:host([busy])`` CSS selector matches regardless of
+   *  whether the host binds via boolean-attribute syntax
+   *  (``?busy=${...}``), property syntax (``.busy=${...}``),
+   *  or imperative assignment (``dialog.busy = true``).
+   *  Without ``reflect: true``, only the boolean-attribute
+   *  form would update the attribute, so property /
+   *  imperative writers would get the functional gate
+   *  (wa-request-close veto) but not the visual dim on the
+   *  close button. */
+  @property({ type: Boolean, reflect: true }) busy = false;
 
   private _onWaRequestClose = (e: Event): void => {
     // Busy gate first: refuse close regardless of source
@@ -131,36 +149,16 @@ export class ESPHomeBaseDialog extends LitElement {
     );
   };
 
-  private _onCloseClick = (): void => {
-    // Drive close through wa-dialog's hide() so the entire
-    // close flow (busy gate via wa-request-close + host
-    // veto + after-hide cleanup) runs uniformly. Mutating
-    // ``this.open`` directly would (a) bypass the host's
-    // veto opportunity and (b) desync with a state-driven
-    // host whose own ``_open`` is still true — a host
-    // re-render mid-close would flip ``?open`` back to
-    // true and re-open the dialog.
-    this._waDialog?.hide?.();
-  };
-
   protected render() {
     return html`
       <wa-dialog
+        exportparts="dialog,header,title,body,footer,close-button,close-button__base"
         ?open=${this.open}
         ?light-dismiss=${!this.busy}
         @wa-request-close=${this._onWaRequestClose}
         @wa-after-hide=${this._onWaAfterHide}
       >
         <header slot="label">${this.label}</header>
-        <button
-          class="dialog-close"
-          slot="header-actions"
-          aria-label=${this._localize("layout.close")}
-          ?disabled=${this.busy}
-          @click=${this._onCloseClick}
-        >
-          ✕
-        </button>
         <slot></slot>
       </wa-dialog>
     `;
@@ -171,6 +169,19 @@ export class ESPHomeBaseDialog extends LitElement {
     css`
       :host {
         display: contents;
+      }
+
+      /* Busy visual on wa-dialog's built-in close. The
+         functional gate is the wa-request-close veto
+         above — clicking the X while busy silently
+         absorbs the event and the dialog stays open. The
+         CSS here is the user-facing cue (button looks
+         disabled) so the silent absorption doesn't read
+         as a broken button. */
+      :host([busy]) wa-dialog::part(close-button__base) {
+        opacity: 0.4;
+        cursor: not-allowed;
+        pointer-events: none;
       }
     `,
   ];
