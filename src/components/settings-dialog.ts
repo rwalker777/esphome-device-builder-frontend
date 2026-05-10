@@ -57,7 +57,9 @@ import "./confirm-dialog.js";
 import type { ESPHomeConfirmDialog } from "./confirm-dialog.js";
 import "./pair-build-server-dialog.js";
 import "./pin-emoji-grid.js";
+import "./remote-build-job-dialog.js";
 import type { ESPHomePairBuildServerDialog } from "./pair-build-server-dialog.js";
+import type { ESPHomeRemoteBuildJobDialog } from "./remote-build-job-dialog.js";
 
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -335,6 +337,9 @@ export class ESPHomeSettingsDialog extends LitElement {
 
   @query("esphome-pair-build-server-dialog")
   private _pairBuildServerDialog!: ESPHomePairBuildServerDialog;
+
+  @query("esphome-remote-build-job-dialog")
+  private _remoteBuildDialog!: ESPHomeRemoteBuildJobDialog;
 
   @query("#unpair-confirm")
   private _unpairConfirmDialog!: ESPHomeConfirmDialog;
@@ -2161,6 +2166,7 @@ export class ESPHomeSettingsDialog extends LitElement {
         @pair-approved=${this._onPairApproved}
         @pair-rejected=${this._onPairRejected}
       ></esphome-pair-build-server-dialog>
+      <esphome-remote-build-job-dialog></esphome-remote-build-job-dialog>
       <esphome-confirm-dialog
         id="unpair-confirm"
         destructive
@@ -2392,6 +2398,21 @@ export class ESPHomeSettingsDialog extends LitElement {
             ${trimTrailingDot(pairing.receiver_hostname)}:${pairing.receiver_port}
           </span>
         </div>
+        ${pairing.status === "approved" && pairing.connected
+          ? html`
+              <button
+                type="button"
+                class="btn-build-remote"
+                aria-label=${this._localize(
+                  "settings.remote_build_submit_aria",
+                  { label: pairing.label },
+                )}
+                @click=${() => this._onBuildRemoteClick(pairing)}
+              >
+                ${this._localize("settings.remote_build_submit_action")}
+              </button>
+            `
+          : nothing}
         <button
           type="button"
           class="peer-remove btn-unpair"
@@ -2405,6 +2426,13 @@ export class ESPHomeSettingsDialog extends LitElement {
       </div>
     `;
   }
+
+  private _onBuildRemoteClick = (pairing: PairingSummary): void => {
+    this._remoteBuildDialog?.open({
+      pin_sha256: pairing.pin_sha256,
+      receiver_label: pairing.label,
+    });
+  };
 
   private _onUnpairRequest = (pairing: PairingSummary): void => {
     this._pendingUnpair = {
