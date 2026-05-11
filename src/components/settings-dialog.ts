@@ -48,7 +48,6 @@ import {
   yamlDiffButtonContext,
 } from "../context/index.js";
 import type { RemoteBuildJobState } from "../context/index.js";
-import { warningBannerStyles } from "../styles/banners.js";
 import { pinHexStyles } from "../styles/pin-hex.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { formatPinSha256 } from "../util/cert-pin-format.js";
@@ -133,6 +132,11 @@ interface SectionDef {
   id: Section;
   icon: string;
   labelKey: string;
+  // Optional group tag. Sections that share a non-empty group
+  // are rendered together in the nav under a small uppercase
+  // group header (currently used only for 'experimental').
+  // Sections with no group are rendered first as a flat list.
+  group?: "experimental";
 }
 
 const SECTIONS: SectionDef[] = [
@@ -145,9 +149,17 @@ const SECTIONS: SectionDef[] = [
     // "build server" rather than "build host" because the
     // CI/CD term is broadly recognised; "build host" reads
     // as jargon for users who haven't seen it before.
+    // Grouped under the EXPERIMENTAL nav header alongside its
+    // sibling Pairing requests + Send builds entries: the
+    // remote-build flow as a whole is still in development
+    // (the receiver site binds and accepts pair requests, but
+    // the operator-facing UX, pair-approval modal, scheduler,
+    // and the offloader's submit_job pipeline are landing
+    // across multiple phases).
     id: "build_server",
     icon: "server-network",
     labelKey: "settings.build_server",
+    group: "experimental",
   },
   {
     // "Pairing requests" is its own sidebar entry rather than a
@@ -160,16 +172,25 @@ const SECTIONS: SectionDef[] = [
     // Senders' "ask the receiver to open Settings → Pairing
     // requests" copy is now an accurate navigation prompt
     // because the path it names exists as a discrete screen.
+    // Marked experimental alongside Build server / Send builds
+    // because the pair-approval surface is still maturing.
     id: "pairing_requests",
     icon: "handshake-outline",
     labelKey: "settings.pairing_requests",
+    group: "experimental",
   },
   {
     // "Send builds" = Offload role: this dashboard
-    // dispatching its compiles to another dashboard.
+    // dispatching its compiles to another dashboard. The
+    // offload direction is the least-finished of the three
+    // remote-build screens: the typed hostnames +
+    // paired-build-server rows here are remembered, but no
+    // compile job is actually dispatched until the
+    // offloader's submit_job pipeline lands.
     id: "build_offload",
     icon: "send-outline",
     labelKey: "settings.build_offload",
+    group: "experimental",
   },
 ];
 
@@ -1017,7 +1038,6 @@ export class ESPHomeSettingsDialog extends LitElement {
 
   static styles = [
     espHomeStyles,
-    warningBannerStyles,
     pinHexStyles,
     css`
       esphome-base-dialog {
@@ -1239,9 +1259,27 @@ export class ESPHomeSettingsDialog extends LitElement {
          via .row: zero horizontal padding, rely on the
          container. */
 
-      /* Per-consumer spacing for warningBannerStyles' .warning-banner. */
-      .warning-banner {
-        margin: 0 0 var(--wa-space-m);
+      /* Nav-sidebar group header. Renders above grouped
+         sections in the left rail (currently the EXPERIMENTAL
+         group containing Build server, Pairing requests, and
+         Send builds). Same visual treatment as the in-content
+         '.section-heading'
+         small-caps subtitles -- uppercase, tracked, quiet
+         colour, hairline divider above -- so the eye reads the
+         group as "sectioning" rather than "another nav item".
+         Lives in the nav layer rather than as an inline content
+         banner: replaces the previous verbose
+         'build_offload_unimplemented_banner' copy with a
+         lightweight structural signal in the navigation. */
+      .nav-group-header {
+        font-size: var(--wa-font-size-2xs);
+        font-weight: var(--wa-font-weight-bold);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--wa-color-text-quiet);
+        padding: var(--wa-space-s) var(--wa-space-s) var(--wa-space-2xs);
+        margin-top: var(--wa-space-s);
+        border-top: 1px solid var(--wa-color-surface-border);
       }
 
       /* Binding-mismatch alert rows. Same shape as
@@ -1877,17 +1915,7 @@ export class ESPHomeSettingsDialog extends LitElement {
         <div class="layout">
           <aside class="sidebar">
             <nav class="nav">
-              ${SECTIONS.map(
-                (s) => html`
-                  <button
-                    class="nav-item ${s.id === this._section ? "nav-item--active" : ""}"
-                    @click=${() => this._selectSection(s.id)}
-                  >
-                    <wa-icon library="mdi" name=${s.icon}></wa-icon>
-                    <span>${this._localize(s.labelKey)}</span>
-                  </button>
-                `
-              )}
+              ${this._renderNav()}
             </nav>
           </aside>
           <main class="content">
@@ -1895,6 +1923,45 @@ export class ESPHomeSettingsDialog extends LitElement {
           </main>
         </div>
       </esphome-base-dialog>
+    `;
+  }
+
+  /**
+   * Render the nav sidebar.
+   *
+   * Flat sections (no 'group') render first as a single
+   * list. Grouped sections render after, each group preceded
+   * by a small uppercase header (currently only the
+   * 'experimental' group is used, surfaced as 'EXPERIMENTAL'
+   * above the three remote-build screens: Build server,
+   * Pairing requests, and Send builds). The grouped pattern
+   * replaces the previous inline-banner approach -- "this
+   * feature is still in development" lives in the nav
+   * structure rather than as a paragraph at the top of the
+   * section content.
+   */
+  private _renderNav() {
+    const flat = SECTIONS.filter((s) => !s.group);
+    const experimental = SECTIONS.filter((s) => s.group === "experimental");
+    const renderItem = (s: SectionDef) => html`
+      <button
+        class="nav-item ${s.id === this._section ? "nav-item--active" : ""}"
+        @click=${() => this._selectSection(s.id)}
+      >
+        <wa-icon library="mdi" name=${s.icon}></wa-icon>
+        <span>${this._localize(s.labelKey)}</span>
+      </button>
+    `;
+    return html`
+      ${flat.map(renderItem)}
+      ${experimental.length
+        ? html`
+            <div class="nav-group-header">
+              ${this._localize("settings.experimental_tag")}
+            </div>
+            ${experimental.map(renderItem)}
+          `
+        : nothing}
     `;
   }
 
@@ -2323,16 +2390,15 @@ export class ESPHomeSettingsDialog extends LitElement {
    *    cross-subnet / non-mDNS receivers.
    *
    * Pairing-window + peer-link + scheduler land across phases
-   * 4 / 5 / 7; the in-section banner still says "not
-   * implemented yet" because no compile job is actually
-   * dispatched until phase 5+ wires the build session.
+   * 4 / 5 / 7. The section's "still in development" signal
+   * lives in the nav sidebar (this section is grouped under
+   * the EXPERIMENTAL header, see SectionDef.group) rather
+   * than as an inline banner at the top of the content pane —
+   * lighter touch, doesn't push the actual settings down the
+   * screen.
    */
   private _renderBuildOffload() {
     return html`
-      <div class="warning-banner" role="status">
-        ${this._localize("settings.build_offload_unimplemented_banner")}
-      </div>
-
       ${this._renderOffloaderAlerts()}
       ${this._renderOffloaderRemoteBuildsToggle()}
 
