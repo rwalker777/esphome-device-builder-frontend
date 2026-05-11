@@ -1,15 +1,24 @@
 import { consume } from "@lit/context";
-import { LitElement, css, html, nothing } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 
+import type { ESPHomeAPI } from "../api/esphome-api.js";
+import type {
+  OffloaderPinMismatchAlert,
+  PairingSummary,
+} from "../api/types.js";
 import type { LocalizeFunc } from "../common/localize.js";
-import { localizeContext } from "../context/index.js";
-import type { OffloaderPinMismatchAlert } from "../api/types.js";
+import { apiContext, localizeContext } from "../context/index.js";
 import { dialogActionButtonStyles } from "../styles/dialog-action-buttons.js";
 import { pinHexStyles } from "../styles/pin-hex.js";
 import { espHomeStyles } from "../styles/shared.js";
+import { friendlyHostname, trimTrailingDot } from "../util/hostname.js";
 import { formatPinSha256 } from "../util/pin-format.js";
-import { trimTrailingDot } from "../util/hostname.js";
+import {
+  buildReauthPairRequest,
+  classifyReauthError,
+} from "./reauth-wizard-dialog-helpers.js";
+import { reauthWizardDialogStyles } from "./reauth-wizard-dialog-styles.js";
 
 import "./base-dialog.js";
 import "./pin-emoji-grid.js";
@@ -48,16 +57,48 @@ type Step = 1 | 2 | 3;
  *    Re-pair button so the operator can't bypass the
  *    verification step.
  *
- * Pressing **Re-pair this receiver** on step 3 fires
- * ``reauth-confirmed`` with ``{hostname, port}``. The dialog
- * itself doesn't run ``preview_pair`` / ``request_pair`` — the
- * existing ``<esphome-pair-build-server-dialog>`` already
- * does both, and re-doing them here would mean two
- * preview_pair round-trips back-to-back with a TOCTOU window
- * between. Settings-dialog catches the event and opens the
- * existing pair wizard pre-filled with the alert's hostname
- * + port; that dialog's confirm step is the canonical OOB
- * surface and stays the load-bearing verification gate.
+ * Pressing **Re-pair this receiver** on step 3 calls
+ * 'requestRemoteBuildPair' inline -- the wizard itself owns
+ * the cryptographic binding. The pin_sha256 arg is taken
+ * from 'alert.observed_pin' (the value the operator
+ * OOB-verified at step 1), so the backend's TOCTOU defense
+ * at request_pair compares its live handshake to the same
+ * pubkey the operator just verified. No separate pair
+ * dialog and no second 'preview_pair' observation -- the
+ * wizard's verification IS the verification.
+ *
+ * Outcomes:
+ *
+ * - Success: dispatches 'pair-request-sent' with the
+ *   returned PairingSummary so app-shell upserts the row
+ *   into 'buildOffloadPairings' (the backend doesn't fire
+ *   OFFLOADER_PAIR_STATUS_CHANGED on a re-pair against an
+ *   already-APPROVED row whose pin rotated under it -- the
+ *   status didn't change, only the pubkey did). Then
+ *   dispatches 'reauth-result' with
+ *   '{outcome: "success", receiver_label}' so the parent
+ *   toasts a re-pair-specific success message.
+ * - PRECONDITION_FAILED: the receiver's live pubkey
+ *   differs from observed_pin. The operator's step-1
+ *   verification is stale -- forcing them back to the alert
+ *   to OOB the fresh pin is correct. Wizard closes; parent
+ *   toasts the 'fingerprint changed AGAIN' message.
+ * - NO_PAIRING_WINDOW / UNAVAILABLE: the verification is
+ *   still valid; the wizard keeps step 3 open with an
+ *   inline error block and the primary action retitles to
+ *   'Try again'.
+ *
+ * Pre-rewrite the wizard dispatched 'reauth-confirmed' with
+ * {hostname, port} only -- observed_pin was dropped -- and a
+ * separate pair dialog re-ran 'preview_pair' to capture a
+ * fresh pubkey before binding. The window between the
+ * wizard's step-1 verification and the pair dialog's
+ * confirm step could be hours, during which mDNS / DHCP /
+ * ARP could rebind the hostname to an attacker, and the
+ * operator would cryptographically pin whatever the pair
+ * dialog observed -- not what they had verified. Wiring the
+ * request_pair call into the wizard directly closes that
+ * window.
  *
  * peer_revoked alerts are deliberately not handled by this
  * wizard — they only have one operator-actionable outcome
@@ -72,6 +113,9 @@ export class ESPHomeReauthWizardDialog extends LitElement {
   @state()
   private _localize: LocalizeFunc = (key) => key;
 
+  @consume({ context: apiContext })
+  private _api?: ESPHomeAPI;
+
   @state() private _open = false;
   @state() private _step: Step = 1;
   @state() private _alert: OffloaderPinMismatchAlert | null = null;
@@ -79,11 +123,30 @@ export class ESPHomeReauthWizardDialog extends LitElement {
    *  operator can't bypass the "I've checked with the receiver
    *  admin" acknowledgment. Resets on every ``open()``. */
   @state() private _verified = false;
+  /** True while request_pair is in flight. Disables the
+   *  action buttons so the operator can't double-fire and so
+   *  the inline "Try again" CTA stays visible across the
+   *  retry round-trip. */
+  @state() private _busy = false;
+  /** Inline error on step 3 when request_pair returned a
+   *  retryable failure (NO_PAIRING_WINDOW, UNAVAILABLE, or
+   *  generic). Held as a translation key so localize fires
+   *  on render. ``null`` means "no error to show". Terminal
+   *  failures (PRECONDITION_FAILED -- the pin changed AGAIN
+   *  case) deliberately do NOT use this; they dispatch
+   *  ``reauth-result`` with ``{outcome: "pin_changed"}`` and
+   *  close the wizard so the operator restarts from the alert
+   *  and re-OOBs the fresh pin. Retryable failures stay on
+   *  step 3 so the existing verification still binds across
+   *  the retry. */
+  @state() private _errorKey: string | null = null;
 
   open(alert: OffloaderPinMismatchAlert): void {
     this._alert = alert;
     this._step = 1;
     this._verified = false;
+    this._busy = false;
+    this._errorKey = null;
     this._open = true;
   }
 
@@ -107,21 +170,109 @@ export class ESPHomeReauthWizardDialog extends LitElement {
     this._verified = (e.target as HTMLInputElement).checked;
   };
 
-  private _onConfirm = () => {
-    if (!this._verified || this._alert === null) return;
+  private _onConfirm = async (): Promise<void> => {
+    if (!this._verified || this._alert === null || this._api === undefined) {
+      return;
+    }
+    if (this._busy) return;
     const alert = this._alert;
+    // Thread the wizard's observed_pin (the operator just
+    // verified it OOB at step 1) straight into request_pair.
+    // The backend's TOCTOU defense compares this pin to the
+    // pubkey observed on its own live handshake at request_pair
+    // time and rejects with PRECONDITION_FAILED on mismatch.
+    // That binds the user's wizard verification to the
+    // eventual pinned identity: an attacker that took over
+    // the hostname after step 1 (mDNS spoof, DHCP-lease
+    // takeover) cannot get its pubkey persisted because its
+    // handshake produces a different pubkey than observed_pin.
+    //
+    // The pin_sha256 in the request_pair args is the
+    // load-bearing security contract: it MUST be
+    // alert.observed_pin (the value the operator OOB-verified
+    // at step 1). See helpers/buildReauthPairRequest. The
+    // backend's TOCTOU defense at controller.py:3055-3062
+    // compares its live handshake's pubkey to that value and
+    // rejects on mismatch -- which is how the wizard's
+    // verification cryptographically binds to the eventual
+    // stored pairing.
+    const args = buildReauthPairRequest(
+      alert,
+      friendlyHostname(window.location.hostname),
+    );
+    this._busy = true;
+    this._errorKey = null;
+    let summary: PairingSummary;
+    try {
+      try {
+        summary = await this._api.requestRemoteBuildPair(args);
+      } catch (err) {
+        const outcome = classifyReauthError(err);
+        if (outcome.kind === "terminal_pin_changed") {
+          // Operator's step-1 verification is stale; force a
+          // restart from the alert so they re-OOB against a
+          // fresh observation. Retrying inline would silently
+          // rebind verification to a pin they never saw.
+          this._dispatchResult("pin_changed", alert.receiver_label);
+          this._open = false;
+          return;
+        }
+        // Retryable: keep step 3 open so the existing
+        // verification still binds across the retry. The
+        // inline error block + 'Try again' CTA fire from
+        // this state.
+        this._errorKey = outcome.errorKey;
+        return;
+      }
+    } finally {
+      // Single _busy clear-down so a future code path added
+      // to either branch can't accidentally leave the action
+      // buttons disabled. Each return path above resets
+      // wizard state appropriately before this finally runs.
+      this._busy = false;
+    }
+    // Mirror the fresh-pair dialog: dispatch
+    // ``pair-request-sent`` with the returned
+    // ``PairingSummary`` so app-shell's
+    // ``_onPairRequestSent`` upserts the row into
+    // ``buildOffloadPairings``. The backend persists the
+    // updated ``StoredPairing`` (new ``pin_sha256``,
+    // ``static_x25519_pub``, etc.) but does NOT fire
+    // ``OFFLOADER_PAIR_STATUS_CHANGED`` for a re-pair against
+    // an APPROVED row whose pin rotated under it -- the
+    // status didn't change, only the cryptographic identity
+    // did. Without this dispatch the local pairings map
+    // keeps the stale-pin entry until a full
+    // ``subscribe_events`` re-snapshot, and the background
+    // peer-link client keeps reconnecting against the old
+    // pin -> pin_mismatch alert fires again -> wizard
+    // re-opens in a loop until reload. Mirrors the
+    // bubble+composed dispatch the pair dialog uses so the
+    // same upsert listeners (build-offload-section.ts and
+    // app-shell.ts) catch it.
     this.dispatchEvent(
-      new CustomEvent("reauth-confirmed", {
+      new CustomEvent<{ summary: PairingSummary }>("pair-request-sent", {
+        detail: { summary },
         bubbles: true,
         composed: true,
-        detail: {
-          hostname: alert.receiver_hostname,
-          port: alert.receiver_port,
-        },
       }),
     );
+    this._dispatchResult("success", alert.receiver_label);
     this._open = false;
   };
+
+  private _dispatchResult(
+    outcome: "success" | "pin_changed",
+    receiverLabel: string,
+  ): void {
+    this.dispatchEvent(
+      new CustomEvent("reauth-result", {
+        bubbles: true,
+        composed: true,
+        detail: { outcome, receiver_label: receiverLabel },
+      }),
+    );
+  }
 
   private _renderStep1(alert: OffloaderPinMismatchAlert) {
     const target = `${trimTrailingDot(alert.receiver_hostname)}:${alert.receiver_port}`;
@@ -217,11 +368,21 @@ export class ESPHomeReauthWizardDialog extends LitElement {
           type="checkbox"
           .checked=${this._verified}
           @change=${this._onVerifiedChange}
+          ?disabled=${this._busy}
         />
         <span>
           ${this._localize("settings.reauth_wizard_verified_checkbox")}
         </span>
       </label>
+      ${this._errorKey !== null
+        ? html`
+            <div class="step-error" role="alert">
+              ${this._localize(this._errorKey, {
+                label: alert.receiver_label,
+              })}
+            </div>
+          `
+        : nothing}
     `;
   }
 
@@ -238,6 +399,7 @@ export class ESPHomeReauthWizardDialog extends LitElement {
     return html`
       <esphome-base-dialog
         ?open=${this._open}
+        ?busy=${this._busy}
         .label=${title}
         @after-hide=${this._onClose}
       >
@@ -259,11 +421,21 @@ export class ESPHomeReauthWizardDialog extends LitElement {
         </div>
         <div class="step-body">${stepBody}</div>
         <div class="actions">
-          <button class="btn btn--cancel" type="button" @click=${this._onClose}>
+          <button
+            class="btn btn--cancel"
+            type="button"
+            @click=${this._onClose}
+            ?disabled=${this._busy}
+          >
             ${this._localize("layout.cancel")}
           </button>
           ${this._step > 1
-            ? html`<button class="btn btn--back" type="button" @click=${this._onBack}>
+            ? html`<button
+                class="btn btn--back"
+                type="button"
+                @click=${this._onBack}
+                ?disabled=${this._busy}
+              >
                 ${this._localize("settings.reauth_wizard_back")}
               </button>`
             : nothing}
@@ -274,10 +446,14 @@ export class ESPHomeReauthWizardDialog extends LitElement {
             : html`<button
                 class="btn btn--primary"
                 type="button"
-                ?disabled=${!this._verified}
+                ?disabled=${!this._verified || this._busy}
                 @click=${this._onConfirm}
               >
-                ${this._localize("settings.reauth_wizard_repair_action")}
+                ${this._busy
+                  ? this._localize("settings.reauth_wizard_repair_in_progress")
+                  : this._errorKey !== null
+                    ? this._localize("settings.reauth_wizard_repair_retry")
+                    : this._localize("settings.reauth_wizard_repair_action")}
               </button>`}
         </div>
       </esphome-base-dialog>
@@ -288,154 +464,7 @@ export class ESPHomeReauthWizardDialog extends LitElement {
     espHomeStyles,
     pinHexStyles,
     dialogActionButtonStyles,
-    css`
-      esphome-base-dialog {
-        --width: 560px;
-      }
-
-      /* Step-progress dots sit at the top of the body. The
-         pre-migration shape rendered them inside the
-         slot=label header next to the wizard title;
-         base-dialog's .label property only takes a string,
-         so the indicator moved into the body where it reads
-         as the first row above the step content. Wizard
-         title still renders in the dialog header via the
-         .label property. */
-      .step-indicator {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        padding-bottom: var(--wa-space-s);
-      }
-
-      .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: var(--wa-color-surface-border);
-      }
-
-      .dot-active {
-        background: var(--esphome-primary);
-      }
-
-      .step-body {
-        padding: var(--wa-space-s) 0;
-      }
-
-      .lede {
-        margin: 0 0 var(--wa-space-m);
-        font-size: var(--wa-font-size-s);
-        color: var(--wa-color-text-normal);
-      }
-
-      .pin-pair {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: var(--wa-space-m);
-      }
-
-      .pin-block {
-        display: flex;
-        flex-direction: column;
-        gap: var(--wa-space-xs);
-        padding: var(--wa-space-s) var(--wa-space-m);
-        background: var(--wa-color-surface-lowered);
-        border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
-        border-radius: var(--wa-border-radius-m);
-      }
-
-      .pin-block-solo {
-        max-width: 320px;
-      }
-
-      .pin-block-label {
-        font-size: var(--wa-font-size-xs);
-        font-weight: var(--wa-font-weight-semibold);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--wa-color-text-quiet);
-      }
-
-      .pin-block-label-observed {
-        color: var(--esphome-warning, #f59e0b);
-      }
-
-      .possibilities {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: var(--wa-space-m);
-      }
-
-      .possibility {
-        padding: var(--wa-space-s) var(--wa-space-m);
-        border-radius: var(--wa-border-radius-m);
-        border-left: 3px solid;
-      }
-
-      .possibility-benign {
-        background: color-mix(in srgb, var(--esphome-success), transparent 92%);
-        border-left-color: var(--esphome-success);
-      }
-
-      .possibility-malign {
-        background: color-mix(in srgb, var(--esphome-error), transparent 92%);
-        border-left-color: var(--esphome-error);
-      }
-
-      .possibility-title {
-        font-size: var(--wa-font-size-s);
-        font-weight: var(--wa-font-weight-bold);
-        margin-bottom: var(--wa-space-2xs);
-      }
-
-      .possibility-body {
-        font-size: var(--wa-font-size-s);
-        color: var(--wa-color-text-normal);
-      }
-
-      .verify-row {
-        display: flex;
-        align-items: flex-start;
-        gap: var(--wa-space-s);
-        margin-top: var(--wa-space-m);
-        padding: var(--wa-space-s) var(--wa-space-m);
-        background: color-mix(
-          in srgb,
-          var(--esphome-warning, #f59e0b),
-          transparent 92%
-        );
-        border-radius: var(--wa-border-radius-m);
-        font-size: var(--wa-font-size-s);
-        cursor: pointer;
-      }
-
-      .verify-row input {
-        margin-top: 2px;
-      }
-
-      .actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: var(--wa-space-s);
-        margin-top: var(--wa-space-m);
-      }
-
-      /* Back is .btn--cancel's neutral chrome with a distinct
-         class name so the markup self-documents which row slot
-         the button is. dialogActionButtonStyles paints
-         .btn--cancel; this rule extends the same chrome to
-         .btn--back without re-declaring it. */
-      .btn--back {
-        background: var(--wa-color-surface-lowered);
-        color: var(--wa-color-text-normal);
-        border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
-      }
-
-      .btn--back:hover:not(:disabled) {
-        background: var(--wa-color-surface-border);
-      }
-    `,
+    reauthWizardDialogStyles,
   ];
 }
 

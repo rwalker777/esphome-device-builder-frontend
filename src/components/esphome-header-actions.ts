@@ -14,9 +14,10 @@ import {
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { JobStatus } from "../api/types.js";
-import type { FirmwareJob } from "../api/types.js";
+import type { FirmwareJob, OffloaderAlertSnapshotEntry } from "../api/types.js";
 import type { LocalizeFunc } from "../common/localize.js";
 import {
+  buildOffloadAlertsContext,
   firmwareJobsContext,
   localizeContext,
   onboardingPendingContext,
@@ -50,6 +51,15 @@ export class ESPHomeHeaderActions extends LitElement {
   @consume({ context: firmwareJobsContext, subscribe: true })
   @state()
   private _jobs: Map<string, FirmwareJob> = new Map();
+
+  /** Offloader-side alerts (pin_mismatch / peer_revoked).
+   *  Drives a notification dot on the settings gear so the
+   *  operator notices something needs attention without having
+   *  to open Settings → Send builds first. ``null`` until the
+   *  subscribe_events snapshot lands. Empty map = no alerts. */
+  @consume({ context: buildOffloadAlertsContext, subscribe: true })
+  @state()
+  private _offloaderAlerts: Map<string, OffloaderAlertSnapshotEntry> | null = null;
 
   @state()
   private _open = false;
@@ -303,10 +313,13 @@ export class ESPHomeHeaderActions extends LitElement {
           type="button"
           class="menu-btn"
           @click=${this._openSettings}
-          title=${this._localize("layout.settings")}
-          aria-label=${this._localize("layout.settings")}
+          title=${this._settingsButtonLabel()}
+          aria-label=${this._settingsButtonLabel()}
         >
           <wa-icon library="mdi" name="cog"></wa-icon>
+          ${this._offloaderAlertsCount() > 0
+            ? html`<span class="menu-btn-badge" aria-hidden="true"></span>`
+            : nothing}
         </button>
       </div>
       <button
@@ -553,6 +566,28 @@ export class ESPHomeHeaderActions extends LitElement {
         composed: true,
       }),
     );
+  }
+
+  /** Count offloader-side alerts (pin_mismatch / peer_revoked)
+   *  that need operator attention. Drives the settings-gear
+   *  notification dot so the operator notices an alert without
+   *  having to open Settings → Send builds first. Returns 0 when
+   *  the alerts snapshot hasn't arrived yet (null) or is empty. */
+  private _offloaderAlertsCount(): number {
+    return this._offloaderAlerts === null ? 0 : this._offloaderAlerts.size;
+  }
+
+  /** Settings-button accessible name. When offloader alerts are
+   *  pending, the label embeds the count so screen-reader users
+   *  get the same "attention needed" signal sighted users see
+   *  from the visual badge. Mirrors the firmware-jobs button's
+   *  count-in-label pattern. */
+  private _settingsButtonLabel(): string {
+    const count = this._offloaderAlertsCount();
+    if (count > 0) {
+      return this._localize("layout.settings_with_alerts", { count });
+    }
+    return this._localize("layout.settings");
   }
 
   private _openFeedback() {

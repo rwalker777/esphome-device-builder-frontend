@@ -164,7 +164,7 @@ export class ESPHomeSettingsBuildOffload extends LitElement {
         @pair-rejected=${this._onPairRejected}
       ></esphome-pair-build-server-dialog>
       <esphome-reauth-wizard-dialog
-        @reauth-confirmed=${this._onReauthConfirmed}
+        @reauth-result=${this._onReauthResult}
       ></esphome-reauth-wizard-dialog>
       <esphome-remote-build-job-dialog></esphome-remote-build-job-dialog>
       <esphome-edit-pairing-endpoint-dialog></esphome-edit-pairing-endpoint-dialog>
@@ -372,13 +372,39 @@ export class ESPHomeSettingsBuildOffload extends LitElement {
     });
   };
 
-  private _onReauthConfirmed = (
-    e: CustomEvent<{ hostname: string; port: number }>,
+  private _onReauthResult = (
+    e: CustomEvent<{
+      outcome: "success" | "pin_changed";
+      receiver_label: string;
+    }>,
   ): void => {
-    this._pairDialog?.open({
-      hostname: e.detail.hostname,
-      port: e.detail.port,
-    });
+    // The wizard now owns the request_pair call and the
+    // retry-on-NO_PAIRING_WINDOW / UNAVAILABLE UX (operator's
+    // verification stays bound across retries). Only terminal
+    // outcomes reach this handler: success and pin_changed.
+    // PIN_CHANGED is the load-bearing case -- receiver's pubkey
+    // differs from the one the operator just verified, which
+    // means the verification is stale and the operator needs
+    // to redo the OOB step against a fresh observation. The
+    // wizard closes itself on this branch; the toast tells the
+    // operator to retry from the alert (which re-fires
+    // preview_pair and re-opens the wizard with the new
+    // observed pin).
+    if (e.detail.outcome === "success") {
+      toast.success(
+        this._localize("settings.reauth_repair_success", {
+          label: e.detail.receiver_label,
+        }),
+        { richColors: true },
+      );
+      return;
+    }
+    toast.error(
+      this._localize("settings.reauth_repair_pin_changed", {
+        label: e.detail.receiver_label,
+      }),
+      { richColors: true },
+    );
   };
 
   private _onAlertUnpair = (alert: OffloaderAlertSnapshotEntry): void => {
