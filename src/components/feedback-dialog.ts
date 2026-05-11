@@ -10,7 +10,7 @@ import {
 import { LitElement, css, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import type { LocalizeFunc } from "../common/localize.js";
-import { localizeContext } from "../context/index.js";
+import { localizeContext, serverVersionContext } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 
@@ -60,14 +60,29 @@ const LINKS = [
   },
 ] as const;
 
+const NEW_ISSUE_LABEL_KEY = "feedback.new_issue";
+
 @customElement("esphome-feedback-dialog")
 export class ESPHomeFeedbackDialog extends LitElement {
   @consume({ context: localizeContext, subscribe: true })
   @state()
   private _localize: LocalizeFunc = (key) => key;
 
+  @consume({ context: serverVersionContext, subscribe: true })
+  @state()
+  private _serverVersion = "";
+
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
+
+  private _hrefFor(link: (typeof LINKS)[number]): string {
+    if (link.labelKey !== NEW_ISSUE_LABEL_KEY || !this._serverVersion) {
+      return link.href;
+    }
+    const url = new URL(link.href);
+    url.searchParams.set("version", this._serverVersion);
+    return url.toString();
+  }
 
   static styles = [
     espHomeStyles,
@@ -211,7 +226,7 @@ export class ESPHomeFeedbackDialog extends LitElement {
             (link) => html`
               <a
                 class="link"
-                href=${link.href}
+                href=${this._hrefFor(link)}
                 target="_blank"
                 rel="noopener noreferrer"
                 @click=${this.close}
