@@ -125,10 +125,10 @@ export class ESPHomeApiKeyDialog extends LitElement {
   }
 
   private _onAfterHide = (): void => {
-    // ``base-dialog`` drives close via wa-dialog's hide()
-    // path which fires wa-after-hide; flip our local open
-    // state to match so the next render's ``?open`` binding
-    // doesn't reopen the dialog.
+    // <esphome-base-dialog> re-emits after-hide for every
+    // dismissal path (Esc / outside-click / X / reactive
+    // ?open flip). Flip our local open flag so the next
+    // render's ?open binding matches.
     this._open = false;
   };
 
