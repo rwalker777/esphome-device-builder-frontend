@@ -7,19 +7,27 @@ import {
   mdiPlus,
   mdiUsbPort,
 } from "@mdi/js";
-import { LitElement, css, html, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { LitElement, css, html, nothing, type PropertyValues } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../../api/index.js";
 import type { BoardCatalogEntry } from "../../api/types.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { apiContext, localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
-import { WIZARD_BOARD_PLATFORMS } from "./wizard-step-board-platforms.js";
+import {
+  WIZARD_BOARD_PLATFORMS,
+  chipNameToFilterLabel,
+} from "./wizard-step-board-platforms.js";
 import { withBase } from "../../util/base-path.js";
 import { debounce } from "../../util/debounce.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
-import { detectChip, disconnect, isWebSerialSupported } from "../../util/web-serial.js";
+import {
+  detectChip,
+  disconnect,
+  isWebSerialSupported,
+  readDeviceManifest,
+} from "../../util/web-serial.js";
 
 import { inputStyles } from "../../styles/inputs.js";
 
@@ -44,6 +52,13 @@ export class ESPHomeWizardStepBoard extends LitElement {
   @consume({ context: apiContext })
   private _api!: ESPHomeAPI;
 
+  /** Platform-filter chip label to apply on first mount (e.g.
+   *  ``"ESP32-C6"``). Set by the parent dialog when a chip family
+   *  is known up front — the serial-detect flow uses this to land
+   *  the user on a picker already narrowed to their hardware. */
+  @property({ attribute: false })
+  presetFilterLabel: string | null = null;
+
   @state()
   private _boards: BoardCatalogEntry[] = [];
 
@@ -62,13 +77,46 @@ export class ESPHomeWizardStepBoard extends LitElement {
   @state()
   private _selectedFilter = "";
 
+  /** True while the active filter was applied by chip detection
+   *  (preset from the parent, or set by the Connect-your-board
+   *  button after a chip was identified) rather than a manual chip
+   *  click. In detection mode the picker drops the filter chips,
+   *  the Connect-your-board button, and the "don't know" link —
+   *  the user has already engaged with detection and just needs
+   *  to pick a specific board for the chip we found. Reset by
+   *  manual filter clicks and by the "Show all boards" escape. */
+  @state()
+  private _filterFromDetection = false;
+
   private _debouncedSearch = debounce(() => this._fetchBoards(), 300);
 
   private static readonly PLATFORMS = WIZARD_BOARD_PLATFORMS;
 
   connectedCallback() {
     super.connectedCallback();
+    // Lit usually sets ``.presetFilterLabel`` before connectedCallback
+    // fires (property bindings are applied during element upgrade), so
+    // this path handles the common case. ``willUpdate`` below covers
+    // the parent-updates-after-mount case where the element is reused
+    // and the preset arrives later.
+    if (this.presetFilterLabel) {
+      this._selectedFilter = this.presetFilterLabel;
+      this._filterFromDetection = true;
+    }
     this._fetchBoards();
+  }
+
+  willUpdate(changed: PropertyValues<this>) {
+    super.willUpdate(changed);
+    if (
+      changed.has("presetFilterLabel") &&
+      this.presetFilterLabel &&
+      !this._selectedFilter
+    ) {
+      this._selectedFilter = this.presetFilterLabel;
+      this._filterFromDetection = true;
+      void this._fetchBoards();
+    }
   }
 
   private async _fetchBoards() {
@@ -352,6 +400,21 @@ export class ESPHomeWizardStepBoard extends LitElement {
         gap: 6px;
       }
 
+      .detection-banner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--wa-space-s);
+        padding: var(--wa-space-s) var(--wa-space-m);
+        border-radius: var(--wa-border-radius-m);
+        background: color-mix(in srgb, var(--esphome-primary), transparent 92%);
+        border: var(--wa-border-width-s) solid
+          color-mix(in srgb, var(--esphome-primary), transparent 70%);
+        color: var(--wa-color-text);
+        font-size: var(--wa-font-size-s);
+      }
+
       .platform-chip {
         display: inline-flex;
         align-items: center;
@@ -404,35 +467,54 @@ export class ESPHomeWizardStepBoard extends LitElement {
         placeholder=${this._localize("wizard.search_boards_placeholder")}
       />
 
-      <div class="platform-filters">
-        ${ESPHomeWizardStepBoard.PLATFORMS.map(
-          (p) =>
-            html`<button
-              class="platform-chip ${this._selectedFilter === p.label
-                ? "platform-chip--active"
-                : ""}"
-              @click=${() => this._onPlatformFilter(p.label)}
-            >
-              ${p.label}
-            </button>`
-        )}
-      </div>
+      ${this._filterFromDetection
+        ? html`
+            <div class="detection-banner" role="status">
+              <span>
+                ${this._localize("wizard.detected_chip_family", {
+                  family: this._selectedFilter,
+                })}
+              </span>
+              <button
+                class="helper-link"
+                type="button"
+                @click=${this._exitDetectionMode}
+              >
+                ${this._localize("wizard.show_all_boards")}
+              </button>
+            </div>
+          `
+        : html`
+            <div class="platform-filters">
+              ${ESPHomeWizardStepBoard.PLATFORMS.map(
+                (p) =>
+                  html`<button
+                    class="platform-chip ${this._selectedFilter === p.label
+                      ? "platform-chip--active"
+                      : ""}"
+                    @click=${() => this._onPlatformFilter(p.label)}
+                  >
+                    ${p.label}
+                  </button>`
+              )}
+            </div>
 
-      <div class="helper-row">
-        ${isWebSerialSupported()
-          ? html`<button
-              class="connect-board-btn"
-              type="button"
-              @click=${this._connectBoard}
-            >
-              <wa-icon library="mdi" name="usb-port"></wa-icon>
-              ${this._localize("wizard.connect_your_board")}
-            </button>`
-          : nothing}
-        <button class="helper-link" type="button">
-          ${this._localize("wizard.dont_know_board")}
-        </button>
-      </div>
+            <div class="helper-row">
+              ${isWebSerialSupported()
+                ? html`<button
+                    class="connect-board-btn"
+                    type="button"
+                    @click=${this._connectBoard}
+                  >
+                    <wa-icon library="mdi" name="usb-port"></wa-icon>
+                    ${this._localize("wizard.connect_your_board")}
+                  </button>`
+                : nothing}
+              <button class="helper-link" type="button">
+                ${this._localize("wizard.dont_know_board")}
+              </button>
+            </div>
+          `}
 
       <div class="boards-scroll">
         ${this._loading
@@ -573,6 +655,10 @@ export class ESPHomeWizardStepBoard extends LitElement {
 
   private _onPlatformFilter(label: string) {
     this._selectedFilter = this._selectedFilter === label ? "" : label;
+    // Manual filter click takes the user out of detection mode —
+    // they've decided to browse, possibly narrower or wider than
+    // the chip they plugged in.
+    this._filterFromDetection = false;
     this._fetchBoards();
   }
 
@@ -600,36 +686,48 @@ export class ESPHomeWizardStepBoard extends LitElement {
       const detected = await detectChip();
       // e.g. "ESP32-S3 (QFN56) (revision v0.2)"
       const chipName = detected.chipName;
+
+      // Read the IDF app descriptor before disconnecting — when the
+      // chip is running a factory-flashed firmware that sets
+      // ``esphome.name`` to a catalog id, ``project_name`` points us
+      // straight at the right board. Same flow as
+      // ``detectAndOpenWizard`` so both entry points behave alike.
+      const manifest = await readDeviceManifest(detected.loader);
+
       await disconnect(detected.transport);
 
-      // Extract chip family: "ESP32-S3 (QFN56) ..." → "esp32s3"
-      const family = chipName.split("(")[0].trim().toLowerCase().replace(/-/g, "");
-
-      // Try fetching the generic board directly by expected ID
-      const genericId = `generic-${family}`;
-      const board = await this._api.getBoard(genericId);
-      if (board) {
-        this._onAdd(board);
-        return;
+      if (manifest?.board_id) {
+        const knownBoard = await this._api.getBoard(manifest.board_id);
+        if (knownBoard) {
+          this._onAdd(knownBoard);
+          return;
+        }
+        // ``board_id`` set but the catalog doesn't know it — fall
+        // through to chip-family filtering rather than failing.
       }
 
-      // Fallback: search by variant to find any matching board
-      const response = await this._api.getBoards({ query: family, limit: 20 });
-      const match = response.boards.find((b) => {
-        const variant = b.esphome.variant ?? b.esphome.platform;
-        return variant === family;
-      });
-
-      if (match) {
-        this._onAdd(match);
-      } else {
-        // Show filtered results so the user can pick manually
-        this._search = chipName.split("(")[0].trim();
-        this._fetchBoards();
+      // No specific board match — narrow the picker to the detected
+      // chip family and let the user pick. The generic-{family}
+      // auto-advance used to live here, but landing the user on a
+      // filtered picker is the better UX: they can still pick the
+      // generic board explicitly, or one of several boards for
+      // their chip.
+      const label = chipNameToFilterLabel(chipName);
+      if (label) {
+        this._selectedFilter = label;
+        this._filterFromDetection = true;
+        this._search = "";
+        void this._fetchBoards();
       }
     } catch {
       // User cancelled the port picker or detection failed
     }
+  }
+
+  private _exitDetectionMode() {
+    this._selectedFilter = "";
+    this._filterFromDetection = false;
+    void this._fetchBoards();
   }
 }
 

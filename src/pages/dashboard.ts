@@ -197,8 +197,20 @@ export class ESPHomePageDashboard extends LitElement {
 
   static styles = [espHomeStyles, inputStyles, dashboardStyles];
 
-  private _onSerialSetup = () => {
-    void detectAndOpenWizard(this._api, this._createDialog);
+  private _onSerialSetup = (event: Event) => {
+    const port = (event as CustomEvent<{ port: SerialPort | null }>).detail?.port ?? null;
+    void detectAndOpenWizard(this._api, this._createDialog, {
+      port,
+      devices: this._devices,
+      onRecognized: (device) => {
+        // Always open (don't toggle) — re-plugging a device that
+        // happens to already be selected in the drawer shouldn't
+        // close it.
+        this._drawerDevice = device;
+        this._drawerOpen = true;
+      },
+      localize: this._localize,
+    });
   };
   private _onShowIgnoredChanged = (e: Event) => {
     this._showIgnored = (e as CustomEvent<{ value: boolean }>).detail.value;
