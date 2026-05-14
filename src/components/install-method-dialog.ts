@@ -455,10 +455,9 @@ export class ESPHomeInstallMethodDialog extends LitElement {
     const isOnline = this.deviceState === DeviceState.ONLINE;
     const hasWebSerial = this._supportsWebSerial;
     const env = this._environment;
-    // Web-download replaces (rather than supplements) the local USB row
-    // when the user can't use Web Serial here AND can't use OTA — the
-    // same situation that disabled the USB row before. Keeps the list
-    // short by not showing two USB options where only one is reachable.
+    // Replaces the disabled WebSerial row with web-download when
+    // not online (offline or unknown) and no Web Serial. OTA is
+    // offered above but may fail; web-download always works.
     const swapInWebDownload =
       this.mode === "install" && !hasWebSerial && !isOnline && this._supportsWebDownload;
     // On localhost the WebSerial option and the server-serial option
@@ -663,17 +662,32 @@ export class ESPHomeInstallMethodDialog extends LitElement {
   }
 
   private _renderOtaOption(isOnline: boolean) {
+    // Install mode keeps the row clickable when not online; the
+    // compile runs even if the upload fails. Logs mode has no
+    // compile-equivalent so it stays gated on isOnline.
+    const enabled = isOnline || this.mode === "install";
+    const isOffline = this.deviceState === DeviceState.OFFLINE;
+    const titleKey =
+      this.mode === "logs"
+        ? "dashboard.logs_method_wireless"
+        : "dashboard.install_method_network";
+    let descKey: string;
+    if (this.mode === "logs") {
+      descKey = "dashboard.logs_method_wireless_desc";
+    } else if (isOffline) {
+      descKey = "dashboard.install_method_network_desc_offline";
+    } else {
+      descKey = "dashboard.install_method_network_desc";
+    }
     return html`
       <div
-        class="option ${!isOnline ? "option--disabled" : ""}"
-        @click=${isOnline ? () => this._selectMethod("ota") : undefined}
+        class="option ${!enabled ? "option--disabled" : ""}"
+        @click=${enabled ? () => this._selectMethod("ota") : undefined}
       >
         <wa-icon library="mdi" name="wifi"></wa-icon>
         <div class="info">
-          <span class="title">${this._localize("dashboard.install_method_network")}</span>
-          <span class="desc"
-            >${this._localize("dashboard.install_method_network_desc")}</span
-          >
+          <span class="title">${this._localize(titleKey)}</span>
+          <span class="desc">${this._localize(descKey)}</span>
         </div>
       </div>
     `;
