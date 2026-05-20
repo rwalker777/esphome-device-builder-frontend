@@ -2,6 +2,7 @@ import { consume } from "@lit/context";
 import { mdiAlertCircleOutline } from "@mdi/js";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import type { ESPHomeAPI } from "../../api/index.js";
 import type {
   BoardCatalogEntry,
   ComponentCatalogEntry,
@@ -9,9 +10,10 @@ import type {
 } from "../../api/types.js";
 import { ConfigEntryType } from "../../api/types.js";
 import type { LocalizeFunc } from "../../common/localize.js";
-import { localizeContext } from "../../context/index.js";
+import { apiContext, localizeContext } from "../../context/index.js";
 import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
+import { ComponentNameResolverController } from "../../util/component-name-resolver-controller.js";
 import {
   validateEntries,
   type ValidationError,
@@ -43,6 +45,9 @@ export class ESPHomeAddComponentForm extends LitElement {
   @consume({ context: localizeContext, subscribe: true })
   @state()
   private _localize: LocalizeFunc = (key) => key;
+
+  @consume({ context: apiContext })
+  private _api?: ESPHomeAPI;
 
   @property({ attribute: false })
   component!: ComponentCatalogEntry;
@@ -88,6 +93,15 @@ export class ESPHomeAddComponentForm extends LitElement {
 
   @state()
   private _showYaml = false;
+
+  /** Resolves dep ids (``i2c``) to their catalog name (``I²C Bus``)
+   * for the missing-deps banner. Owns the cache subscription so a
+   * fresh entry triggers a re-render without bookkeeping here. */
+  private readonly _depResolver = new ComponentNameResolverController(
+    this,
+    () => this._api,
+    () => this.board?.esphome.platform || undefined,
+  );
 
   static styles = [
     espHomeStyles,
@@ -181,6 +195,7 @@ export class ESPHomeAddComponentForm extends LitElement {
         // detour the form gets reused for) would leak into the next
         // component's form.
         this._localBlockMessage = "";
+        this._depResolver.kickoff(this.component.dependencies ?? []);
       }
     }
   }
@@ -397,6 +412,11 @@ export class ESPHomeAddComponentForm extends LitElement {
    * disabled while this is showing. Each missing dep is rendered as a
    * button that takes the user back to the catalog filtered to that
    * domain — they pick one, add it, then come back to this component.
+   *
+   * The dep id is resolved to the catalog entry's friendly ``name`` so
+   * the button reads ``Add I²C Bus`` instead of ``Add i2c``. Falls
+   * back to the raw id until the cache lookup lands (kicked off in
+   * ``willUpdate``).
    */
   private _renderMissingDeps(missing: string[]) {
     return html`
@@ -417,7 +437,7 @@ export class ESPHomeAddComponentForm extends LitElement {
                 @click=${() => this._onAddDep(d)}
               >
                 ${this._localize("device.missing_dependencies_add", {
-                  domain: d,
+                  domain: this._depResolver.resolve(d),
                 })}
               </button>`,
             )}
