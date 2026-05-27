@@ -3,6 +3,10 @@ import type { ColumnDef } from "@tanstack/lit-table";
 import { DeviceState, JobStatus } from "../../api/types.js";
 import type { ConfiguredDevice, FirmwareJob, Label } from "../../api/types.js";
 import type { LocalizeFunc } from "../../common/localize.js";
+import {
+  DEVICE_SORT_COLLATOR,
+  deviceSortKey,
+} from "../../util/device-sort.js";
 import { getCompactEncryptionVisual } from "../../util/encryption-state.js";
 import { formatFileSize } from "../../util/format-file-size.js";
 import { renderLabelChips } from "../../util/label-chip-template.js";
@@ -151,6 +155,11 @@ export function createDeviceColumns(localize: LocalizeFunc): ColumnDef<DeviceRow
             : nothing}
         </span>`;
       },
+      sortingFn: (rowA, rowB) =>
+        DEVICE_SORT_COLLATOR.compare(
+          deviceSortKey(rowA.original),
+          deviceSortKey(rowB.original),
+        ),
       size: 200,
       enableHiding: true,
     },
