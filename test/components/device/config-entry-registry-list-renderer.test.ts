@@ -252,6 +252,220 @@ describe("renderRegistryListField — emitChange contract", () => {
   });
 });
 
+describe("renderRegistryListField — per-row params sub-form", () => {
+  it("renders a sub-form for the picked entry's config_entries", async () => {
+    // calibrate_polynomial requires ``degree`` + ``datapoints``;
+    // without a sub-form the user has to hand-edit YAML to set
+    // required params and the validator flags missing fields.
+    const renderEntry = vi.fn();
+    const catalog = [
+      {
+        id: "calibrate_polynomial",
+        name: "Calibrate Polynomial",
+        applies_to: [],
+        config_entries: [
+          makeEntry(ConfigEntryType.INTEGER, { key: "degree", required: true }),
+          makeEntry(ConfigEntryType.STRING, { key: "datapoints", required: true }),
+        ],
+      },
+    ];
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "filters",
+      registry: "filter",
+      multi_value: true,
+    });
+    el.path = ["filters"];
+    el.ctx = makeRenderCtx(
+      { filters: [{ calibrate_polynomial: { degree: 2, datapoints: ["0 -> 0"] } }] },
+      { overrides: { renderEntry } }
+    );
+    document.body.append(el);
+    (el as unknown as { _catalog: typeof catalog })._catalog = catalog;
+    el.requestUpdate();
+    await el.updateComplete;
+    const paths = renderEntry.mock.calls.map((c) => c[1]);
+    expect(paths).toContainEqual(["filters", "0", "calibrate_polynomial", "degree"]);
+    expect(paths).toContainEqual(["filters", "0", "calibrate_polynomial", "datapoints"]);
+    expect(el.shadowRoot!.querySelector(".registry-list-sub-form")).toBeTruthy();
+  });
+
+  it("renders no sub-form when the picked entry has no config_entries", async () => {
+    const renderEntry = vi.fn();
+    const catalog = [{ id: "pulse", name: "Pulse", config_entries: [], applies_to: [] }];
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "effects",
+      registry: "light_effects",
+      multi_value: true,
+    });
+    el.path = ["effects"];
+    el.ctx = makeRenderCtx(
+      { effects: [{ pulse: null }] },
+      { overrides: { renderEntry } }
+    );
+    document.body.append(el);
+    (el as unknown as { _catalog: typeof catalog })._catalog = catalog;
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(renderEntry).not.toHaveBeenCalled();
+    expect(el.shadowRoot!.querySelector(".registry-list-sub-form")).toBeNull();
+  });
+
+  it("renders no sub-form when the picked id is missing from the catalog", async () => {
+    // Legacy id case: the picker still surfaces the value but we
+    // don't have the schema, so no fields to render.
+    const renderEntry = vi.fn();
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "effects",
+      registry: "light_effects",
+      multi_value: true,
+    });
+    el.path = ["effects"];
+    el.ctx = makeRenderCtx(
+      { effects: [{ unknown_effect: null }] },
+      { overrides: { renderEntry } }
+    );
+    document.body.append(el);
+    (el as unknown as { _catalog: LightEffect[] })._catalog = STUB_CATALOG;
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(renderEntry).not.toHaveBeenCalled();
+    expect(el.shadowRoot!.querySelector(".registry-list-sub-form")).toBeNull();
+  });
+
+  it("renders no sub-form when the existing params is a scalar", async () => {
+    // ``delta: 0.5`` and ``throttle: 10s`` are scalar shorthands that
+    // ESPHome accepts even when the catalog encodes a mapping schema
+    // for the same id. Rendering the mapping inputs over a scalar
+    // would silently clobber the user's YAML on first edit.
+    const renderEntry = vi.fn();
+    const catalog = [
+      {
+        id: "delta",
+        name: "Delta",
+        applies_to: [],
+        config_entries: [
+          makeEntry(ConfigEntryType.FLOAT, { key: "baseline" }),
+          makeEntry(ConfigEntryType.FLOAT, { key: "min_value" }),
+          makeEntry(ConfigEntryType.FLOAT, { key: "max_value" }),
+        ],
+      },
+    ];
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "filters",
+      registry: "filter",
+      multi_value: true,
+    });
+    el.path = ["filters"];
+    el.ctx = makeRenderCtx(
+      { filters: [{ delta: "0.5" }] },
+      { overrides: { renderEntry } }
+    );
+    document.body.append(el);
+    (el as unknown as { _catalog: typeof catalog })._catalog = catalog;
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(renderEntry).not.toHaveBeenCalled();
+    expect(el.shadowRoot!.querySelector(".registry-list-sub-form")).toBeNull();
+  });
+
+  it("renders advanced sub-fields unconditionally for the picked filter", async () => {
+    // exponential_moving_average's three sub-fields are all marked
+    // advanced: true. The outer form's advanced gate filters those
+    // out unless the user toggles 'Show advanced'; picking the filter
+    // is itself an explicit opt-in, so the sub-form should render
+    // every field regardless of the outer setting.
+    const renderEntry = vi.fn();
+    const catalog = [
+      {
+        id: "exponential_moving_average",
+        name: "EMA",
+        applies_to: [],
+        config_entries: [
+          makeEntry(ConfigEntryType.FLOAT, { key: "alpha", advanced: true }),
+          makeEntry(ConfigEntryType.INTEGER, { key: "send_every", advanced: true }),
+        ],
+      },
+    ];
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "filters",
+      registry: "filter",
+      multi_value: true,
+    });
+    el.path = ["filters"];
+    el.ctx = makeRenderCtx(
+      { filters: [{ exponential_moving_average: null }] },
+      {
+        overrides: {
+          renderEntry,
+          // Simulate the outer form having advanced fields hidden;
+          // the sub-form ignores this.
+          filterRenderable: ((entries: (typeof catalog)[0]["config_entries"]) =>
+            entries.filter((e) => !e.advanced)) as never,
+        },
+      }
+    );
+    document.body.append(el);
+    (el as unknown as { _catalog: typeof catalog })._catalog = catalog;
+    el.requestUpdate();
+    await el.updateComplete;
+    const paths = renderEntry.mock.calls.map((c) => c[1]);
+    expect(paths).toContainEqual(["filters", "0", "exponential_moving_average", "alpha"]);
+    expect(paths).toContainEqual([
+      "filters",
+      "0",
+      "exponential_moving_average",
+      "send_every",
+    ]);
+  });
+
+  it("renders the inline lambda editor when the picked id is 'lambda'", async () => {
+    // ``lambda`` filter takes a C++ body as the whole polymorphic value
+    // (``- lambda: |- return x;``). The catalog ships no config_entries
+    // for it (no schema), so the mapping sub-form path doesn't fire;
+    // the renderer instead mounts <esphome-lambda-editor> bound to the
+    // row's polymorphic value position.
+    const catalog = [
+      { id: "lambda", name: "Lambda", config_entries: [], applies_to: [] },
+    ];
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "filters",
+      registry: "filter",
+      multi_value: true,
+    });
+    el.path = ["filters"];
+    el.ctx = makeRenderCtx({ filters: [{ lambda: null }] });
+    document.body.append(el);
+    (el as unknown as { _catalog: typeof catalog })._catalog = catalog;
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(el.shadowRoot!.querySelector("esphome-lambda-editor")).toBeTruthy();
+  });
+
+  it("renders no sub-form on an empty / unselected row", async () => {
+    const renderEntry = vi.fn();
+    const el = document.createElement("esphome-registry-list") as ESPHomeRegistryList;
+    el.entry = makeEntry(ConfigEntryType.REGISTRY_LIST, {
+      key: "effects",
+      registry: "light_effects",
+      multi_value: true,
+    });
+    el.path = ["effects"];
+    el.ctx = makeRenderCtx({ effects: [{}] }, { overrides: { renderEntry } });
+    document.body.append(el);
+    (el as unknown as { _catalog: LightEffect[] })._catalog = STUB_CATALOG;
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(renderEntry).not.toHaveBeenCalled();
+    expect(el.shadowRoot!.querySelector(".registry-list-sub-form")).toBeNull();
+  });
+});
+
 describe("renderRegistryListField — applies_to filtering", () => {
   it("scopes the light_effects catalog to the parent platform", async () => {
     // adalight is registered as ADDRESSABLE-only; on a

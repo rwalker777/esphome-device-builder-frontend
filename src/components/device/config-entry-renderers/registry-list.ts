@@ -18,6 +18,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../../../api/esphome-api.js";
 import type { ConfigEntry, RegistryCatalogEntry } from "../../../api/types.js";
+import { isLambdaValue } from "../../../api/types.js";
 import { apiContext } from "../../../context/index.js";
 import {
   fetchFilters,
@@ -27,8 +28,11 @@ import {
   subscribeAutomationCatalogCache,
 } from "../../../util/automation-catalog-cache.js";
 import { YamlRawValue } from "../../../util/yaml-serialize.js";
+import "./lambda-editor.js";
+import { lambdaBodyOf } from "./lambda.js";
 import {
   effectiveDisabled,
+  fieldRendererStyles,
   renderFieldError,
   renderLabel,
   type RenderCtx,
@@ -281,24 +285,41 @@ export class ESPHomeRegistryList extends LitElement {
     this._kickedFetch = false;
   }
 
-  static styles = css`
-    :host {
-      display: block;
-    }
-    .registry-list-row {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      margin-bottom: 0.5rem;
-    }
-    .registry-list-row wa-select {
-      flex: 1;
-    }
-    .registry-list-fallback {
-      color: var(--wa-color-neutral-fill-loud);
-      font-size: 0.9rem;
-    }
-  `;
+  static styles = [
+    // ctx.renderEntry output uses .field / .time-period-inputs etc.
+    // which live in the form's stylesheets; the shared bundle gives
+    // them to anything hosting renderEntry output across shadow roots.
+    ...fieldRendererStyles,
+    css`
+      :host {
+        display: block;
+      }
+      .registry-list-item {
+        margin-bottom: 1rem;
+      }
+      .registry-list-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.5rem;
+      }
+      .registry-list-row wa-select {
+        flex: 1;
+      }
+      .registry-list-sub-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-left: 1rem;
+        padding-left: 1rem;
+        border-left: 2px solid var(--wa-color-surface-border);
+      }
+      .registry-list-fallback {
+        color: var(--wa-color-neutral-fill-loud);
+        font-size: 0.9rem;
+      }
+    `,
+  ];
 
   protected render() {
     const ops = this._ops();
@@ -431,39 +452,89 @@ export class ESPHomeRegistryList extends LitElement {
     // (older configs may carry an effect the schema dropped) so the
     // value round-trips on the next save instead of silently
     // disappearing from the picker.
-    const knownInCatalog = catalog.some((e) => e.id === currentId);
+    const catalogEntry = catalog.find((e) => e.id === currentId);
+    const knownInCatalog = catalogEntry !== undefined;
     // Sort by id so 39 sensor filters in the picker stay scannable.
     const sortedCatalog = [...catalog].sort((a, b) => a.id.localeCompare(b.id));
+    // Skip the sub-form when params is a scalar: the catalog may encode
+    // a mapping schema for an id ESPHome also accepts as a scalar
+    // shorthand, and editing the mapping would clobber the scalar.
+    const params = currentId ? item[currentId] : null;
+    const paramsIsMapping =
+      params !== null &&
+      typeof params === "object" &&
+      !Array.isArray(params) &&
+      !isLambdaValue(params);
+    // ``lambda`` filter / effect takes a C++ body as the whole value
+    // (``- lambda: |- return x;``); the schema bundle exposes no
+    // config_vars for it, so the catalog has 0 config_entries. Render
+    // an inline lambda editor bound to the row's polymorphic value
+    // position so users can fill in the body visually.
+    const isLambdaForm = currentId === "lambda";
+    // Render every child unconditionally — the user opted into this
+    // filter/effect by picking it from the dropdown, so the outer
+    // form's advanced / requiredOnly gates don't apply (many filters
+    // mark their tuning fields ``advanced: true`` and would render as
+    // an empty sub-form otherwise; exponential_moving_average is the
+    // canonical case). No catalog filter/effect carries depends_on on
+    // sub-fields today; revisit if that changes.
+    const childEntries =
+      (params === null || paramsIsMapping) && catalogEntry?.config_entries
+        ? catalogEntry.config_entries
+        : [];
     return html`
-      <div class="registry-list-row" data-row-index=${index}>
-        <wa-select
-          .value=${currentId}
-          ?disabled=${disabled}
-          placeholder=${this.ctx.localize("device.registry_list_select")}
-          aria-label=${this.ctx.localize("device.registry_list_row_label", {
-            index: String(index + 1),
-          })}
-          @change=${(e: Event) => {
-            // wa-select isn't an HTMLSelectElement; cast to the read field.
-            const next = (e.target as unknown as { value: string }).value;
-            this._renameRow(index, next);
-          }}
-        >
-          ${!knownInCatalog && currentId
-            ? html`<wa-option value=${currentId} selected
-                >${formatRegistryId(currentId)}</wa-option
-              >`
-            : nothing}
-          ${sortedCatalog
-            .filter((effect) => effect.id === currentId || !takenIds.has(effect.id))
-            .map(
-              (effect) =>
-                html`<wa-option value=${effect.id} ?selected=${effect.id === currentId}
-                  >${formatRegistryId(effect.id)}</wa-option
+      <div class="registry-list-item" data-row-index=${index}>
+        <div class="registry-list-row">
+          <wa-select
+            .value=${currentId}
+            ?disabled=${disabled}
+            placeholder=${this.ctx.localize("device.registry_list_select")}
+            aria-label=${this.ctx.localize("device.registry_list_row_label", {
+              index: String(index + 1),
+            })}
+            @change=${(e: Event) => {
+              // wa-select isn't an HTMLSelectElement; cast to the read field.
+              const next = (e.target as unknown as { value: string }).value;
+              this._renameRow(index, next);
+            }}
+          >
+            ${!knownInCatalog && currentId
+              ? html`<wa-option value=${currentId} selected
+                  >${formatRegistryId(currentId)}</wa-option
                 >`
-            )}
-        </wa-select>
-        ${renderListRemoveButton(this.ctx, disabled, () => this._removeAt(index))}
+              : nothing}
+            ${sortedCatalog
+              .filter((effect) => effect.id === currentId || !takenIds.has(effect.id))
+              .map(
+                (effect) =>
+                  html`<wa-option value=${effect.id} ?selected=${effect.id === currentId}
+                    >${formatRegistryId(effect.id)}</wa-option
+                  >`
+              )}
+          </wa-select>
+          ${renderListRemoveButton(this.ctx, disabled, () => this._removeAt(index))}
+        </div>
+        ${isLambdaForm
+          ? html`<div class="registry-list-sub-form">
+              <esphome-lambda-editor
+                .value=${lambdaBodyOf(params)}
+                ?disabled=${disabled}
+                @lambda-change=${(e: CustomEvent<{ value: string }>) =>
+                  this._setLambdaBody(index, currentId, e.detail.value)}
+              ></esphome-lambda-editor>
+            </div>`
+          : childEntries.length > 0
+            ? html`<div class="registry-list-sub-form">
+                ${childEntries.map((child) =>
+                  this.ctx.renderEntry(child, [
+                    ...this.path,
+                    String(index),
+                    currentId,
+                    child.key,
+                  ])
+                )}
+              </div>`
+            : nothing}
       </div>
     `;
   }
@@ -481,6 +552,12 @@ export class ESPHomeRegistryList extends LitElement {
     const { items, positions } = editableEntries(list);
     const next = transform(items);
     this.ctx.emitChange(this.path, spliceEditable(list, positions, next));
+  }
+
+  private _setLambdaBody(index: number, registryId: string, body: string) {
+    this._mutateEditable((items) =>
+      items.map((it, i) => (i === index ? { [registryId]: { _lambda: body } } : it))
+    );
   }
 
   private _addItem() {
