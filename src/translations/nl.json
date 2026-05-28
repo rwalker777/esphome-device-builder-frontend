@@ -1,6 +1,6 @@
 {
   "dashboard": {
-    "title": "ESPHome - Device Builder",
+    "title": "ESPHome Device Builder",
     "subtitle": "Maak en bouw uw slimme apparaten en automatiseringen",
     "discovered_count_singular": "{count} apparaat gevonden",
     "discovered_count_plural": "{count} apparaten gevonden",
@@ -728,7 +728,7 @@
     "editor": "Editor",
     "yaml_diff_button": "YAML-diff-knop",
     "more_options_with_count": "Meer opties ({count} firmwaretaken actief)",
-    "preview_badge": "Preview"
+    "preview_badge": "Beta"
   },
   "feedback": {
     "title": "Probleem of idee?",
