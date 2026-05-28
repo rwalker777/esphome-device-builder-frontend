@@ -15,18 +15,42 @@ import type { ComponentCatalogEntry } from "../api/types.js";
  * the next call retries.
  *
  * Concurrent fetches for the same key share a single in-flight
- * promise, so a navigator that mounts and dispatches N parallel
- * resolves only triggers N unique backend calls.
+ * promise; in addition, every `fetchComponent` call enqueues onto a
+ * microtask-flushed batch so a navigator that mounts N components in
+ * one task triggers one `components/get_component_bodies` WS call
+ * instead of N singletons. Different `(platform, boardId)` contexts
+ * batch separately because the backend resolves platform_defaults
+ * per call.
  */
 
 type CacheValue = ComponentCatalogEntry | null;
 
+interface _PendingResolver {
+  resolve: (value: CacheValue) => void;
+  reject: (reason: unknown) => void;
+}
+
+interface _BatchBucket {
+  api: ESPHomeAPI;
+  platform: string | undefined;
+  boardId: string | undefined;
+  // One resolver per id. ``_inflight`` short-circuits same-id
+  // duplicates before they reach the bucket, so this never needs
+  // to fan out to a list.
+  pending: Map<string, _PendingResolver>;
+}
+
 const _cache = new Map<string, CacheValue>();
 const _inflight = new Map<string, Promise<CacheValue>>();
 const _listeners = new Set<() => void>();
+const _batches = new Map<string, _BatchBucket>();
 
 function _key(componentId: string, platform?: string, boardId?: string): string {
   return `${componentId}|${platform ?? ""}|${boardId ?? ""}`;
+}
+
+function _batchKey(platform?: string, boardId?: string): string {
+  return `${platform ?? ""}|${boardId ?? ""}`;
 }
 
 /**
@@ -48,6 +72,10 @@ export function getCachedComponent(
  * same key return the cached value (or join the in-flight promise).
  * Notifies subscribers once after a fresh entry lands so reactive
  * consumers can re-render.
+ *
+ * Calls within the same microtask coalesce into one batched
+ * `components/get_component_bodies` request, so a navigator that
+ * fans out N parallel resolves pays one round trip.
  */
 export function fetchComponent(
   api: ESPHomeAPI,
@@ -61,21 +89,63 @@ export function fetchComponent(
   const existing = _inflight.get(key);
   if (existing) return existing;
 
-  const promise = api
-    .getComponent(componentId, platform, boardId)
-    .then((entry) => {
-      _cache.set(key, entry ?? null);
-      _inflight.delete(key);
-      _notify();
-      return entry ?? null;
-    })
-    .catch((err) => {
-      _inflight.delete(key);
-      throw err;
-    });
+  const promise = new Promise<CacheValue>((resolve, reject) => {
+    const bucketKey = _batchKey(platform, boardId);
+    let bucket = _batches.get(bucketKey);
+    if (bucket === undefined) {
+      // Bucket captures the first caller's `api`. Assumes one
+      // live `ESPHomeAPI` per app (context-provided by app-shell);
+      // a future second instance would need `api` in the bucket key.
+      bucket = { api, platform, boardId, pending: new Map() };
+      _batches.set(bucketKey, bucket);
+      queueMicrotask(() => _flushBatch(bucketKey));
+    }
+    bucket.pending.set(componentId, { resolve, reject });
+  }).finally(() => {
+    _inflight.delete(key);
+  });
 
   _inflight.set(key, promise);
   return promise;
+}
+
+async function _flushBatch(bucketKey: string): Promise<void> {
+  const bucket = _batches.get(bucketKey);
+  if (bucket === undefined) return;
+  _batches.delete(bucketKey);
+  const ids = Array.from(bucket.pending.keys());
+  let entries: Record<string, ComponentCatalogEntry>;
+  try {
+    entries = await bucket.api.getComponentBodies(ids, bucket.platform, bucket.boardId);
+  } catch (err) {
+    // Surface the transport error to every waiter so callers can
+    // retry; do NOT populate the cache, mirroring the singleton
+    // path's "transport errors are not cached" contract.
+    for (const resolver of bucket.pending.values()) {
+      resolver.reject(err);
+    }
+    return;
+  }
+  for (const [componentId, resolver] of bucket.pending) {
+    // Own-property check rather than `entries[id] ?? null`: the
+    // wire payload is a plain object, so a bare index lookup would
+    // resolve `toString`, `constructor`, etc. via the prototype
+    // chain and cache that garbage as a "found" entry. Reachable
+    // from user-typed yaml-completion ids.
+    const entry = Object.prototype.hasOwnProperty.call(entries, componentId)
+      ? entries[componentId]
+      : null;
+    // Cache write MUST precede resolve. A sync `_notify` subscriber
+    // that re-calls `fetchComponent(api, id, ...)` hits the cache
+    // path; reordering would start a fresh round trip for an id
+    // we just resolved.
+    _cache.set(_key(componentId, bucket.platform, bucket.boardId), entry);
+    resolver.resolve(entry);
+  }
+  // Notify outside the response try so a throwing subscriber
+  // surfaces via `_notify`'s own try/catch instead of getting
+  // turned into a rejection of already-settled resolvers.
+  _notify();
 }
 
 /**
@@ -103,9 +173,25 @@ function _notify(): void {
   }
 }
 
-/** Test-only: drop all cached entries and pending promises. */
+/** Test-only: drop all cached entries and pending promises.
+ *  Bucket waiters waiting on a flush that will never happen are
+ *  rejected so the dangling promises settle and dependent tests
+ *  don't hang on an `await fetchComponent(...)`. Attach a noop
+ *  catch to each in-flight promise first so a test that fired
+ *  `fetchComponent` purely for cache side-effects (no await, no
+ *  catch) doesn't surface the rejection as
+ *  ``unhandledrejection`` under vitest strict mode. */
 export function _clearComponentCache(): void {
+  for (const promise of _inflight.values()) {
+    promise.catch(() => {});
+  }
+  for (const bucket of _batches.values()) {
+    for (const resolver of bucket.pending.values()) {
+      resolver.reject(new Error("component cache cleared"));
+    }
+  }
   _cache.clear();
   _inflight.clear();
   _listeners.clear();
+  _batches.clear();
 }

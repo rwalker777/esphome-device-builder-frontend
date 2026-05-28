@@ -19,6 +19,10 @@ import {
   navigateToDep,
   type DepNavHost,
 } from "./add-component-dialog-dep-nav.js";
+import {
+  hydrateForSelection,
+  type SelectionHost,
+} from "./add-component-dialog-selection.js";
 
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -134,6 +138,12 @@ export class ESPHomeAddComponentDialog extends LitElement {
     total: number;
     bundleName: string;
   } | null = null;
+
+  /** Monotonic token guarding async selection against stale responses.
+   *  Bumped by `_resetDetourState` and by `hydrateForSelection`; a
+   *  hydrate whose captured token doesn't match `_selectionSeq` at
+   *  resolve time discards its result. */
+  private _selectionSeq = 0;
 
   static styles = [
     espHomeStyles,
@@ -251,6 +261,19 @@ export class ESPHomeAddComponentDialog extends LitElement {
         font-size: 14px;
         color: var(--esphome-primary);
       }
+
+      /* Surfaces a hydrate / WS-transport failure on the catalog
+         view; the form's own banner is unreachable when _selected
+         is still null. */
+      .catalog-error {
+        margin-bottom: var(--wa-space-m);
+        padding: var(--wa-space-xs) var(--wa-space-s);
+        background: color-mix(in srgb, var(--wa-color-danger-60), transparent 88%);
+        border-left: 3px solid var(--wa-color-danger-60);
+        border-radius: var(--wa-border-radius-s);
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-text-normal);
+      }
     `,
   ];
 
@@ -289,6 +312,9 @@ export class ESPHomeAddComponentDialog extends LitElement {
     this._bundleQueue = [];
     this._bundleProgress = null;
     this._depNavSeq++;
+    // Bumping here couples bundle/detour teardown to the selection
+    // token so an in-flight hydrate can't resurrect cleared state.
+    this._selectionSeq++;
   }
 
   protected render() {
@@ -351,6 +377,9 @@ export class ESPHomeAddComponentDialog extends LitElement {
               >
             </div>`
           : nothing}
+        ${!isForm && this._submitError
+          ? html`<div class="catalog-error" role="alert">${this._submitError}</div>`
+          : nothing}
         <esphome-component-catalog
           ?hidden=${isForm}
           .platform=${this.platform}
@@ -377,9 +406,25 @@ export class ESPHomeAddComponentDialog extends LitElement {
     `;
   }
 
-  private _onComponentSelected(e: CustomEvent<{ component: ComponentCatalogEntry }>) {
+  private async _onComponentSelected(
+    e: CustomEvent<{ component: ComponentCatalogEntry }>
+  ) {
     e.stopPropagation();
-    this._selected = e.detail.component;
+    // The catalog list endpoint returns slim index entries (no
+    // `config_entries`); the form needs the full body. Hydration
+    // goes through `hydrateForSelection` so the cached + batched
+    // fetch path runs and the helper's seq guard discards a
+    // slower earlier click that returns after a faster later one.
+    const result = await hydrateForSelection(
+      this as unknown as SelectionHost,
+      e.detail.component.id
+    );
+    if (result.kind === "stale") return;
+    if (result.kind === "error") {
+      this._submitError = result.message;
+      return;
+    }
+    this._selected = result.entry;
     this._submitError = "";
   }
 
@@ -401,27 +446,20 @@ export class ESPHomeAddComponentDialog extends LitElement {
       (localId) => `featured.${boardId}.${localId}`
     );
     const [first, ...rest] = fullIds;
-    // The WS layer can throw on a transient disconnect / timeout; an
-    // unhandled rejection here would leave the dialog half-transitioned
-    // (still on the catalog view but with bundle state about to be set
-    // by the rest of this handler). Catch and surface via the same
-    // banner the form submit uses, then bail.
-    let component: Awaited<ReturnType<ESPHomeAPI["getComponent"]>>;
-    try {
-      component = await this._api.getComponent(
-        first,
-        this.platform || undefined,
-        boardId
-      );
-    } catch (err) {
-      this._submitError =
-        err instanceof Error ? err.message : this._localize("device.add_component_error");
+    // Same selection guard as `_onComponentSelected`; a quick
+    // re-pick or a card click landing between this bundle's flush
+    // and response must not let the bundle resurrect itself.
+    const result = await hydrateForSelection(
+      this as unknown as SelectionHost,
+      first,
+      boardId
+    );
+    if (result.kind === "stale") return;
+    if (result.kind === "error") {
+      this._submitError = result.message;
       return;
     }
-    if (!component) {
-      this._submitError = this._localize("device.add_component_error");
-      return;
-    }
+    const component = result.entry;
     // Picking a bundle is a fresh sequence — abandon any in-flight
     // dep-detour state from the previous component the user was filling.
     // Without this clear, the bundle's first submit would route through
@@ -538,15 +576,20 @@ export class ESPHomeAddComponentDialog extends LitElement {
         // it on re-render.
         const nextId = this._bundleQueue[0];
         const remaining = this._bundleQueue.slice(1);
-        const nextComponent = await this._api.getComponent(
-          nextId,
-          this.platform || undefined,
-          this.board?.id ?? undefined
+        // The stale-return path is safe to leave the local
+        // `remaining` snapshot dangling because
+        // `_resetDetourState` bumps the seq AND wipes the queue
+        // in one synchronous block.
+        const nextResult = await hydrateForSelection(
+          this as unknown as SelectionHost,
+          nextId
         );
-        if (!nextComponent) {
-          this._submitError = this._localize("device.add_component_error");
+        if (nextResult.kind === "stale") return;
+        if (nextResult.kind === "error") {
+          this._submitError = nextResult.message;
           return;
         }
+        const nextComponent = nextResult.entry;
         // Hand the just-added component's id to the next step's matching
         // `references_component` field. Bundles are designed to chain —
         // e.g. `Status LED (full setup)` adds an `output.gpio`, then a
