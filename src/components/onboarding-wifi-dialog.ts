@@ -10,6 +10,7 @@ import { apiContext, localizeContext } from "../context/index.js";
 import { dialogActionButtonStyles } from "../styles/dialog-action-buttons.js";
 import { inputStyles } from "../styles/inputs.js";
 import { espHomeStyles } from "../styles/shared.js";
+import { EnterController } from "../util/enter-controller.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 import { type PasswordInputValueChange } from "./device/password-input-event.js";
 
@@ -64,6 +65,9 @@ export class ESPHomeOnboardingWifiDialog extends LitElement {
   @query("wa-dialog")
   private _dialog!: HTMLElement & { open: boolean };
 
+  @query("#onboarding-ssid")
+  private _ssidInput?: HTMLInputElement;
+
   // WPA/WPA2 passphrases are 8-63 characters; the maxlength=64 cap
   // covers the 64-hex-digit PSK form. An empty password is a valid
   // open network (the placeholder invites it), so only a non-empty
@@ -79,6 +83,9 @@ export class ESPHomeOnboardingWifiDialog extends LitElement {
    *  ``onboarding-dismissed-session`` for the same close. */
   private _exitedExplicitly = false;
 
+  // Enter submits; _save() self-guards on a blank SSID / too-short password.
+  private _enter = new EnterController(this, () => this._save());
+
   open() {
     this._ssid = "";
     this._password = "";
@@ -86,6 +93,9 @@ export class ESPHomeOnboardingWifiDialog extends LitElement {
     this._error = null;
     this._exitedExplicitly = false;
     this._dialog.open = true;
+    this._enter.set(true);
+    // autofocus is unreliable for a shadow-DOM input shown after first paint.
+    void this.updateComplete.then(() => this._ssidInput?.focus());
   }
 
   close() {
@@ -267,6 +277,9 @@ export class ESPHomeOnboardingWifiDialog extends LitElement {
   }
 
   private async _save() {
+    // The Enter path bypasses the disabled Save button, so guard re-entry
+    // here too or a held Enter double-submits during the await below.
+    if (this._saving) return;
     // IEEE 802.11 SSIDs may legally contain leading/trailing
     // whitespace, so don't ``trim()`` the value being sent —
     // mutating it would silently change the network name and
@@ -343,6 +356,7 @@ export class ESPHomeOnboardingWifiDialog extends LitElement {
    * mid-session.
    */
   private _onAfterHide() {
+    this._enter.set(false);
     if (!this._exitedExplicitly) {
       this._dismissForSession();
     }
