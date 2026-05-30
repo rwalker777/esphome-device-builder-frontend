@@ -21,7 +21,7 @@ import {
   mdiDelete,
   mdiPencilOutline,
 } from "@mdi/js";
-import { html, LitElement, nothing } from "lit";
+import { html, LitElement, nothing, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 
 import type {
@@ -144,6 +144,23 @@ export class ESPHomeAutomationActionNode extends LitElement {
   @state() private _showAdvanced = false;
 
   static styles = [espHomeStyles, inputStyles, automationEditorStyles];
+
+  /**
+   * The list reuses nodes by DOM position (plain actions.map, no keyed
+   * repeat), so a reorder/delete only rebinds .value and the @state
+   * view-flags would otherwise leak onto whichever action lands here.
+   * Key the reset off action_id, not object identity: a same-action
+   * param edit re-emits a fresh ActionNode every keystroke and resetting
+   * on that would snap the card shut mid-edit.
+   */
+  protected willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has("value")) return;
+    const previous = changed.get("value") as ActionNode | undefined;
+    if (previous && previous.action_id !== this.value.action_id) {
+      this._collapsed = false;
+      this._showAdvanced = false;
+    }
+  }
 
   protected render() {
     const def = this.catalog.find((a) => a.id === this.value.action_id);
