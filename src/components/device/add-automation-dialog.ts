@@ -428,11 +428,9 @@ export class ESPHomeAddAutomationDialog extends LitElement {
   private _filteredTriggers(): AutomationTrigger[] {
     const all = this._available?.triggers ?? [];
     if (this._kind === "device_on") {
-      // ESPHome's device-level lifecycle handlers (on_boot, on_loop,
-      // on_shutdown, ...) can only appear once under ``esphome:``,
-      // so once a handler exists the user adds more *actions* inside
-      // it from the inline editor — they don't add another
-      // automation. Hide those triggers from the picker.
+      // Device-level handlers are offered once; the catalog never marks
+      // them repeatable (only component triggers stack by index), so a
+      // second is grown inline rather than added as another block.
       const takenDeviceTriggers = this._existingDeviceTriggers();
       return all.filter((t) => t.is_device_level && !takenDeviceTriggers.has(t.id));
     }
@@ -441,15 +439,14 @@ export class ESPHomeAddAutomationDialog extends LitElement {
       const device = this._available?.devices.find((d) => d.id === this._componentId);
       if (!device) return [];
       const [domain] = device.component_id.split(".");
-      // Same rule for component-bound triggers: an inline ``on_*:``
-      // block under a component only fires once, so don't offer
-      // triggers that already have a handler on this instance.
+      // A component's inline ``on_*:`` fires once, so hide triggers that
+      // already have a handler here; repeatable ones stay offerable.
       const takenComponentTriggers = this._existingComponentTriggers(this._componentId);
       return all.filter(
         (t) =>
           !t.is_device_level &&
           (t.applies_to.includes(device.component_id) || t.applies_to.includes(domain)) &&
-          !takenComponentTriggers.has(this._bareTrigger(t.id))
+          (!takenComponentTriggers.has(this._bareTrigger(t.id)) || t.repeatable)
       );
     }
     return [];
@@ -569,6 +566,21 @@ export class ESPHomeAddAutomationDialog extends LitElement {
       // triggers.
       const dotIdx = this._triggerId!.indexOf(".");
       const bare = dotIdx >= 0 ? this._triggerId!.slice(dotIdx + 1) : this._triggerId!;
+      // Repeatable triggers append a new indexed entry; an un-indexed
+      // location would overwrite the block. Index = existing entry
+      // count on this instance (mirrors the interval path).
+      const trigger = this._available?.triggers.find((t) => t.id === this._triggerId);
+      if (trigger?.repeatable) {
+        const index = parseYamlAutomations(this.yaml).filter(
+          (s) => s.id === this._componentId && s.eventKey === bare
+        ).length;
+        return {
+          kind: "component_on",
+          component_id: this._componentId,
+          trigger: bare,
+          index,
+        };
+      }
       return {
         kind: "component_on",
         component_id: this._componentId,
