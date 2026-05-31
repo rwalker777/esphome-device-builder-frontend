@@ -720,7 +720,8 @@ export function findSectionStart(
 export function parseYamlSectionValues(
   yaml: string,
   sectionKey: string,
-  fromLine?: number
+  fromLine?: number,
+  isList = false
 ): Record<string, unknown> {
   const lines = yaml.split("\n");
   // Null-prototype map so a YAML key like `__proto__` /
@@ -739,6 +740,19 @@ export function parseYamlSectionValues(
   const values: Record<string, unknown> = Object.create(null);
   const startIdx = findSectionStart(lines, sectionKey, fromLine);
   if (startIdx < 0) return values;
+
+  // List-bodied section (globals): the body is the list, keyed under the
+  // section name so the wrapper reads it at [sectionKey] like esphome.areas.
+  // parseListBlock returns an array, or a YamlRawValue for shapes it can't
+  // model (the render path falls back to YAML-only for those).
+  if (isList) {
+    const headIndent = _leadingIndent(lines[startIdx]);
+    const bodyStart = _skipBlankAndCommentLines(lines, startIdx + 1);
+    if (bodyStart < lines.length && isChildListItemLine(lines[bodyStart], headIndent)) {
+      values[sectionKey] = parseListBlock(lines, bodyStart, headIndent).value;
+    }
+    return values;
+  }
 
   const isListItem = LIST_ITEM_START_RE.test(lines[startIdx]);
   // Detect the indent the user actually picked for this
@@ -978,11 +992,28 @@ export function updateSectionInYaml(
   sectionKey: string,
   values: Record<string, unknown>,
   fromLine?: number,
-  options: SerializeYamlOptions = {}
+  options: SerializeYamlOptions = {},
+  isList = false
 ): string {
   const lines = yaml.split("\n");
   const { start, end } = findSectionRange(lines, sectionKey, fromLine);
   if (start < 0) return yaml;
+
+  // List-bodied section: re-emit it through the same array path as a
+  // nested multi_value field (esphome.areas), so the header and items
+  // get canonical aligned indentation. A non-array value (a YamlRawValue
+  // the form can't represent) leaves the YAML untouched.
+  if (isList) {
+    if (!Array.isArray(values[sectionKey])) return yaml;
+    const headIndent = _leadingIndent(lines[start]);
+    const block = serializeYamlValues(
+      { [sectionKey]: values[sectionKey] },
+      headIndent,
+      options
+    );
+    lines.splice(start, end - start, ...block);
+    return lines.join("\n");
+  }
 
   const isListItem = LIST_ITEM_START_RE.test(lines[start]);
   // Match the user's existing indent step on save so 4-space (or
