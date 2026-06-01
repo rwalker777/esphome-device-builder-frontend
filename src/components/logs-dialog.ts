@@ -19,12 +19,18 @@ import { fullscreenMobileDialog } from "../styles/dialog-mobile.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { downloadAnsiText } from "../util/download-text.js";
 import { registerMdiIcons } from "../util/register-icons.js";
-import type { ESPHomeAnsiLog } from "./ansi-log.js";
 import { logsDialogStyles } from "./logs-dialog.styles.js";
+import type { ESPHomeProcessTerminal } from "./process-terminal/process-terminal.js";
+import {
+  fillTerminalOnMobile,
+  termButtonStyles,
+  termTokens,
+} from "./process-terminal/process-terminal.styles.js";
+import { renderTermButton, renderTermToggle } from "./process-terminal/toolbar-button.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
-import "./ansi-log.js";
 import "./base-dialog.js";
+import "./process-terminal/process-terminal.js";
 
 registerMdiIcons({
   "arrow-collapse": mdiArrowCollapse,
@@ -104,14 +110,17 @@ export class ESPHomeLogsDialog extends LitElement {
    */
   private _serialCancel: (() => void) | null = null;
 
-  @query("esphome-ansi-log")
-  private _ansiLog?: ESPHomeAnsiLog;
+  @query("esphome-process-terminal")
+  private _terminal?: ESPHomeProcessTerminal;
 
   static styles = [
     espHomeStyles,
+    termTokens,
+    termButtonStyles,
     logsDialogStyles,
-    // Full-screen on mobile.
+    // Full-screen on mobile, terminal fills it.
     fullscreenMobileDialog("esphome-base-dialog"),
+    fillTerminalOnMobile,
   ];
 
   protected willUpdate(changedProperties: Map<string, unknown>) {
@@ -152,7 +161,7 @@ export class ESPHomeLogsDialog extends LitElement {
        back to the bottom themselves. ``scrollToBottom()`` clears the
        flag and forces a scroll. updateComplete makes sure the @query
        has resolved on first open. */
-    this.updateComplete.then(() => this._ansiLog?.scrollToBottom());
+    this.updateComplete.then(() => this._terminal?.scrollToBottom());
   }
 
   /** Open dialog without auto-starting streaming (for Web Serial feed). */
@@ -228,6 +237,9 @@ export class ESPHomeLogsDialog extends LitElement {
     const toggleLabel = this._localize(
       this._showStates ? "dashboard.logs_hide_states" : "dashboard.logs_show_states"
     );
+    const expandLabel = this._localize(
+      this._expanded ? "dashboard.logs_collapse" : "dashboard.logs_expand"
+    );
 
     return html`
       <esphome-base-dialog
@@ -236,77 +248,71 @@ export class ESPHomeLogsDialog extends LitElement {
         @request-close=${this._onDialogRequestClose}
         @after-hide=${this._onDialogHide}
       >
-        <div class="logs-content">
-          <esphome-ansi-log
-            .lines=${this._lines}
-            placeholder=${this._localize("dashboard.logs_placeholder")}
-            ?light=${!this._darkMode}
-          ></esphome-ansi-log>
-          <div class="terminal-toolbar">
-            ${this._backToInstall
-              ? html`
-                  <button
-                    class="term-btn term-btn--ghost"
-                    @click=${this._onBackToInstall}
-                    title=${this._localize("dashboard.logs_back_to_install_tooltip")}
-                  >
-                    <wa-icon library="mdi" name="arrow-left"></wa-icon>
-                    ${this._localize("dashboard.logs_back_to_install")}
-                  </button>
-                `
-              : ""}
-            ${this._streaming ? html`<span class="streaming-dot"></span>` : ""}
-            <span class="spacer"></span>
+        <esphome-process-terminal
+          .lines=${this._lines}
+          placeholder=${this._localize("dashboard.logs_placeholder")}
+          ?light=${!this._darkMode}
+          ?streaming=${this._streaming}
+        >
+          ${this._backToInstall
+            ? html`<button
+                slot="toolbar-left"
+                class="term-btn term-btn--ghost"
+                @click=${this._onBackToInstall}
+                title=${this._localize("dashboard.logs_back_to_install_tooltip")}
+              >
+                <wa-icon library="mdi" name="arrow-left"></wa-icon>
+                ${this._localize("dashboard.logs_back_to_install")}
+              </button>`
+            : ""}
+          <div class="toolbar-slot" slot="toolbar-right">
             ${this._passive
               ? ""
-              : html`
-                  <button
-                    class="term-btn term-btn--ghost ${this._showStates
-                      ? "is-active"
-                      : ""}"
-                    @click=${this._toggleShowStates}
-                    title=${toggleLabel}
-                    aria-pressed=${this._showStates ? "true" : "false"}
-                  >
-                    <wa-icon library="mdi" name="pulse"></wa-icon>
-                    ${this._localize("dashboard.logs_states")}
-                  </button>
-                `}
+              : renderTermToggle({
+                  active: this._showStates,
+                  onClick: this._toggleShowStates,
+                  icon: "pulse",
+                  label: this._localize("dashboard.logs_states"),
+                  title: toggleLabel,
+                })}
+            <!-- Kept inline: the expand-btn class drives the mobile hide rule. -->
             <button
+              type="button"
               class="term-btn term-btn--ghost expand-btn"
               @click=${this._toggleExpanded}
+              title=${expandLabel}
+              aria-label=${expandLabel}
             >
               <wa-icon
                 library="mdi"
                 name=${this._expanded ? "arrow-collapse" : "arrow-expand"}
               ></wa-icon>
             </button>
-            <button class="term-btn term-btn--ghost" @click=${this._downloadLogs}>
-              <wa-icon library="mdi" name="download"></wa-icon>
-            </button>
-            <button
-              class="term-btn term-btn--ghost"
-              @click=${this._clearLogs}
-              title=${this._localize("dashboard.logs_clear")}
-            >
-              <wa-icon library="mdi" name="delete-sweep"></wa-icon>
-              ${this._localize("dashboard.logs_clear")}
-            </button>
+            ${renderTermButton({
+              icon: "download",
+              title: this._localize("dashboard.logs_download"),
+              onClick: this._downloadLogs,
+            })}
+            ${renderTermButton({
+              icon: "delete-sweep",
+              label: this._localize("dashboard.logs_clear"),
+              onClick: this._clearLogs,
+            })}
             ${this._streaming
-              ? html`
-                  <button class="term-btn term-btn--stop" @click=${this._stopStreaming}>
-                    <wa-icon library="mdi" name="stop"></wa-icon>
-                    ${this._localize("dashboard.logs_stop")}
-                  </button>
-                `
-              : html`
-                  <button class="term-btn term-btn--start" @click=${this._startStreaming}>
-                    <wa-icon library="mdi" name="play"></wa-icon>
-                    ${this._localize("dashboard.logs_start")}
-                  </button>
-                `}
+              ? renderTermButton({
+                  icon: "stop",
+                  label: this._localize("dashboard.logs_stop"),
+                  variant: "stop",
+                  onClick: this._stopStreaming,
+                })
+              : renderTermButton({
+                  icon: "play",
+                  label: this._localize("dashboard.logs_start"),
+                  variant: "start",
+                  onClick: this._startStreaming,
+                })}
           </div>
-        </div>
+        </esphome-process-terminal>
       </esphome-base-dialog>
     `;
   }
