@@ -346,7 +346,7 @@ export const dashboardStyles = css`
 
   .filter-clear:hover {
     color: var(--esphome-primary);
-    background: color-mix(in srgb, var(--esphome-primary), transparent 90%);
+    background: var(--esphome-tint);
   }
 
   .filter-clear:focus-visible {
@@ -492,7 +492,7 @@ export const dashboardStyles = css`
       border-color 0.12s;
   }
   .yaml-hits:not(:has(.yaml-snippet)) .yaml-hit-group:hover {
-    border-color: color-mix(in srgb, var(--esphome-primary), transparent 50%);
+    border-color: var(--esphome-tint-border-strong);
     background: var(--wa-color-surface-lowered);
   }
   .yaml-hit-group-header {
@@ -555,7 +555,7 @@ export const dashboardStyles = css`
     padding: 1px 0;
   }
   .yaml-snippet-line--match {
-    background: color-mix(in srgb, var(--esphome-primary), transparent 92%);
+    background: var(--esphome-tint);
   }
   .yaml-snippet-gutter {
     flex: 0 0 auto;
@@ -701,13 +701,13 @@ export const dashboardStyles = css`
   }
 
   .select-toggle-btn.active {
-    background: color-mix(in srgb, var(--esphome-primary), transparent 88%);
+    background: var(--esphome-tint);
     color: var(--esphome-primary);
-    border-color: color-mix(in srgb, var(--esphome-primary), transparent 60%);
+    border-color: var(--esphome-tint-border);
   }
 
   .select-toggle-btn.active:hover {
-    background: color-mix(in srgb, var(--esphome-primary), transparent 80%);
+    background: var(--esphome-tint-strong);
   }
 
   .select-toggle-btn wa-icon {
@@ -760,7 +760,7 @@ export const dashboardStyles = css`
     transition: background 0.12s;
   }
   .empty-search-clear:hover {
-    background: color-mix(in srgb, var(--esphome-primary), transparent 90%);
+    background: var(--esphome-tint);
   }
 
   /* ─── Skeleton ─── */
@@ -873,7 +873,7 @@ export const dashboardStyles = css`
     align-items: center;
     justify-content: center;
     gap: var(--wa-space-m);
-    background: color-mix(in srgb, var(--esphome-primary), transparent 96%);
+    background: var(--esphome-tint-faint);
     min-height: 200px;
     cursor: pointer;
     transition:
@@ -883,7 +883,7 @@ export const dashboardStyles = css`
   }
   .add-device-card:hover {
     border-color: var(--esphome-primary);
-    background: color-mix(in srgb, var(--esphome-primary), transparent 92%);
+    background: var(--esphome-tint);
     transform: translateY(-2px);
   }
   .add-device-icon-wrap {
