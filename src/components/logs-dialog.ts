@@ -234,6 +234,10 @@ export class ESPHomeLogsDialog extends LitElement {
 
   protected render() {
     const title = this._localize("dashboard.logs_title", { name: this.name });
+    // Web Serial's _port is an unrelated "OTA" fallback, so key off _passive.
+    const source = this._passive
+      ? this._localize("dashboard.logs_source_web_serial")
+      : this._port;
     const toggleLabel = this._localize(
       this._showStates ? "dashboard.logs_hide_states" : "dashboard.logs_show_states"
     );
@@ -248,6 +252,7 @@ export class ESPHomeLogsDialog extends LitElement {
         @request-close=${this._onDialogRequestClose}
         @after-hide=${this._onDialogHide}
       >
+        <span slot="header-suffix" class="source-chip" title=${source}>${source}</span>
         <esphome-process-terminal
           .lines=${this._lines}
           placeholder=${this._localize("dashboard.logs_placeholder")}

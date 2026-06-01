@@ -13,6 +13,11 @@ import { fillTerminal } from "./process-terminal/process-terminal.styles.js";
  * from the shared termTokens / termButtonStyles in the component's styles.
  */
 export const logsDialogStyles = css`
+  :host {
+    /* Shared by the title part and the chip so the two can't drift. */
+    --logs-mono-font: "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", monospace;
+  }
+
   esphome-base-dialog {
     /* Width history: 900 wrapped, 1100 still ~100px short, 1200 still wrapped
        on retina / HiDPI screens where ESPHome's ANSI-coloured output reads at
@@ -37,12 +42,47 @@ export const logsDialogStyles = css`
     color: var(--esphome-on-primary);
     font-size: var(--wa-font-size-s);
     font-weight: var(--wa-font-weight-bold);
-    font-family: "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", monospace;
+    font-family: var(--logs-mono-font);
+  }
+  /* Truncate the name before the chip so a long /dev/cu… path can't overflow
+     the narrow header. */
+  esphome-base-dialog::part(label-row) {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  esphome-base-dialog::part(title-text) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   esphome-base-dialog::part(body) {
     padding: 0;
     background: var(--term-bg);
     overflow: hidden;
+  }
+
+  /* Transport chip beside the title: OTA / serial path / Web Serial. */
+  .source-chip {
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: var(--wa-space-s);
+    /* Hold size so the name yields first; max-width is the last-resort clamp
+       (full value stays on the title tooltip). */
+    flex-shrink: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-family: var(--logs-mono-font);
+    font-size: var(--wa-font-size-2xs);
+    font-weight: var(--wa-font-weight-normal);
+    color: var(--esphome-on-primary);
+    background: color-mix(in srgb, var(--esphome-on-primary) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--esphome-on-primary) 32%, transparent);
+    white-space: nowrap;
   }
   esphome-base-dialog::part(footer) {
     display: none;
