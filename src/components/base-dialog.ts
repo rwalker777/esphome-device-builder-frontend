@@ -1,7 +1,7 @@
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 
-import { LitElement, css, html } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators.js";
 
 import { dialogCloseButtonStyles } from "../styles/dialog-close-button.js";
 import { centeredMobileDialog } from "../styles/dialog-mobile.js";
@@ -75,13 +75,14 @@ import { centeredMobileDialog } from "../styles/dialog-mobile.js";
  *
  * **Slots**:
  *
- * - Default slot: dialog body. Consumers put their form
- *   fields, error banner, and actions row inline here.
- *   The wrapper doesn't impose a ``slot="footer"`` because
- *   most existing dialogs render the actions row as a
- *   plain ``<div class="actions">`` at the end of the
- *   body, and forcing them to migrate to a slotted footer
- *   would balloon the diff for no behaviour change.
+ * - Default slot: dialog body. Most dialogs render their form
+ *   fields, error banner, and actions row inline here (a plain
+ *   ``<div class="actions">`` at the end of the body), so the
+ *   default slot is all they need.
+ * - ``footer`` slot: forwarded to ``wa-dialog``'s footer for the
+ *   dialogs that do use a pinned footer row (e.g. the onboarding
+ *   wizard). Only forwarded when a consumer fills it, so footer-less
+ *   dialogs render unchanged (see ``willUpdate``).
  * - ``header-suffix`` slot: inline content after the title
  *   (e.g. a status chip). Empty by default, so other dialogs
  *   are unchanged. The row and title are exposed as the
@@ -127,6 +128,20 @@ export class ESPHomeBaseDialog extends LitElement {
    *  (wa-request-close veto) but not the visual dim on the
    *  close button. */
   @property({ type: Boolean, reflect: true }) busy = false;
+
+  /** Whether a consumer has slotted footer content. Gates the
+   *  forwarding ``<slot name="footer">`` — see ``willUpdate``. */
+  @state() private _hasFooter = false;
+
+  // wa-dialog turns its footer chrome (border-top + padding) on by
+  // testing for a direct ``[slot="footer"]`` child element, not for
+  // flattened slot content. An always-present forwarding slot is itself
+  // such a child, so it would draw an empty footer bar on every
+  // footer-less consumer. Mirror that same presence test against our
+  // own light DOM and only forward when a consumer fills the footer.
+  protected willUpdate(): void {
+    this._hasFooter = this.querySelector(':scope > [slot="footer"]') !== null;
+  }
 
   private _onWaRequestClose = (e: Event): void => {
     // ``wa-dialog``'s events bubble + compose, so the same
@@ -180,6 +195,7 @@ export class ESPHomeBaseDialog extends LitElement {
           <span part="title-text">${this.label}</span><slot name="header-suffix"></slot>
         </header>
         <slot></slot>
+        ${this._hasFooter ? html`<slot name="footer" slot="footer"></slot>` : nothing}
       </wa-dialog>
     `;
   }
