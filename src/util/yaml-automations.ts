@@ -14,6 +14,15 @@ import {
 } from "./yaml-sections-core.js";
 
 /**
+ * A component action-list field (``open_action:`` …): group 1 the
+ * indent, group 2 the key. A naming heuristic — the backend
+ * (``ConfigEntryType.TRIGGER``) is the authority; this keystroke-time
+ * fallback can't see the schema, so a non-trigger ``*_action`` field
+ * would surface a spurious row here until backend parse corrects it.
+ */
+const _COMPONENT_ACTION_FIELD_RE = /^(\s+)([a-z0-9_]+_action):/;
+
+/**
  * Synchronous fallback parser for automation sections. The navigator
  * needs to paint instantly on every keystroke, so we can't wait for
  * the backend's ``automations/parse`` round-trip; this regex-based
@@ -25,6 +34,8 @@ import {
  *   (``device_on`` automations).
  * - List items under top-level ``script:`` and ``interval:`` blocks
  *   (``script`` and ``interval`` automations).
+ * - ``*_action`` config fields on a component instance
+ *   (``component_action`` automations — cover ``open_action`` …).
  *
  * Emits stable machine-readable keys
  * (``automation:component_on:<id>:on_press`` etc.) plus a separate
@@ -125,6 +136,38 @@ export function parseYamlAutomations(yaml: string): YamlSection[] {
       fromLine,
       toLine,
       eventKey: eventName,
+    });
+  }
+
+  // Component action-list config fields (``open_action:`` …). These are
+  // ``type: trigger`` config fields whose value is a bare action list —
+  // editable as trigger-less automations, parallel to the inline ``on_*``
+  // pass above. Matched by the ``*_action`` suffix and gated to a direct
+  // child of a component instance, so an ``on_*`` key (different suffix)
+  // and a ``*_action`` nested inside another action body (deeper indent,
+  // edited within that automation's tree) are both excluded.
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(_COMPONENT_ACTION_FIELD_RE);
+    if (!match) continue;
+    const indent = match[1].length;
+    const field = match[2];
+    // An ``on_*`` key is a trigger, already emitted by the loop above;
+    // skip it here so an ``on_…_action`` name can't be counted twice.
+    if (field.startsWith("on_")) continue;
+    const fromLine = i + 1;
+    const host = smallestContainingSection(sections, fromLine);
+    if (!host || indent !== listItemChildIndent(lines[host.fromLine - 1] ?? "")) continue;
+    const componentId = instanceComponentId(sections, host);
+    if (!componentId) continue;
+    const labelHead = host.name || componentId;
+    automations.push({
+      key: `automation:component_action:${componentId}:${field}`,
+      displayLabel: `${labelHead} → ${field}`,
+      fromLine,
+      toLine: _findBlockEnd(lines, i, indent),
+      id: componentId,
+      parentKey: host.parentKey ?? host.key,
+      actionField: field,
     });
   }
 
