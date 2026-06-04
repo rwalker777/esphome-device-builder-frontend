@@ -24,6 +24,33 @@ describe("safeWebUiUrl", () => {
     expect(safeWebUiUrl("file:///etc/passwd")).toBe("");
   });
 
+  it("rejects URLs carrying userinfo (host-spoofing via @)", () => {
+    // ``http://device.local@evil.com`` parses as a valid http URL
+    // whose host is ``evil.com`` — the leading segment is a username.
+    // A hostile device announcement could use this to point the
+    // "Visit Web UI" link at an attacker origin.
+    expect(safeWebUiUrl("http://device.local@evil.com")).toBe("");
+    expect(safeWebUiUrl("http://1.2.3.4@evil.com:6053")).toBe("");
+    expect(safeWebUiUrl("https://user:pass@evil.com")).toBe("");
+    // Empty-userinfo variants still parse with host=evil.com.
+    expect(safeWebUiUrl("http://@evil.com")).toBe("");
+    expect(safeWebUiUrl("http://:@evil.com")).toBe("");
+    // Abbreviated authority forms the WHATWG parser still accepts:
+    // fewer-than-two slashes (and backslashes) after the scheme all
+    // parse with host=evil.com, so the slice can't key off ``://``.
+    expect(safeWebUiUrl("http:/user@evil.com")).toBe("");
+    expect(safeWebUiUrl("http:user@evil.com")).toBe("");
+    expect(safeWebUiUrl("http:\\\\user@evil.com")).toBe("");
+  });
+
+  it("allows a legitimate @ in the path or query", () => {
+    // The authority guard must not over-reject a ``@`` that appears
+    // after the host (path/query/fragment), where it's just data.
+    expect(safeWebUiUrl("http://kitchen.local/p?u=a@b")).toBe(
+      "http://kitchen.local/p?u=a@b"
+    );
+  });
+
   it("rejects malformed URLs", () => {
     expect(safeWebUiUrl("not a url")).toBe("");
     expect(safeWebUiUrl("://kitchen.local")).toBe("");
@@ -94,6 +121,16 @@ describe("buildWebUiUrl", () => {
         })
       )
     ).toBe("http://[2001:470:59ca:991:de54:75ff:fec7:cc0]:8080");
+  });
+
+  it("returns empty string when the address smuggles a userinfo @", () => {
+    // A hostile mDNS address like ``1.2.3.4@evil.com`` would otherwise
+    // build ``http://1.2.3.4@evil.com`` — a link to evil.com.
+    expect(buildWebUiUrl(_device({ web_port: 80, address: "1.2.3.4@evil.com" }))).toBe(
+      ""
+    );
+    // Empty-userinfo smuggling: ``@evil.com`` builds ``http://@evil.com``.
+    expect(buildWebUiUrl(_device({ web_port: 80, address: "@evil.com" }))).toBe("");
   });
 
   it("leaves IPv4 and hostnames unbracketed", () => {

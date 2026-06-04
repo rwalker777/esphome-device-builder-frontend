@@ -10,6 +10,25 @@ import type { ConfiguredDevice } from "../api/types/devices.js";
  * when the user clicks the resulting ``<a href>``. ``new URL``
  * rejects malformed input; the protocol check covers the rest.
  *
+ * Userinfo is also rejected: ``http://device.local@evil.com`` parses
+ * as a valid ``http:`` URL whose *host* is ``evil.com`` (the part
+ * before ``@`` is a username), so it would slip past the protocol
+ * check and send the user to an attacker-controlled origin while
+ * looking like it points at the device. The same hostile-device-data
+ * threat the protocol check defends against applies here, so any
+ * ``@`` in the authority is treated as unsafe. We test the raw
+ * authority rather than ``parsed.username``/``parsed.password``
+ * because empty userinfo (``http://@evil.com`` / ``http://:@evil.com``)
+ * parses with both empty yet still points ``host`` at the attacker.
+ * Slicing the authority off the raw string keeps a legitimate ``@``
+ * in a path/query/fragment from being rejected. The slice strips the
+ * scheme via the parsed ``protocol`` (not a literal ``://``) and
+ * collapses leading slashes/backslashes, so the abbreviated special-
+ * scheme authority forms the WHATWG parser still accepts —
+ * ``http:/user@evil.com``, ``http:user@evil.com``,
+ * ``http:\\user@evil.com`` (all parse with host ``evil.com``) — are
+ * caught too, not just the canonical ``http://…@…``.
+ *
  * The original string is returned verbatim (rather than
  * ``parsed.toString()``) so callers keep the terse form
  * ``http://host:22`` instead of the WHATWG-canonicalised
@@ -20,6 +39,11 @@ export function safeWebUiUrl(url: string): string {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    const authority = url
+      .slice(parsed.protocol.length)
+      .replace(/^[/\\]+/, "")
+      .split(/[/?#\\]/, 1)[0];
+    if (authority.includes("@")) return "";
     return url;
   } catch {
     return "";
