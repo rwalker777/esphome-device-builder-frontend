@@ -13,8 +13,11 @@ vi.mock("@home-assistant/webawesome/dist/components/icon/icon.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-board.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-empty-config.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-method.js", () => ({}));
+vi.mock("../../../src/components/wizard/wizard-step-overwrite-device.js", () => ({}));
+vi.mock("../../../src/components/wizard/wizard-step-resolve-conflicts.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-setup.js", () => ({}));
 
+import { APIError } from "../../../src/api/api-error.js";
 import type { ESPHomeAPI } from "../../../src/api/index.js";
 import { ESPHomeCreateConfigDialog } from "../../../src/components/wizard/create-config-dialog.js";
 
@@ -61,6 +64,53 @@ function emitFinish(el: ESPHomeCreateConfigDialog, name: string): void {
       bubbles: true,
       composed: true,
     })
+  );
+}
+
+// The method step dispatches import-file with the picked File.
+function emitImport(el: ESPHomeCreateConfigDialog, file: File): void {
+  const wd = el.shadowRoot!.querySelector("esphome-base-dialog")!;
+  wd.dispatchEvent(
+    new CustomEvent("import-file", { detail: { file }, bubbles: true, composed: true })
+  );
+}
+
+// The resolve-conflicts step dispatches the user's overwrite choices.
+function emitResolve(el: ESPHomeCreateConfigDialog, overwrite: string[]): void {
+  const wd = el.shadowRoot!.querySelector("esphome-base-dialog")!;
+  wd.dispatchEvent(
+    new CustomEvent("resolve-conflicts", {
+      detail: { overwrite },
+      bubbles: true,
+      composed: true,
+    })
+  );
+}
+
+function bundleFile(): File {
+  return new File(
+    [new Uint8Array([0x1f, 0x8b, 0x08, 0x00])],
+    "device.esphomebundle.tar.gz"
+  );
+}
+
+function yamlFile(): File {
+  return new File(["esphome:\n  name: device\n"], "device.yaml");
+}
+
+// The overwrite-confirm step dispatches this when the user confirms.
+function emitOverwriteDevice(el: ESPHomeCreateConfigDialog): void {
+  const wd = el.shadowRoot!.querySelector("esphome-base-dialog")!;
+  wd.dispatchEvent(
+    new CustomEvent("overwrite-device", { bubbles: true, composed: true })
+  );
+}
+
+// The overwrite-confirm step's Cancel routes back via next-step.
+function emitNextStep(el: ESPHomeCreateConfigDialog, step: string): void {
+  const wd = el.shadowRoot!.querySelector("esphome-base-dialog")!;
+  wd.dispatchEvent(
+    new CustomEvent("next-step", { detail: step, bubbles: true, composed: true })
   );
 }
 
@@ -169,5 +219,219 @@ describe("create-config-dialog open/close contract", () => {
     const el = await mount({});
     el.close();
     expect(isOpen(el)).toBe(false);
+  });
+});
+
+// A .tar.gz is binary, so the wizard routes it to importBundle (base64)
+// instead of reading it as text and shoving garbage into createDevice.
+describe("create-config-dialog bundle import", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  const step = (el: ESPHomeCreateConfigDialog): string =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (el as any)._step;
+
+  it("imports a bundle as base64 and never calls createDevice", async () => {
+    const createDevice = vi.fn();
+    const importBundle = vi.fn().mockResolvedValue({
+      status: "imported",
+      configuration: "device.yaml",
+      conflicts: [],
+      written: ["device.yaml"],
+      kept: [],
+      has_secrets: false,
+      esphome_version: "2026.6.0",
+    });
+    const el = await mount({ createDevice, importBundle });
+
+    emitImport(el, bundleFile());
+    await flush();
+
+    expect(createDevice).not.toHaveBeenCalled();
+    expect(importBundle).toHaveBeenCalledTimes(1);
+    const arg = importBundle.mock.calls[0][0];
+    expect(arg.file_content_b64).toBeTruthy();
+    expect(arg.overwrite).toBeUndefined();
+  });
+
+  it("routes a conflicts response to the resolve step, then re-submits the same bytes with overwrite", async () => {
+    const importBundle = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "conflicts",
+        configuration: "device.yaml",
+        conflicts: ["device.yaml", "common/wifi.yaml"],
+        has_secrets: true,
+        esphome_version: "2026.6.0",
+      })
+      .mockResolvedValueOnce({
+        status: "imported",
+        configuration: "device.yaml",
+        conflicts: [],
+        written: ["device.yaml"],
+        kept: [],
+        has_secrets: true,
+        esphome_version: "2026.6.0",
+      });
+    const el = await mount({ importBundle });
+
+    emitImport(el, bundleFile());
+    await flush();
+    await el.updateComplete;
+
+    expect(step(el)).toBe("resolve-conflicts");
+    const firstB64 = importBundle.mock.calls[0][0].file_content_b64;
+
+    emitResolve(el, ["device.yaml"]);
+    await flush();
+
+    expect(importBundle).toHaveBeenCalledTimes(2);
+    const secondArg = importBundle.mock.calls[1][0];
+    expect(secondArg.overwrite).toEqual(["device.yaml"]);
+    // Same cached bytes re-sent; the file isn't re-read.
+    expect(secondArg.file_content_b64).toBe(firstB64);
+  });
+
+  it("ignores a second Import click while a resolve submit is in flight", async () => {
+    const inflight = deferred<{ status: string }>();
+    const importBundle = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "conflicts",
+        configuration: "device.yaml",
+        conflicts: ["device.yaml"],
+        has_secrets: false,
+        esphome_version: "2026.6.0",
+      })
+      .mockReturnValueOnce(inflight.promise);
+    const el = await mount({ importBundle });
+
+    emitImport(el, bundleFile());
+    await flush();
+    await el.updateComplete;
+
+    emitResolve(el, ["device.yaml"]);
+    emitResolve(el, ["device.yaml"]); // double-click while first is in flight
+    await flush();
+
+    // Initial conflicts call + one resolve call; the double-click is dropped.
+    expect(importBundle).toHaveBeenCalledTimes(2);
+  });
+
+  it("guards a double-click on the first import (across the file-read window)", async () => {
+    const inflight = deferred<{ status: string }>();
+    const importBundle = vi.fn().mockReturnValueOnce(inflight.promise);
+    const el = await mount({ importBundle });
+
+    // Two synchronous picks before the awaited arrayBuffer() resolves.
+    emitImport(el, bundleFile());
+    emitImport(el, bundleFile());
+    await flush();
+
+    expect(importBundle).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a distinct partial-import result when the backend keeps files", async () => {
+    const importBundle = vi.fn().mockResolvedValue({
+      status: "imported",
+      configuration: "device.yaml",
+      conflicts: [],
+      written: ["common/new.yaml"],
+      kept: ["device.yaml", "common/wifi.yaml"],
+      has_secrets: false,
+      esphome_version: "2026.6.0",
+    });
+    const el = await mount({ importBundle });
+
+    emitImport(el, bundleFile());
+    await flush();
+    await el.updateComplete;
+
+    expect(step(el)).toBe("import-partial");
+    const kept = [...el.shadowRoot!.querySelectorAll(".import-partial ul.kept li")].map(
+      (li) => li.textContent
+    );
+    expect(kept).toEqual(["device.yaml", "common/wifi.yaml"]);
+    expect(el.shadowRoot!.querySelector(".btn-open")).not.toBeNull();
+  });
+});
+
+// A YAML upload that collides routes to a confirm step; confirming
+// re-sends with overwrite:true (the backend keeps the device's labels).
+describe("create-config-dialog upload overwrite", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  const step = (el: ESPHomeCreateConfigDialog): string =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (el as any)._step;
+
+  it("routes an already_exists collision to the confirm-overwrite step", async () => {
+    const createDevice = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new APIError("already_exists", "Configuration device.yaml already exists")
+      );
+    const el = await mount({ createDevice });
+
+    emitImport(el, yamlFile());
+    await flush();
+    await el.updateComplete;
+
+    expect(step(el)).toBe("confirm-overwrite");
+    expect(createDevice).toHaveBeenCalledTimes(1);
+    expect(createDevice.mock.calls[0][0].overwrite).toBeUndefined();
+  });
+
+  it("re-sends with overwrite:true when the user confirms", async () => {
+    const createDevice = vi
+      .fn()
+      .mockRejectedValueOnce(new APIError("already_exists", "exists"))
+      .mockResolvedValueOnce({ configuration: "device.yaml" });
+    const el = await mount({ createDevice });
+
+    emitImport(el, yamlFile());
+    await flush();
+    await el.updateComplete;
+
+    emitOverwriteDevice(el);
+    await flush();
+
+    expect(createDevice).toHaveBeenCalledTimes(2);
+    expect(createDevice.mock.calls[1][0].overwrite).toBe(true);
+  });
+
+  it("cancelling the confirm step does not re-call createDevice", async () => {
+    const createDevice = vi
+      .fn()
+      .mockRejectedValueOnce(new APIError("already_exists", "exists"));
+    const el = await mount({ createDevice });
+
+    emitImport(el, yamlFile());
+    await flush();
+    await el.updateComplete;
+
+    emitNextStep(el, "method"); // Cancel
+    await flush();
+
+    expect(step(el)).toBe("method");
+    expect(createDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-collision upload error stays on the method step", async () => {
+    const createDevice = vi
+      .fn()
+      .mockRejectedValueOnce(new APIError("invalid_args", "bad yaml"));
+    const el = await mount({ createDevice });
+
+    emitImport(el, yamlFile());
+    await flush();
+    await el.updateComplete;
+
+    expect(step(el)).toBe("method");
+    expect(createDevice).toHaveBeenCalledTimes(1);
   });
 });

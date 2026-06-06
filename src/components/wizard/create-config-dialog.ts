@@ -11,21 +11,32 @@ import { primaryHeaderDialogStyles } from "../../styles/dialog-chrome.js";
 import { fullscreenMobileDialog } from "../../styles/dialog-mobile.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { withBase } from "../../util/base-path.js";
+import { arrayBufferToBase64 } from "../../util/base64.js";
 import { markJustCreated } from "../../util/just-created.js";
 import { markPendingHighlight } from "../../util/pending-highlight.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
 import { safeUploadFilename } from "../../util/safe-upload-filename.js";
+import { isBundleFilename } from "../../util/upload-file-types.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "../base-dialog.js";
 import "./wizard-step-board.js";
 import "./wizard-step-empty-config.js";
 import "./wizard-step-method.js";
+import "./wizard-step-overwrite-device.js";
+import "./wizard-step-resolve-conflicts.js";
 import "./wizard-step-setup.js";
 
 registerMdiIcons({ close: mdiClose, "arrow-left": mdiArrowLeft });
 
-type WizardStep = "method" | "board" | "setup" | "empty-config";
+type WizardStep =
+  | "method"
+  | "board"
+  | "setup"
+  | "empty-config"
+  | "resolve-conflicts"
+  | "confirm-overwrite"
+  | "import-partial";
 type CreationMethod = "basic" | "empty" | "import";
 type WizardStepDetail =
   | WizardStep
@@ -70,6 +81,30 @@ export class ESPHomeCreateConfigDialog extends LitElement {
 
   /** Stored file for import flow (selected before board step). */
   private _importFile: File | null = null;
+
+  /** Base64 of the picked bundle, held across the conflict-resolution
+   *  round-trip so the user's overwrite choices re-submit the same bytes. */
+  private _bundleB64: string | null = null;
+
+  @state()
+  private _bundleConflicts: string[] = [];
+
+  @state()
+  private _bundleHasSecrets = false;
+
+  /** Main config filename of the bundle, so the resolve step can flag
+   *  the row whose overwrite replaces the device (keeping its labels). */
+  @state()
+  private _bundleMainConfig = "";
+
+  /** Pending YAML upload held while the user confirms overwriting an
+   *  existing device. */
+  private _pendingUpload: { slug: string; fileContent: string } | null = null;
+
+  /** Set after a bundle import that left some existing files in place, so
+   *  the result is shown as a partial import rather than a silent success. */
+  @state()
+  private _partialImport: { configuration: string; kept: string[] } | null = null;
 
   @state()
   private _submitting = false;
@@ -116,6 +151,40 @@ export class ESPHomeCreateConfigDialog extends LitElement {
         font-size: var(--wa-font-size-s);
         margin-top: var(--wa-space-s);
       }
+
+      .import-partial p {
+        margin: 0 0 var(--wa-space-m);
+        color: var(--wa-color-text-normal);
+        font-size: var(--wa-font-size-s);
+      }
+
+      .import-partial ul.kept {
+        margin: 0 0 var(--wa-space-l);
+        padding-left: var(--wa-space-l);
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: var(--wa-font-family-code, monospace);
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-text-quiet);
+        word-break: break-all;
+      }
+
+      .partial-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .btn-open {
+        padding: 8px 18px;
+        border-radius: var(--wa-border-radius-m);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-bold);
+        font-family: inherit;
+        cursor: pointer;
+        border: none;
+        background: var(--esphome-primary);
+        color: var(--esphome-on-primary);
+      }
     `,
   ];
 
@@ -155,6 +224,12 @@ export class ESPHomeCreateConfigDialog extends LitElement {
   private _resetTransientState(): void {
     this._creationMethod = "basic";
     this._importFile = null;
+    this._bundleB64 = null;
+    this._bundleConflicts = [];
+    this._bundleHasSecrets = false;
+    this._bundleMainConfig = "";
+    this._pendingUpload = null;
+    this._partialImport = null;
     this._submitting = false;
     this._resetCreateErrors();
     this._open = true;
@@ -198,6 +273,12 @@ export class ESPHomeCreateConfigDialog extends LitElement {
         return this._localize("wizard.title_setup");
       case "empty-config":
         return this._localize("wizard.title_empty_config");
+      case "resolve-conflicts":
+        return this._localize("wizard.import_bundle_conflicts_title");
+      case "confirm-overwrite":
+        return this._localize("wizard.overwrite_device_title");
+      case "import-partial":
+        return this._localize("wizard.import_partial_title");
     }
   }
 
@@ -214,8 +295,10 @@ export class ESPHomeCreateConfigDialog extends LitElement {
         @finish-setup=${this._onFinishSetup}
         @create-empty-config=${this._onCreateEmptyConfig}
         @import-file=${this._onImportFile}
+        @resolve-conflicts=${this._onResolveConflicts}
+        @overwrite-device=${this._onConfirmOverwrite}
       >
-        ${this._step !== "method"
+        ${this._step !== "method" && this._step !== "import-partial"
           ? html`<button
               slot="header-prefix"
               class="back-button"
@@ -259,7 +342,37 @@ export class ESPHomeCreateConfigDialog extends LitElement {
         return html`<esphome-wizard-step-empty-config
           ?active=${this._open}
         ></esphome-wizard-step-empty-config>`;
+      case "resolve-conflicts":
+        return html`<esphome-wizard-step-resolve-conflicts
+          .conflicts=${this._bundleConflicts}
+          .hasSecrets=${this._bundleHasSecrets}
+          .mainConfig=${this._bundleMainConfig}
+        ></esphome-wizard-step-resolve-conflicts>`;
+      case "confirm-overwrite":
+        return html`<esphome-wizard-step-overwrite-device
+          .deviceName=${this._pendingUpload?.slug ?? ""}
+        ></esphome-wizard-step-overwrite-device>`;
+      case "import-partial":
+        return this._renderPartialImport();
     }
+  }
+
+  private _renderPartialImport() {
+    const kept = this._partialImport?.kept ?? [];
+    const configuration = this._partialImport?.configuration ?? "";
+    return html`
+      <div class="import-partial">
+        <p>${this._localize("wizard.import_partial_desc", { count: kept.length })}</p>
+        <ul class="kept">
+          ${kept.map((p) => html`<li>${p}</li>`)}
+        </ul>
+        <div class="partial-actions">
+          <button class="btn-open" @click=${() => this._navigateToCreated(configuration)}>
+            ${this._localize("wizard.import_partial_open")}
+          </button>
+        </div>
+      </div>
+    `;
   }
 
   private _onNextStep(e: CustomEvent<WizardStepDetail>) {
@@ -284,7 +397,24 @@ export class ESPHomeCreateConfigDialog extends LitElement {
   private _onImportFile(e: CustomEvent<{ file: File }>) {
     this._creationMethod = "import";
     this._importFile = e.detail.file;
+    // Drop any cached bytes/conflicts from a prior pick so a re-selection
+    // can't re-submit the previous file or its stale conflict list.
+    this._bundleB64 = null;
+    this._bundleConflicts = [];
+    this._bundleHasSecrets = false;
+    this._bundleMainConfig = "";
+    this._pendingUpload = null;
     this._createImportedDevice();
+  }
+
+  private _onConfirmOverwrite() {
+    if (!this._pendingUpload) return;
+    const { slug, fileContent } = this._pendingUpload;
+    this._runUpload(slug, fileContent, true);
+  }
+
+  private _onResolveConflicts(e: CustomEvent<{ overwrite: string[] }>) {
+    this._importBundleFlow(e.detail.overwrite);
   }
 
   private _onBack() {
@@ -296,6 +426,12 @@ export class ESPHomeCreateConfigDialog extends LitElement {
         this._step = "board";
         break;
       case "empty-config":
+        this._step = "method";
+        break;
+      case "resolve-conflicts":
+        this._step = "method";
+        break;
+      case "confirm-overwrite":
         this._step = "method";
         break;
     }
@@ -350,6 +486,11 @@ export class ESPHomeCreateConfigDialog extends LitElement {
     if (this._submitting) return;
     if (!this._importFile) return;
 
+    if (isBundleFilename(this._importFile.name)) {
+      await this._importBundleFlow();
+      return;
+    }
+
     this._resetCreateErrors();
 
     let fileContent: string;
@@ -382,19 +523,90 @@ export class ESPHomeCreateConfigDialog extends LitElement {
       return;
     }
 
+    await this._runUpload(slug, fileContent);
+  }
+
+  /** Send a YAML upload. A first-time collision (`already_exists`) routes
+   *  to the confirm-overwrite step; the user's confirm re-enters here with
+   *  `overwrite=true`, which replaces the config and keeps its labels. */
+  private async _runUpload(
+    slug: string,
+    fileContent: string,
+    overwrite = false
+  ): Promise<void> {
+    if (this._submitting) return;
+    this._resetCreateErrors();
     this._submitting = true;
     try {
       const { configuration } = await this._api.createDevice({
         name: slug,
         config_type: "upload",
         file_content: fileContent,
+        ...(overwrite ? { overwrite: true } : {}),
       });
       this._navigateToCreated(configuration);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this._importError = msg.includes("409")
-        ? this._localize("wizard.import_duplicate_error", { name: slug })
-        : this._localize("wizard.import_general_error");
+      if (!overwrite && err instanceof APIError && err.errorCode === "already_exists") {
+        this._pendingUpload = { slug, fileContent };
+        this._step = "confirm-overwrite";
+        return;
+      }
+      this._importError =
+        this._apiErrorDetails(err) || this._localize("wizard.import_general_error");
+    } finally {
+      this._submitting = false;
+    }
+  }
+
+  /** Import an `esphome bundle`. The first call sends the bytes; a
+   *  'conflicts' response routes to the resolve-conflicts step, whose
+   *  confirm re-enters here with the chosen `overwrite` paths (the cached
+   *  base64 is reused so the file isn't re-read). */
+  private async _importBundleFlow(overwrite?: string[]): Promise<void> {
+    // Flip _submitting synchronously, before the first await (the file
+    // read), so a fast double-click can't slip two parallel
+    // import_bundle commands through the guard. Both the resolve-step
+    // re-entry (which bypasses _createImportedDevice's guard) and the
+    // initial import are covered.
+    if (this._submitting) return;
+    if (!this._importFile) return;
+    this._resetCreateErrors();
+    this._submitting = true;
+
+    try {
+      if (this._bundleB64 === null) {
+        try {
+          const buffer = await this._importFile.arrayBuffer();
+          this._bundleB64 = arrayBufferToBase64(buffer);
+        } catch {
+          this._importError = this._localize("wizard.import_read_error");
+          return;
+        }
+      }
+
+      const res = await this._api.importBundle({
+        file_content_b64: this._bundleB64,
+        ...(overwrite !== undefined ? { overwrite } : {}),
+      });
+      if (res.status === "conflicts") {
+        this._bundleConflicts = res.conflicts;
+        this._bundleHasSecrets = res.has_secrets;
+        this._bundleMainConfig = res.configuration;
+        this._step = "resolve-conflicts";
+        return;
+      }
+      // A partial import (some conflicts kept) is shown explicitly so the
+      // user knows the device may still run its old config, rather than a
+      // silent jump to the editor.
+      if (res.kept.length) {
+        this._partialImport = { configuration: res.configuration, kept: res.kept };
+        this._step = "import-partial";
+        return;
+      }
+      this._navigateToCreated(res.configuration);
+    } catch (err) {
+      this._importError =
+        this._apiErrorDetails(err) || this._localize("wizard.import_general_error");
     } finally {
       this._submitting = false;
     }
@@ -463,34 +675,23 @@ export class ESPHomeCreateConfigDialog extends LitElement {
     }
   }
 
-  /** Pull the user-facing message out of an APIError-shaped failure.
-   *
-   * Reads the structured ``details`` field directly when the WS
-   * client throws an :class:`APIError`, so we don't have to parse
-   * the formatted ``"<code>: <details>"`` message string back
-   * apart. Falls back to a localised generic for any non-APIError
-   * shape (transport failures, unexpected non-Error throws) and
-   * for the case where ``details`` is empty (e.g. ``invalid_args:``
-   * with no body — empty after trimming would otherwise render as
-   * a blank red bar on the dialog, which is worse than a generic
-   * "create failed").
-   *
-   * When ``board`` is provided, the result is wrapped with
-   * ``wizard.create_with_board_error`` so the displayed message
-   * names the board the wizard was trying to use. The basic-setup
-   * flow always passes a board; the empty-config flow only does
-   * when the user picked one (it's optional there).
-   */
+  /** The user-facing detail carried by a thrown APIError, or "" if none.
+   *  Reads the structured 'details' field directly so callers don't parse
+   *  the formatted '<code>: <details>' message string back apart. */
+  private _apiErrorDetails(err: unknown): string {
+    return err instanceof APIError && err.details.trim() ? err.details.trim() : "";
+  }
+
+  /** Build a create-flow error message. Falls back to a localised generic
+   *  when the error carries no actionable detail (a blank red bar is worse
+   *  than 'create failed'). When 'board' is set, the message names the
+   *  board the wizard tried to use so a template failure is attributable. */
   private _extractCreateErrorMessage(
     err: unknown,
     board: BoardCatalogEntry | null
   ): string {
-    let message: string;
-    if (err instanceof APIError && err.details.trim()) {
-      message = err.details.trim();
-    } else {
-      message = this._localize("wizard.create_general_error");
-    }
+    const message =
+      this._apiErrorDetails(err) || this._localize("wizard.create_general_error");
     if (board) {
       return this._localize("wizard.create_with_board_error", {
         board: board.name,
