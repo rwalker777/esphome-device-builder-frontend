@@ -12,6 +12,7 @@ vi.mock("@home-assistant/webawesome/dist/components/dialog/dialog.js", () => ({}
 vi.mock("@home-assistant/webawesome/dist/components/icon/icon.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-board.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-empty-config.js", () => ({}));
+vi.mock("../../../src/components/wizard/wizard-step-import-partial.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-method.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-overwrite-device.js", () => ({}));
 vi.mock("../../../src/components/wizard/wizard-step-resolve-conflicts.js", () => ({}));
@@ -350,11 +351,14 @@ describe("create-config-dialog bundle import", () => {
     await el.updateComplete;
 
     expect(step(el)).toBe("import-partial");
-    const kept = [...el.shadowRoot!.querySelectorAll(".import-partial ul.kept li")].map(
-      (li) => li.textContent
+    // Assert the observable output: the kept list the dialog hands to the
+    // rendered partial-import step, not the controller's private field.
+    const partialStep = el.shadowRoot!.querySelector(
+      "esphome-wizard-step-import-partial"
     );
-    expect(kept).toEqual(["device.yaml", "common/wifi.yaml"]);
-    expect(el.shadowRoot!.querySelector(".btn-open")).not.toBeNull();
+    expect(partialStep).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((partialStep as any).kept).toEqual(["device.yaml", "common/wifi.yaml"]);
   });
 });
 
