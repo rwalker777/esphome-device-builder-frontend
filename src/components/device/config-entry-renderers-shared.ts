@@ -23,6 +23,7 @@ import {
   recommendedSecretKeys,
 } from "../../util/secret-eligibility.js";
 import { configEntryFormStyles } from "./config-entry-form.styles.js";
+import { filterRenderable, renderFilterOptions } from "./config-entry-render-filter.js";
 import { fieldHighlightStyles } from "./field-highlight.styles.js";
 import type { PasswordInputValueChange } from "./password-input.js";
 // Type-only — the `<esphome-secret-picker>` element is registered by the
@@ -119,6 +120,13 @@ export interface RenderCtx {
    *  checkboxes per external provider; absent provider / native pin → all flags. */
   pinRegistryModes?: Record<string, string[]>;
   requiredOnly: boolean;
+  /** Whether the section's advanced fields are shown. Read by
+   *  ``renderChildEntries({ includeAdvanced })`` so an exclusive-group's
+   *  chosen member can reveal all its fields regardless of the toggle. */
+  showAdvanced: boolean;
+  /** Top-level component keys present in the YAML — for the
+   *  ``depends_on_component`` visibility predicate when filtering directly. */
+  presentComponents: Set<string>;
   nestedOpenSections: Set<string>;
   getAt: (path: string[]) => unknown;
   errorAt: (path: string[]) => ValidationError | null;
@@ -456,4 +464,24 @@ function renderSuggestionSelect(
       ${renderFieldError(path, ctx)}
     </div>
   `;
+}
+
+// Shared child rendering for the nested renderer and the exclusive-group
+// dropdown. ``includeAdvanced`` forces advanced children visible — a picked
+// exclusive member's fields must all show, as it has no per-member toggle.
+export function renderChildEntries(
+  entry: ConfigEntry,
+  path: string[],
+  ctx: RenderCtx,
+  opts: { includeAdvanced?: boolean } = {}
+) {
+  const values = ctx.scopeValues(path);
+  const children = opts.includeAdvanced
+    ? filterRenderable(
+        entry.config_entries ?? [],
+        values,
+        renderFilterOptions(ctx, { showAdvanced: true })
+      )
+    : ctx.filterRenderable(entry.config_entries ?? [], values);
+  return children.map((child) => ctx.renderEntry(child, [...path, child.key]));
 }

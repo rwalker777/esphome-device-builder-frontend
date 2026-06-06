@@ -40,7 +40,11 @@ import {
   subscribePinRegistryModes,
 } from "../../util/pin-registry-modes-cache.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
-import { _isStructuralType, filterRenderable } from "./config-entry-render-filter.js";
+import {
+  _isStructuralType,
+  filterRenderable,
+  renderFilterOptions,
+} from "./config-entry-render-filter.js";
 import { fieldKeyAttr, parseFieldKey } from "./config-entry-renderers-shared.js";
 import { FieldFocusController } from "./field-focus-controller.js";
 import { FieldScrollController } from "./field-scroll-controller.js";
@@ -54,7 +58,9 @@ import "../mdi-icon-picker.js";
 import {
   fieldRendererStyles,
   labelFor,
+  orderExclusiveGroups,
   renderBooleanField,
+  renderExclusiveGroupField,
   renderFloatWithUnitField,
   renderIconField,
   renderIdReferenceField,
@@ -236,23 +242,26 @@ export class ESPHomeConfigEntryForm extends LitElement {
   private _filterRenderable = (
     entries: ConfigEntry[],
     values: Record<string, unknown>
-  ): ConfigEntry[] =>
-    filterRenderable(entries, values, {
-      requiredOnly: this.requiredOnly,
-      showAdvanced: this.showAdvanced,
-      presentComponents: this.presentComponents,
-      targetPlatform: this.board?.esphome.platform ?? null,
-    });
+  ): ConfigEntry[] => filterRenderable(entries, values, renderFilterOptions(this));
 
   protected render() {
     const ctx = this._buildCtx();
-    const visible = this._filterRenderable(this.entries, this.values);
+    // Each exclusive_group renders as one always-shown dropdown at its
+    // first member's slot; other entries keep the advanced/visibility
+    // filter (the Set preserves order while dropping filtered-out ones).
+    const ordered = orderExclusiveGroups(this.entries);
+    const nonExclusive = this.entries.filter((entry) => !entry.exclusive_group);
+    const visible = new Set(this._filterRenderable(nonExclusive, this.values));
     // An empty key means "this entry IS the whole values dict" —
     // used by top-level user-keyed sections (substitutions:) where
     // the component itself is the map. Pass ``[]`` so the entry's
     // renderer sees the values dict directly via ``ctx.getAt([])``.
-    return html`${visible.map((entry) =>
-      this._renderEntry(entry, entry.key ? [entry.key] : [], ctx)
+    return html`${ordered.map((item) =>
+      Array.isArray(item)
+        ? renderExclusiveGroupField(item, ctx)
+        : visible.has(item)
+          ? this._renderEntry(item, item.key ? [item.key] : [], ctx)
+          : nothing
     )}`;
   }
 
@@ -596,6 +605,8 @@ export class ESPHomeConfigEntryForm extends LitElement {
       board: this.board,
       pinRegistryModes: getCachedPinRegistryModes(),
       requiredOnly: this.requiredOnly,
+      showAdvanced: this.showAdvanced,
+      presentComponents: this.presentComponents,
       nestedOpenSections: this._nestedOpenSections,
       getAt: (path) => getIn(this.values, path),
       errorAt: (path) => this.errors.get(path.join(".")) ?? null,
