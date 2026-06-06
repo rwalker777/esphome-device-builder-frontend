@@ -273,10 +273,16 @@ export interface AvailableScriptParameter {
 }
 
 export interface AvailableComponentInstance {
-  /** Catalog component id (``switch.gpio``, ``light.binary``). */
+  /** Catalog component id (``switch.gpio``, ``light.binary``). A
+   *  sub-entity carries the bare sub-domain (``sensor``) instead. */
   component_id: string;
   /** The configured ``id:`` value from YAML. */
   id: string;
   /** The configured ``name:`` value, if any (purely for display). */
   name?: string;
+  /** True for a multi-entity platform container; its sub-entities carry the
+   *  triggers, so the picker shows it as a non-selectable header. */
+  is_entity_container?: boolean;
+  /** A sub-entity's owning container id, for grouping it under that container. */
+  parent_id?: string;
 }

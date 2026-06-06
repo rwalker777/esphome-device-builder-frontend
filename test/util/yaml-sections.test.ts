@@ -460,6 +460,126 @@ describe("parseYamlAutomations", () => {
     expect(result[1].displayLabel).toBe("Light → on_turn_off");
   });
 
+  it("scopes a sub-entity handler to the sub-entity id with its parent", () => {
+    const yaml = `sensor:
+  - platform: aht10
+    id: aht20
+    temperature:
+      name: "Kit Temperature"
+      id: aht20_temperature
+      on_value:
+        then:
+          - light.toggle: led
+    humidity:
+      id: aht20_humidity
+`;
+    const items = parseYamlAutomations(yaml).filter((s) =>
+      s.key.startsWith("automation:component_on:")
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].key).toBe("automation:component_on:aht20_temperature:on_value");
+    expect(items[0].id).toBe("aht20_temperature");
+    expect(items[0].name).toBe("Kit Temperature");
+    expect(items[0].parentComponentId).toBe("aht20");
+    expect(items[0].parentKey).toBe("sensor");
+  });
+
+  it("scopes a handler on each of two sibling sub-entities to its own block", () => {
+    // The real AHT20 case: each reading carries its own handler; each must
+    // resolve to its own sub-block (not the first one), and the id-only
+    // humidity leaves name undefined.
+    const yaml = `sensor:
+  - platform: aht10
+    id: aht20
+    temperature:
+      name: "Kit Temperature"
+      id: aht20_temperature
+      on_value:
+        - logger.log: t
+    humidity:
+      id: aht20_humidity
+      on_value_range:
+        - logger.log: h
+`;
+    const items = parseYamlAutomations(yaml).filter((s) =>
+      s.key.startsWith("automation:component_on:")
+    );
+    expect(items.map((s) => s.key)).toEqual([
+      "automation:component_on:aht20_temperature:on_value",
+      "automation:component_on:aht20_humidity:on_value_range",
+    ]);
+    expect(
+      items.every((s) => s.parentComponentId === "aht20" && s.parentKey === "sensor")
+    ).toBe(true);
+    expect(items[0].name).toBe("Kit Temperature");
+    expect(items[1].name).toBeUndefined();
+  });
+
+  it("ignores a nested id: in the handler body when scoping a sub-entity", () => {
+    // A globals.set action inside the handler carries its own id: at a deeper
+    // indent; it must not retarget the automation away from the sub-sensor.
+    const yaml = `sensor:
+  - platform: aht10
+    id: aht20
+    temperature:
+      id: aht20_temperature
+      on_value:
+        then:
+          - globals.set:
+              id: some_global
+              value: "1"
+`;
+    const items = parseYamlAutomations(yaml).filter((s) =>
+      s.key.startsWith("automation:component_on:")
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("aht20_temperature");
+    expect(items[0].key).toBe("automation:component_on:aht20_temperature:on_value");
+  });
+
+  it("ignores zero-depth list fields when scoping a sub-entity", () => {
+    // A zero-depth ``filters:`` list (``filters:\n- ...``, dashes at the field
+    // indent) and a zero-depth ``then:`` must not be read as the id/name.
+    const yaml = `sensor:
+  - platform: aht10
+    id: aht20
+    temperature:
+      id: aht20_temperature
+      filters:
+      - offset: 1.0
+      on_value:
+        then:
+        - globals.set:
+            id: some_global
+`;
+    const items = parseYamlAutomations(yaml).filter((s) =>
+      s.key.startsWith("automation:component_on:")
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("aht20_temperature");
+  });
+
+  it("leaves a deeper non-sub-entity on_* unscoped", () => {
+    // An on_* nested inside an action body (not an ided sub-block) must not
+    // be mis-scoped to a sub-entity.
+    const yaml = `sensor:
+  - platform: adc
+    id: a
+    pin: GPIO1
+    on_value:
+      then:
+        - if:
+            then:
+              - logger.log: x
+`;
+    const items = parseYamlAutomations(yaml).filter((s) =>
+      s.key.startsWith("automation:component_on:")
+    );
+    // Only the direct on_value scopes to the adc instance; no spurious extra.
+    expect(items.map((s) => s.key)).toEqual(["automation:component_on:a:on_value"]);
+    expect(items[0].parentComponentId).toBeUndefined();
+  });
+
   it("recognises device-level on_* handlers under esphome:", () => {
     const yaml = `esphome:
   on_boot:

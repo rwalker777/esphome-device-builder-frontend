@@ -39,6 +39,12 @@ import { localizeContext } from "../../../context/index.js";
 import { inputStyles } from "../../../styles/inputs.js";
 import { espHomeStyles } from "../../../styles/shared.js";
 import { automationEditorStyles } from "./automation-editor.styles.js";
+import {
+  firstSelectableTarget,
+  instanceContext,
+  instanceName,
+  selectableTargets,
+} from "./component-targets.js";
 
 import "@home-assistant/webawesome/dist/components/option/option.js";
 import "@home-assistant/webawesome/dist/components/select/select.js";
@@ -159,7 +165,10 @@ export class ESPHomeAutomationTargetPicker extends LitElement {
     if (kind === "component_on") {
       const selectedId =
         this.value?.kind === "component_on" ? this.value.component_id : "";
-      if (this.devices.length === 0) {
+      // A multi-entity container isn't a valid trigger target — its
+      // sub-entities are (offered as their own instances).
+      const targets = selectableTargets(this.devices);
+      if (targets.length === 0) {
         return html`<p class="ae-empty" role="status">
           ${this._localize("device.automation_target_no_components")}
         </p>`;
@@ -175,11 +184,13 @@ export class ESPHomeAutomationTargetPicker extends LitElement {
           @change=${(e: Event) =>
             this._onComponentChange((e.target as HTMLSelectElement).value)}
         >
-          ${this.devices.map(
+          ${targets.map(
             (d) =>
               html`<wa-option value=${d.id} ?selected=${d.id === selectedId}
-                >${d.name ?? d.id}
-                <span class="ae-muted">(${d.component_id})</span></wa-option
+                >${instanceName(d)}
+                <span class="ae-muted"
+                  >(${instanceContext(d, this.devices)})</span
+                ></wa-option
               >`
           )}
         </wa-select>
@@ -256,7 +267,7 @@ export class ESPHomeAutomationTargetPicker extends LitElement {
           ${lights.map(
             (d) =>
               html`<wa-option value=${d.id} ?selected=${d.id === selectedId}
-                >${d.name ?? d.id}</wa-option
+                >${instanceName(d)}</wa-option
               >`
           )}
         </wa-select>
@@ -273,14 +284,10 @@ export class ESPHomeAutomationTargetPicker extends LitElement {
           return { kind, trigger: "on_boot" };
         case "interval":
           return { kind, index: 0 };
-        case "component_on":
-          return this.devices.length
-            ? {
-                kind,
-                component_id: this.devices[0].id,
-                trigger: "",
-              }
-            : null;
+        case "component_on": {
+          const target = firstSelectableTarget(this.devices);
+          return target ? { kind, component_id: target.id, trigger: "" } : null;
+        }
         case "script":
           // Even when no scripts are declared yet, the picker still
           // supports a freshly-typed id in add-mode — so emit a

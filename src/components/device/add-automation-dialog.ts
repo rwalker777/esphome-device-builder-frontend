@@ -28,6 +28,7 @@ import type {
   AutomationTree,
   AutomationTrigger,
   AvailableAutomations,
+  AvailableComponentInstance,
   YamlDiff,
 } from "../../api/types/automations.js";
 import type { BoardCatalogEntry } from "../../api/types/boards.js";
@@ -38,6 +39,11 @@ import { espHomeStyles } from "../../styles/shared.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { parseYamlAutomations } from "../../util/yaml-sections.js";
 import { addAutomationDialogStyles } from "./add-automation-dialog.styles.js";
+import {
+  firstSelectableTarget,
+  scopeToContainer,
+  triggersForComponent,
+} from "./automation-editor/component-targets.js";
 import { applyYamlDiff, sectionKeyFromLocation } from "./automation-editor/serialise.js";
 
 /** Kinds the wizard can produce. Mirrors a subset of
@@ -52,6 +58,7 @@ import "@home-assistant/webawesome/dist/components/option/option.js";
 import "@home-assistant/webawesome/dist/components/select/select.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 import "../base-dialog.js";
+import "./automation-editor/component-target-picker.js";
 
 type TargetKind = AddAutomationKind;
 
@@ -77,6 +84,10 @@ export class ESPHomeAddAutomationDialog extends LitElement {
 
   @state() private _kind: TargetKind = "device_on";
   @state() private _componentId = "";
+  /** The component id a per-section shortcut prefilled, kept so a
+   *  multi-entity container can scope its picker to its own sub-entities
+   *  even after the user picks one (which moves ``_componentId``). */
+  @state() private _prefillComponentId = "";
   @state() private _triggerId: string | null = null;
   /** True when ``open()`` was called with a prefill — the dialog
    *  was launched from the per-section "+ Add automation" shortcut
@@ -120,6 +131,7 @@ export class ESPHomeAddAutomationDialog extends LitElement {
     this._prefilled = prefill !== undefined;
     this._kind = prefill?.kind ?? "device_on";
     this._componentId = prefill?.kind === "component_on" ? prefill.componentId : "";
+    this._prefillComponentId = this._componentId;
     this._triggerId = null;
     this._intervalValue = "";
     this._intervalUnit = "s";
@@ -140,11 +152,29 @@ export class ESPHomeAddAutomationDialog extends LitElement {
     this._loading = true;
     try {
       this._available = await this._api.getAvailableAutomations(this.configuration);
+      // A per-section shortcut on a multi-entity container prefills the
+      // container id, which has no triggers of its own; land on its first
+      // sub-entity so the user sees a real target instead of an empty list.
+      const container = this._prefillContainer();
+      if (container) {
+        this._componentId =
+          this._available.devices.find((d) => d.parent_id === container.id)?.id ?? "";
+      }
     } catch (err) {
       this._error = err instanceof Error ? err.message : String(err);
     } finally {
       this._loading = false;
     }
+  }
+
+  /** The prefilled component when it's a multi-entity container (its
+   *  triggers live on its sub-entities), else undefined. */
+  private _prefillContainer(): AvailableComponentInstance | undefined {
+    if (!this._prefilled || this._kind !== "component_on" || !this._prefillComponentId) {
+      return undefined;
+    }
+    const d = this._available?.devices.find((x) => x.id === this._prefillComponentId);
+    return d?.is_entity_container ? d : undefined;
   }
 
   protected render() {
@@ -170,14 +200,17 @@ export class ESPHomeAddAutomationDialog extends LitElement {
 
   private _renderForm() {
     const filteredTriggers = this._filteredTriggers();
-    const componentLocked = this._kind !== "component_on";
     const triggerLocked = this._kind === "interval";
     // When prefilled, the shortcut already chose the kind (and, for
     // component_on, the component instance) — hide those rows so the
     // dialog reads as "pick a trigger" only. The remaining trigger
     // picker already filters by kind + componentId.
     const showKindRow = !this._prefilled;
-    const showComponentRow = this._kind === "component_on" && !this._prefilled;
+    // A container prefill still needs the picker so the user can choose
+    // which sub-entity the trigger attaches to (scoped to that container).
+    const prefillContainer = this._prefillContainer();
+    const showComponentRow =
+      this._kind === "component_on" && (!this._prefilled || !!prefillContainer);
     return html`
       <p class="intro">
         ${renderMarkdown(this._localize("device.automation_header_description"))}
@@ -206,7 +239,7 @@ export class ESPHomeAddAutomationDialog extends LitElement {
             </wa-select>
           </div>`
         : nothing}
-      ${showComponentRow ? this._renderComponentRow(componentLocked) : nothing}
+      ${showComponentRow ? this._renderComponentRow(prefillContainer) : nothing}
       ${this._kind === "interval" ? this._renderIntervalRow() : nothing}
       ${!triggerLocked ? this._renderTriggerRow(filteredTriggers) : nothing}
       ${this._error ? html`<p class="error" role="alert">${this._error}</p>` : nothing}
@@ -225,32 +258,17 @@ export class ESPHomeAddAutomationDialog extends LitElement {
     `;
   }
 
-  private _renderComponentRow(locked: boolean) {
-    const devices = this._available?.devices ?? [];
-    if (devices.length === 0) {
-      return html`<p class="error">
-        ${this._localize("device.automation_target_no_components")}
-      </p>`;
-    }
-    return html`<div class="field">
-      <label class="field-label" id="component-label">
-        ${this._localize("device.automation_wizard_pick_component")}
-      </label>
-      <wa-select
-        aria-labelledby="component-label"
-        value=${this._componentId}
-        ?disabled=${this._saving || locked}
-        @change=${(e: Event) =>
-          this._onComponentChange((e.target as HTMLSelectElement).value)}
-      >
-        ${devices.map(
-          (d) =>
-            html`<wa-option value=${d.id} ?selected=${d.id === this._componentId}>
-              ${d.name ?? d.id} (${d.component_id})
-            </wa-option>`
-        )}
-      </wa-select>
-    </div>`;
+  private _renderComponentRow(container?: AvailableComponentInstance) {
+    // Scope the picker to one container's sub-entities when launched from
+    // that component's section; otherwise offer every configured instance.
+    const devices = scopeToContainer(this._available?.devices ?? [], container);
+    return html`<esphome-component-target-picker
+      .devices=${devices}
+      .value=${this._componentId}
+      ?disabled=${this._saving}
+      @component-change=${(e: CustomEvent<{ componentId: string }>) =>
+        this._onComponentChange(e.detail.componentId)}
+    ></esphome-component-target-picker>`;
   }
 
   /**
@@ -335,18 +353,12 @@ export class ESPHomeAddAutomationDialog extends LitElement {
       return all.filter((t) => t.is_device_level && !takenDeviceTriggers.has(t.id));
     }
     if (this._kind === "component_on") {
-      if (!this._componentId) return [];
       const device = this._available?.devices.find((d) => d.id === this._componentId);
-      if (!device) return [];
-      const [domain] = device.component_id.split(".");
       // A component's inline ``on_*:`` fires once, so hide triggers that
       // already have a handler here; repeatable ones stay offerable.
       const takenComponentTriggers = this._existingComponentTriggers(this._componentId);
-      return all.filter(
-        (t) =>
-          !t.is_device_level &&
-          (t.applies_to.includes(device.component_id) || t.applies_to.includes(domain)) &&
-          (!takenComponentTriggers.has(this._bareTrigger(t.id)) || t.repeatable)
+      return triggersForComponent(all, device).filter(
+        (t) => !takenComponentTriggers.has(this._bareTrigger(t.id)) || t.repeatable
       );
     }
     return [];
@@ -393,7 +405,9 @@ export class ESPHomeAddAutomationDialog extends LitElement {
     this._triggerId = null;
     if (k === "component_on") {
       const devices = this._available?.devices ?? [];
-      this._componentId = devices[0]?.id ?? "";
+      // A container isn't selectable (entity triggers go on its
+      // sub-entities); default to the first real target.
+      this._componentId = firstSelectableTarget(devices)?.id ?? "";
     } else {
       this._componentId = "";
     }

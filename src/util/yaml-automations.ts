@@ -5,11 +5,14 @@
  * unaffected; import from there or from here directly.
  */
 
-import { endsBlockAtIndent } from "./yaml-section-lexer.js";
+import { endsBlockAtIndent, isBlankOrCommentLine } from "./yaml-section-lexer.js";
 import {
   instanceComponentId,
+  lineIndent,
   listItemChildIndent,
   parseYamlTopLevelSections,
+  RE_LIST_ITEM,
+  readInstanceScalar,
   smallestContainingSection,
   type YamlSection,
 } from "./yaml-sections-core.js";
@@ -22,6 +25,10 @@ import {
  * would surface a spurious row here until backend parse corrects it.
  */
 const _COMPONENT_ACTION_FIELD_RE = /^(\s+)([a-z0-9_]+_action):/;
+/** An inline ``on_*:`` trigger handler: group 1 the indent, group 2 the key. */
+const _ON_HANDLER_RE = /^(\s+)(on_[a-zA-Z_]+):/;
+/** A bare mapping-key line (``temperature:``) — key, no value, optional comment. */
+const _BARE_MAPPING_KEY_RE = /^ *[A-Za-z_][\w.]*:\s*(#.*)?$/;
 
 /**
  * Synchronous fallback parser for automation sections. The navigator
@@ -57,7 +64,7 @@ export function parseYamlAutomations(yaml: string): YamlSection[] {
   const automations: YamlSection[] = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^(\s+)(on_[a-zA-Z_]+):/);
+    const match = lines[i].match(_ON_HANDLER_RE);
     if (!match) continue;
 
     const indent = match[1].length;
@@ -85,21 +92,18 @@ export function parseYamlAutomations(yaml: string): YamlSection[] {
       continue;
     }
 
-    // Only a direct ``on_*`` child scopes to the host; a deeper handler
-    // (``sensor[i].temperature.on_value``) isn't addressable → ``unscoped``.
-    let componentId: string | null = null;
-    if (host && indent === listItemChildIndent(lines[host.fromLine - 1] ?? "")) {
-      componentId = instanceComponentId(sections, host);
-    }
-    if (host && componentId) {
-      const labelHead = host.name || componentId;
+    const scope = host ? _resolveHandlerScope(lines, sections, host, i, indent) : null;
+    if (host && scope) {
+      const { componentId, displayName, parentComponentId } = scope;
+      const labelHead = displayName || componentId;
       const base = {
         id: componentId,
-        name: host.name ?? undefined,
+        name: displayName,
         // Domain (``key`` for a flat singleton) — the catalog is keyed
         // ``<domain>.<event>``, so this resolves the trigger name.
         parentKey: host.parentKey ?? host.key,
         eventKey: eventName,
+        ...(parentComponentId !== undefined ? { parentComponentId } : {}),
       };
       // List-shaped trigger (``time.on_time``): one row per cron entry,
       // keyed with its index so each matches the backend's per-entry
@@ -157,8 +161,9 @@ export function parseYamlAutomations(yaml: string): YamlSection[] {
     if (field.startsWith("on_")) continue;
     const fromLine = i + 1;
     const host = smallestContainingSection(sections, fromLine);
-    if (!host || indent !== listItemChildIndent(lines[host.fromLine - 1] ?? "")) continue;
-    const componentId = instanceComponentId(sections, host);
+    const scope = host && _resolveHandlerScope(lines, sections, host, i, indent, false);
+    if (!host || !scope) continue;
+    const componentId = scope.componentId;
     if (!componentId) continue;
     const labelHead = host.name || componentId;
     automations.push({
@@ -245,6 +250,76 @@ export function parseYamlAutomations(yaml: string): YamlSection[] {
   }
 
   return automations;
+}
+
+/** Resolve a handler at ``indent`` to its target instance: the host for a
+ *  direct child, or (when ``allowSubEntity``) the host's ided sub-entity for a
+ *  deeper handler. ``null`` when no addressable target. The ``*_action`` field
+ *  pass passes ``false`` — those fields are direct-child-only. */
+function _resolveHandlerScope(
+  lines: string[],
+  sections: YamlSection[],
+  host: YamlSection,
+  handlerIdx: number,
+  indent: number,
+  allowSubEntity = true
+): { componentId: string; displayName?: string; parentComponentId?: string } | null {
+  const childIndent = listItemChildIndent(lines[host.fromLine - 1] ?? "");
+  if (indent === childIndent) {
+    return {
+      componentId: instanceComponentId(sections, host),
+      displayName: host.name ?? undefined,
+    };
+  }
+  if (allowSubEntity && indent > childIndent) {
+    const sub = _subEntity(lines, handlerIdx, childIndent);
+    if (sub) {
+      return {
+        componentId: sub.id,
+        displayName: sub.name,
+        parentComponentId: instanceComponentId(sections, host),
+      };
+    }
+  }
+  return null;
+}
+
+/** The ided sub-entity block (``temperature:`` / ``humidity:``) enclosing the
+ *  handler at ``handlerIdx``, or ``null`` when it isn't inside one. */
+function _subEntity(
+  lines: string[],
+  handlerIdx: number,
+  childIndent: number
+): { id: string; name?: string } | null {
+  let headerIdx = -1;
+  for (let j = handlerIdx - 1; j >= 0; j--) {
+    if (isBlankOrCommentLine(lines[j])) continue;
+    const ind = lineIndent(lines[j]);
+    if (ind < childIndent) return null; // left the instance's children
+    if (ind === childIndent) {
+      // Must be a bare mapping key (``temperature:``), not a sibling scalar.
+      if (!_BARE_MAPPING_KEY_RE.test(lines[j])) return null;
+      headerIdx = j;
+      break;
+    }
+  }
+  if (headerIdx === -1) return null;
+  let id: string | null = null;
+  let name: string | undefined;
+  let subChildIndent = -1;
+  for (let k = headerIdx + 1; k < lines.length; k++) {
+    if (isBlankOrCommentLine(lines[k])) continue;
+    const ind = lineIndent(lines[k]);
+    if (ind <= childIndent) break; // end of the sub-block
+    if (subChildIndent === -1) subChildIndent = ind; // the block's own field level
+    // Only the block's direct mapping fields are its id/name. Deeper lines are
+    // the handler body, and a dash line at the field indent is a zero-depth
+    // list (``filters:\n- ...``) — neither is the sub-entity's own id.
+    if (ind !== subChildIndent || RE_LIST_ITEM.test(lines[k])) continue;
+    id = readInstanceScalar(lines[k], "id") ?? id;
+    name = readInstanceScalar(lines[k], "name") ?? name;
+  }
+  return id ? { id, name } : null;
 }
 
 /** Index of the first line past the block opened at ``startIdx`` (its key
@@ -407,8 +482,7 @@ function _readKeyOnLine(lines: string[], fromLine: number, key: string): string 
   for (let i = fromLine; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === "") continue;
-    const lineIndent = (line.match(/^(\s*)/) ?? ["", ""])[1].length;
-    if (lineIndent <= dashIndent) break;
+    if (lineIndent(line) <= dashIndent) break;
     const kv = line.match(siblingRe);
     if (kv) return kv[1];
   }

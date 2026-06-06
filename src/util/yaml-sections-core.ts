@@ -16,7 +16,7 @@ import { indentOf, RE_PAIR_LINE, stripComment } from "./yaml-line-walker.js";
 import { endsBlockAtIndent } from "./yaml-section-lexer.js";
 
 /** A YAML list-item line: leading indent, a dash, then a space or EOL. */
-const RE_LIST_ITEM = /^\s*-(\s|$)/;
+export const RE_LIST_ITEM = /^\s*-(\s|$)/;
 /** A field-path segment that addresses a list index (``["areas","0",…]``). */
 const RE_PATH_INDEX = /^\d+$/;
 
@@ -28,6 +28,12 @@ export interface YamlSection {
   id?: string; // "id:" value from a YAML list item
   platform?: string; // "platform:" value from a YAML list item
   parentKey?: string; // top-level key when this is an expanded list item
+  /**
+   * For an automation on a nested sub-entity (``aht20_temperature`` under
+   * ``sensor: - platform: aht10``), the owning platform component's id, so
+   * that component's section can list its sub-entities' automations.
+   */
+  parentComponentId?: string;
   /**
    * Human-readable label for the navigator. Set when ``key`` is a
    * stable machine identifier (e.g. an automation's
@@ -220,10 +226,11 @@ function _expandListItems(
     let name = "";
     let id = "";
     for (let i = keyIdx + 1; i <= endIdx; i++) {
-      const nameMatch = lines[i].match(/^\s{2}name:\s*["']?(.+?)["']?\s*$/);
-      if (nameMatch) name = nameMatch[1];
-      const idMatch = lines[i].match(/^\s{2}id:\s*["']?(\S+?)["']?\s*$/);
-      if (idMatch) id = idMatch[1];
+      // Only the block's own direct keys; deeper nested keys aren't the
+      // singleton's id/name.
+      if (lineIndent(lines[i]) !== ESPHOME_YAML_INDENT.length) continue;
+      name = readInstanceScalar(lines[i], "name") ?? name;
+      id = readInstanceScalar(lines[i], "id") ?? id;
     }
     return [
       {
@@ -252,16 +259,10 @@ function _expandListItems(
     const childIndent = listItemChildIndent(lines[itemStart]);
     for (let j = itemStart; j <= itemEnd; j++) {
       const line = lines[j];
-      if (j !== itemStart) {
-        const indent = line.match(/^ */)?.[0].length ?? 0;
-        if (indent !== childIndent) continue;
-      }
-      const nameMatch = line.match(/^\s+(?:-\s+)?name:\s*["']?(.+?)["']?\s*$/);
-      if (nameMatch) name = nameMatch[1];
-      const idMatch = line.match(/^\s+(?:-\s+)?id:\s*["']?(\S+?)["']?\s*$/);
-      if (idMatch) id = idMatch[1];
-      const platformMatch = line.match(/^\s+(?:-\s+)?platform:\s*["']?(\S+?)["']?\s*$/);
-      if (platformMatch) platform = platformMatch[1];
+      if (j !== itemStart && lineIndent(line) !== childIndent) continue;
+      name = readInstanceScalar(line, "name") ?? name;
+      id = readInstanceScalar(line, "id") ?? id;
+      platform = readInstanceScalar(line, "platform") ?? platform;
     }
 
     items.push({
@@ -328,8 +329,31 @@ export function instanceComponentId(sections: YamlSection[], match: YamlSection)
 export function listItemChildIndent(dashLine: string): number {
   const inline = dashLine.match(/^\s*-\s+(?=\S)/)?.[0].length;
   if (inline !== undefined) return inline;
-  const dashIndent = dashLine.match(/^ */)?.[0].length ?? 0;
-  return dashIndent + ESPHOME_YAML_INDENT.length;
+  return lineIndent(dashLine) + ESPHOME_YAML_INDENT.length;
+}
+
+/** Leading-space count of *line* (its indentation column). */
+export function lineIndent(line: string): number {
+  return line.match(/^ */)?.[0].length ?? 0;
+}
+
+const _INSTANCE_SCALAR_RE = new Map<string, RegExp>();
+
+/**
+ * Value of a ``<key>: value`` line (surrounding quotes peeled), or ``null``.
+ *
+ * Allows an optional leading ``- `` list dash; ``id`` / ``platform`` take a
+ * bare token, other keys (``name``) the rest of the line. Callers gate the
+ * line's indent — this only peels the key + value.
+ */
+export function readInstanceScalar(line: string, key: string): string | null {
+  let re = _INSTANCE_SCALAR_RE.get(key);
+  if (re === undefined) {
+    const value = key === "id" || key === "platform" ? "(\\S+?)" : "(.+?)";
+    re = new RegExp(`^\\s*(?:-\\s+)?${key}:\\s*["']?${value}["']?\\s*$`);
+    _INSTANCE_SCALAR_RE.set(key, re);
+  }
+  return line.match(re)?.[1] ?? null;
 }
 
 /**

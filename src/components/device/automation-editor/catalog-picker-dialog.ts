@@ -49,6 +49,12 @@ import { inputStyles } from "../../../styles/inputs.js";
 import { espHomeStyles } from "../../../styles/shared.js";
 import { renderMarkdown } from "../../../util/markdown.js";
 import { registerMdiIcons } from "../../../util/register-icons.js";
+import {
+  componentDomain,
+  instanceContext,
+  instanceName,
+  selectableTargets,
+} from "./component-targets.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "../../base-dialog.js";
@@ -409,8 +415,10 @@ export class ESPHomeCatalogPickerDialog extends LitElement {
         ${this._localize("device.automation_pick_no_targets")}
       </p>`;
     }
-    const sections = this.devices.map((device) => {
-      const [domain] = device.component_id.split(".");
+    // A multi-entity container isn't itself a referenceable entity — its
+    // sub-entities are surfaced as their own instances.
+    const sections = selectableTargets(this.devices).map((device) => {
+      const domain = componentDomain(device.component_id);
       const matching = items.filter((i) => {
         if (!("domain" in i)) return false;
         return i.domain === domain || i.domain === device.component_id;
@@ -426,8 +434,8 @@ export class ESPHomeCatalogPickerDialog extends LitElement {
     return html`${nonEmpty.map(
       ({ device, matching }) => html`
         <p class="picker-group-label">
-          ${device.name ?? device.id}
-          <span class="ae-muted">(${device.component_id})</span>
+          ${instanceName(device)}
+          <span class="ae-muted">(${instanceContext(device, this.devices)})</span>
         </p>
         ${matching.map((item) =>
           this._renderRow(item, () => this._pick(item.id, this._preFillFor(item, device)))
@@ -448,7 +456,7 @@ export class ESPHomeCatalogPickerDialog extends LitElement {
       if (item.domain === "core") continue;
       // Normalise to bare ``<domain>``: an item with
       // ``switch.template`` lives under the "switch" group.
-      const bare = item.domain.split(".")[0];
+      const bare = componentDomain(item.domain);
       const list = byDomain.get(bare) ?? [];
       list.push(item);
       byDomain.set(bare, list);
@@ -523,7 +531,7 @@ export class ESPHomeCatalogPickerDialog extends LitElement {
     item: CatalogItem,
     device: AvailableComponentInstance
   ): Record<string, unknown> | undefined {
-    const [domain] = device.component_id.split(".");
+    const domain = componentDomain(device.component_id);
     const idEntry = item.config_entries.find((e) => e.references_component === domain);
     if (!idEntry) return undefined;
     return { [idEntry.key]: device.id };
