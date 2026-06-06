@@ -78,12 +78,12 @@ export function makeRenderCtx(
   } = {}
 ): RenderCtx {
   return {
-    localize: ((k: string) => k) as never,
+    localize: (k: string) => k,
     disabled: false,
     yaml: "",
     fromLine: 0,
     sectionKey: "",
-    board: options.board ?? makeTestBoard(),
+    board: "board" in options ? (options.board ?? null) : makeTestBoard(),
     requiredOnly: false,
     showAdvanced: false,
     presentComponents: new Set<string>(),
@@ -109,8 +109,9 @@ export function makeRenderCtx(
     renderEntry: vi.fn(),
     getPendingUnit: () => undefined,
     setPendingUnit: vi.fn(),
-    getPendingNumeric: () => undefined,
-    setPendingNumeric: vi.fn(),
+    getEditingMagnitude: () => undefined,
+    setEditingMagnitude: vi.fn(),
+    clearEditingMagnitude: vi.fn(),
     // Stable per-fixture stash owner — tests that exercise the
     // templatable stash WeakMap (literal/lambda recovery) need a
     // single object identity across calls into the renderer. A
@@ -118,7 +119,7 @@ export function makeRenderCtx(
     // production form's "one stashOwner per host element" contract.
     stashOwner: {},
     ...(options.overrides ?? {}),
-  } as never;
+  };
 }
 
 /** Build a minimal ``ConfigEntry`` of *type* with sensible
