@@ -32,14 +32,20 @@ describe("recommendedSecretKeys", () => {
   });
 
   it("scopes per-device credentials to the hostname, double-underscore first", () => {
-    // `__` separator preferred; single-`_` kept for back-compat.
-    expect(recommendedSecretKeys("ota", "password", "kitchen", true)).toEqual([
+    // `__` separator preferred; single-`_` kept for back-compat. The OTA key is
+    // keyed by the `ota.esphome` sectionKey the picker passes (matching the
+    // security notice's generated `<host>__ota_password`).
+    expect(recommendedSecretKeys("ota.esphome", "password", "kitchen", true)).toEqual([
       "kitchen__ota_password",
       "kitchen_ota_password",
     ]);
     expect(recommendedSecretKeys("api", "key", "kitchen", true)).toEqual([
       "kitchen__encryption_key",
       "kitchen_encryption_key",
+    ]);
+    expect(recommendedSecretKeys("web_server", "password", "kitchen", true)).toEqual([
+      "kitchen__web_password",
+      "kitchen_web_password",
     ]);
   });
 
