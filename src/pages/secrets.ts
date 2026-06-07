@@ -22,7 +22,6 @@ import { registerMdiIcons } from "../util/register-icons.js";
 import { UnsavedGuard } from "../util/unsaved-guard.js";
 
 import "@home-assistant/webawesome/dist/components/button/button.js";
-import "@home-assistant/webawesome/dist/components/divider/divider.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 import "../components/secrets/secrets-structured-editor.js";
@@ -240,7 +239,7 @@ export class ESPHomePageSecrets extends LitElement {
         flex: 1;
         display: flex;
         flex-direction: column;
-        padding: var(--wa-space-l);
+        padding: var(--wa-space-l) var(--content-gutter);
         gap: var(--wa-space-m);
         overflow: hidden;
       }
@@ -432,6 +431,15 @@ export class ESPHomePageSecrets extends LitElement {
          in JS (matching the device editor), so no layout rules are
          duplicated here. */
       @media (max-width: 900px) {
+        .page {
+          padding-block: var(--wa-space-s);
+        }
+        .page-header {
+          flex-wrap: wrap;
+        }
+        .page-title {
+          flex-basis: 100%;
+        }
         .layout-toggle .split-btn {
           display: none;
         }
@@ -506,7 +514,6 @@ export class ESPHomePageSecrets extends LitElement {
             ${revealLabel}
           </button>
         </div>
-        <wa-divider></wa-divider>
         <div class="editor-card">
           ${this._loaded
             ? html`
