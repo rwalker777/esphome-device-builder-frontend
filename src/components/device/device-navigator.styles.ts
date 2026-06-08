@@ -159,11 +159,66 @@ export const deviceNavigatorStyles = css`
     flex-shrink: 0;
   }
 
+  .nav-subgroup-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    padding: var(--wa-space-2xs) var(--wa-space-m);
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+  }
+
+  .nav-subgroup-header:not(.nav-subgroup-header--static):hover .nav-subgroup-title {
+    color: var(--esphome-primary);
+  }
+
+  .nav-subgroup-header:focus-visible {
+    outline: none;
+    box-shadow: var(--esphome-focus-ring-tight);
+    border-radius: var(--wa-border-radius-s);
+  }
+
+  /* While filtering the subgroup can't collapse, so it isn't interactive. */
+  .nav-subgroup-header--static {
+    cursor: default;
+  }
+
+  .nav-subgroup-title {
+    font-size: var(--wa-font-size-2xs);
+    font-weight: var(--wa-font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--wa-color-text-quiet);
+  }
+
+  .nav-subgroup-count {
+    font-size: var(--wa-font-size-2xs);
+    color: var(--wa-color-text-quiet);
+    background: var(--wa-color-surface-raised);
+    border-radius: 999px;
+    padding: 0 var(--wa-space-xs);
+    line-height: 1.5;
+  }
+
+  .nav-subgroup-chevron {
+    margin-left: auto;
+    font-size: var(--wa-font-size-l);
+    color: var(--wa-color-text-quiet);
+    flex-shrink: 0;
+  }
+
   .nav-items {
     display: flex;
     flex-direction: column;
     gap: 1px;
     padding: var(--wa-space-2xs) var(--wa-space-s);
+  }
+
+  /* Rows nested under a domain subgroup get a slight extra indent. */
+  .nav-items--grouped {
+    padding-top: 0;
+    padding-left: var(--wa-space-m);
   }
 
   .nav-item {

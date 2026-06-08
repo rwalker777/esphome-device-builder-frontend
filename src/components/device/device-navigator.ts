@@ -35,11 +35,8 @@ import type { HighlightRange } from "../yaml-editor.js";
 import { CacheTickController } from "./cache-tick-controller.js";
 import { deviceNavigatorStyles } from "./device-navigator.styles.js";
 import { type NavigatorBuckets, deriveNavigatorBuckets } from "./navigator-buckets.js";
-import {
-  type LabelContext,
-  type NavRow,
-  resolveNavItemLabels,
-} from "./navigator-labels.js";
+import { groupRowsByDomain } from "./navigator-groups.js";
+import { type NavRow, resolveBucketLabels } from "./navigator-labels.js";
 import { type NavAction, renderNavSection } from "./navigator-render.js";
 import { navItemMatches } from "./navigator-search-match.js";
 
@@ -104,6 +101,10 @@ export class ESPHomeDeviceNavigator extends LitElement {
    *  edit, not per render. See {@link deriveNavigatorBuckets}. */
   private _deriveBuckets = memoizeOne(deriveNavigatorBuckets);
 
+  /** Memoised on the rows identity so the Components regroup is stable
+   *  across idle re-renders (selection/hover); collapse is render-time. */
+  private _groupComponents = memoizeOne(groupRowsByDomain);
+
   /** Resolve every row's labels, indexed [core, components, automations]
    *  to match the section order. Memoised on the parsed buckets plus the
    *  inputs labels depend on (catalog ticks, platform, device name,
@@ -117,28 +118,13 @@ export class ESPHomeDeviceNavigator extends LitElement {
       platform: string,
       deviceName: string,
       localize: LocalizeFunc
-    ): NavRow[][] => {
-      const ctx: LabelContext = {
+    ): NavRow[][] =>
+      resolveBucketLabels(buckets, {
         triggerCatalog: this._triggerCatalog,
         platform,
         deviceName,
         localize,
-      };
-      return [
-        buckets.core.map((item) => ({
-          item,
-          labels: resolveNavItemLabels(item, "core", ctx),
-        })),
-        buckets.components.map((item) => ({
-          item,
-          labels: resolveNavItemLabels(item, "component", ctx),
-        })),
-        buckets.automations.map((item) => ({
-          item,
-          labels: resolveNavItemLabels(item, "automation", ctx),
-        })),
-      ];
-    }
+      })
   );
 
   /** Optional board metadata; forwarded to the add-component dialog so
@@ -202,6 +188,10 @@ export class ESPHomeDeviceNavigator extends LitElement {
   /** Active navigator search query; empty string means "not filtering". */
   @state()
   private _query = "";
+
+  /** Domains collapsed in the grouped Components list. */
+  @state()
+  private _collapsedGroups = new Set<string>();
 
   static styles = [espHomeStyles, deviceNavigatorStyles];
 
@@ -421,14 +411,19 @@ export class ESPHomeDeviceNavigator extends LitElement {
             ? html`<p class="nav-empty" role="status">
                 ${this._localize("device.navigator_search_none")}
               </p>`
-            : sections.map(({ label, desc, icon, actions }, i) =>
-                renderNavSection({
+            : sections.map(({ label, desc, icon, category, actions }, i) => {
+                const rows = matches?.[i] ?? resolved[i];
+                return renderNavSection({
                   label,
                   desc,
                   icon,
                   actions,
-                  // Filtered rows from the pre-pass; else the full set.
-                  rows: matches?.[i] ?? resolved[i],
+                  rows,
+                  // Components group by domain; other sections stay flat.
+                  groups:
+                    category === "component" ? this._groupComponents(rows) : undefined,
+                  collapsedGroups: this._collapsedGroups,
+                  onToggleGroup: (key) => this._toggleGroup(key),
                   open: filtering ? true : this.openSections.has(i),
                   filtering,
                   selectedLine: this._selectedLine,
@@ -440,8 +435,8 @@ export class ESPHomeDeviceNavigator extends LitElement {
                     this._onItemHover(item.fromLine, item.fromLine, item.toLine),
                   onItemLeave: () => this._onItemLeave(),
                   onItemClick: (item) => this._onItemClick(item),
-                })
-              )}
+                });
+              })}
         </div>
       </section>
     `;
@@ -459,6 +454,13 @@ export class ESPHomeDeviceNavigator extends LitElement {
         composed: true,
       })
     );
+  }
+
+  /** Collapse/expand one domain subgroup (new Set so @state reacts). */
+  private _toggleGroup(key: string) {
+    const next = new Set(this._collapsedGroups);
+    if (!next.delete(key)) next.add(key);
+    this._collapsedGroups = next;
   }
 
   /** Clear the current section selection so the editor pane returns to
