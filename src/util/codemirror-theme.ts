@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 
 /**
- * VSCode-flavored CodeMirror themes for the YAML editor.
+ * VSCode-flavored CodeMirror themes, shared by the YAML and lambda editors.
  *
  * Dark mode mirrors VSCode "Dark+":
  *   keys light-blue, strings peach, comments green italic,
@@ -186,3 +186,11 @@ const lightBase = EditorView.theme(
 
 export const vscodeDark: Extension = [darkBase, syntaxHighlighting(darkHighlight)];
 export const vscodeLight: Extension = [lightBase, syntaxHighlighting(lightHighlight)];
+
+/** Stretch the editor to fill its host; shared by both CM editors. */
+export const editorHeightTheme = EditorView.theme({ "&": { height: "100%" } });
+
+/** Pick the VSCode-flavored theme for the current colour mode. */
+export function selectEditorTheme(darkMode: boolean): Extension {
+  return darkMode ? vscodeDark : vscodeLight;
+}
