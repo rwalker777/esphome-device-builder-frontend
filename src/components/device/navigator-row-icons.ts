@@ -45,6 +45,7 @@ import {
   mdiRadioTower,
   mdiRemote,
   mdiRestartAlert,
+  mdiScriptTextOutline,
   mdiSerialPort,
   mdiShapeOutline,
   mdiShieldHomeOutline,
@@ -109,6 +110,7 @@ const DOMAIN_ICON: Record<string, readonly [string, string]> = {
   time: ["clock-outline", mdiClockOutline],
   sntp: ["clock-outline", mdiClockOutline],
   interval: ["clock-outline", mdiClockOutline],
+  script: ["script-text-outline", mdiScriptTextOutline],
   uart: ["serial-port", mdiSerialPort],
   i2c: ["connection", mdiConnection],
   spi: ["connection", mdiConnection],
@@ -375,7 +377,9 @@ const FALLBACK: readonly [string, string] = ["shape-outline", mdiShapeOutline];
 
 registerMdiIcons(Object.fromEntries([...Object.values(DOMAIN_ICON), FALLBACK]));
 
-/** Registered mdi icon name for a row's domain; neutral shape if unmapped. */
+/** Registered mdi icon name for a row's domain; neutral shape if unmapped.
+ *  Automation rows pass their ``parentKey`` (the targeted component domain),
+ *  so the glyph matches that component (binary_sensor, switch, …). */
 export function iconForDomain(domain: string): string {
   return (DOMAIN_ICON[domain] ?? FALLBACK)[0];
 }

@@ -184,7 +184,10 @@ export const deviceNavigatorStyles = css`
     cursor: default;
   }
 
-  .nav-subgroup-icon {
+  /* Muted leading domain glyph — on a domain subgroup header and on an
+     ungrouped row (Core / Automations). Always visible. */
+  .nav-subgroup-icon,
+  .nav-item-icon {
     font-size: var(--wa-font-size-m);
     color: var(--wa-color-text-quiet);
     flex-shrink: 0;
@@ -218,7 +221,9 @@ export const deviceNavigatorStyles = css`
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: var(--wa-space-2xs) var(--wa-space-s);
+    /* Trim the left inset so rows hug the panel edge; the icon/text reclaim
+       the wasted gutter without crowding the right scrollbar. */
+    padding: var(--wa-space-2xs) var(--wa-space-s) var(--wa-space-2xs) var(--wa-space-2xs);
   }
 
   /* Rows nested under a domain subgroup get a slight extra indent. */
@@ -227,13 +232,22 @@ export const deviceNavigatorStyles = css`
     padding-left: var(--wa-space-m);
   }
 
+  /* A single-of-a-kind domain collapses to one flat row in place of its
+     subgroup header; align its glyph with the other subgroup-header glyphs by
+     backing out the nav-item's own left padding and its transparent selection
+     border (the header inset is the larger wa-space-m). */
+  .nav-items--single {
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: calc(var(--wa-space-xs) - var(--wa-border-width-l));
+  }
+
   .nav-item {
     padding: 0 var(--wa-space-xs);
     border-radius: var(--wa-border-radius-m);
-    border-left: 3px solid transparent;
+    border-left: var(--wa-border-width-l) solid transparent;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: var(--wa-space-2xs);
     cursor: pointer;
     user-select: none;
@@ -255,6 +269,7 @@ export const deviceNavigatorStyles = css`
   .nav-item-content {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
     min-width: 0;
     padding: var(--wa-space-2xs) 0;
   }
@@ -279,7 +294,8 @@ export const deviceNavigatorStyles = css`
     text-overflow: ellipsis;
   }
 
-  .nav-item wa-icon {
+  .nav-item-chevron {
+    margin-left: auto;
     font-size: var(--wa-font-size-l);
     color: var(--esphome-primary);
     flex-shrink: 0;
@@ -288,14 +304,14 @@ export const deviceNavigatorStyles = css`
   /* Declutter the chevron only where hover exists; on touch (no hover)
      it stays visible so the "this row navigates" cue isn't lost. */
   @media (hover: hover) {
-    .nav-item wa-icon {
+    .nav-item-chevron {
       opacity: 0;
       transition: opacity 0.1s;
     }
 
-    .nav-item:hover wa-icon,
-    .nav-item--hovered wa-icon,
-    .nav-item--selected wa-icon {
+    .nav-item:hover .nav-item-chevron,
+    .nav-item--hovered .nav-item-chevron,
+    .nav-item--selected .nav-item-chevron {
       opacity: 1;
     }
   }

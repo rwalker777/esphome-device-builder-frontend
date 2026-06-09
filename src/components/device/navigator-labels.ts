@@ -56,9 +56,10 @@ export function resolveNavItemLabels(
   const cached = getCachedComponent(raw, ctx.platform || undefined);
   if (cached?.name) primary = cached.name;
   if (category === "core") {
-    // Core infrastructure names carry a redundant " Component" suffix
-    // ("Native API Component", "Logger Component"); trim it for the nav.
-    primary = primary.replace(/ Component$/, "") || primary;
+    // Core infrastructure names carry a redundant suffix in the nav:
+    // " Component" ("Native API Component"), and esphome's catalog title
+    // is "ESPHome Core Configuration" — trim both so rows stay scannable.
+    primary = primary.replace(/ (Component|Configuration)$/, "") || primary;
   }
 
   // Prefer the backend-resolved node name for the esphome core section
@@ -134,32 +135,71 @@ function automationLabels(
       : undefined;
     return { primary, secondary };
   }
-  // Device-level (``esphome → on_boot``) — no instance to show on line 2;
-  // the trigger name already identifies the automation uniquely.
+  // Device-level (``esphome`` on_boot) — line 1 is the trigger; the row's
+  // chip glyph already says "esphome", so no domain prefix or line 2.
   if (item.parentKey === "esphome" && item.eventKey) {
-    const primary = ctx.triggerCatalog.resolveName(
-      "esphome",
-      item.eventKey,
-      `${prettyDomain("esphome")} → ${item.eventKey}`
+    const primary = eventOnly(
+      ctx.triggerCatalog.resolveName(
+        "esphome",
+        item.eventKey,
+        humanizeEvent(item.eventKey)
+      )
     );
     return { primary };
   }
-  // Component-bound (``Switch → On Turn On`` resolved from the catalog;
-  // "Warmtepomp" on line 2).
+  // Component-bound — line 1 leads with the trigger ("On Multi Click"), not
+  // the domain (the row's glyph carries that and would otherwise truncate the
+  // distinguishing event away); line 2 is the component instance.
   if (item.parentKey && item.eventKey) {
-    const fallback = `${prettyDomain(item.parentKey)} → ${item.eventKey}`;
-    const primary = ctx.triggerCatalog.resolveName(
-      item.parentKey,
-      item.eventKey,
-      fallback
+    const primary = eventOnly(
+      ctx.triggerCatalog.resolveName(
+        item.parentKey,
+        item.eventKey,
+        humanizeEvent(item.eventKey)
+      )
     );
-    const rawNamed = item.name || item.id;
-    const named = rawNamed ? resolveSubstitutions(rawNamed, ctx.substitutions) : rawNamed;
-    const secondary = named && named !== primary ? named : undefined;
-    return { primary, secondary };
+    return { primary, secondary: componentTarget(item, ctx, primary) };
+  }
+  // Component action-list field (``turn_on_action`` / ``set_action``) — lead
+  // with the action so the two switch.template actions (turn on vs turn off)
+  // are distinct; entity on line 2, mirroring the trigger rows.
+  if (item.parentKey && item.actionField) {
+    const primary = humanizeEvent(item.actionField.replace(/_action$/, ""));
+    return { primary, secondary: componentTarget(item, ctx, primary) };
   }
   // Unscoped / unrecognised — fall back to displayLabel.
   return { primary: item.displayLabel || raw };
+}
+
+/** Line-2 component target for a component-bound automation: the instance
+ *  name/id (``${var}`` expanded), else the domain; hidden when it would just
+ *  repeat line 1. */
+function componentTarget(
+  item: YamlSection,
+  ctx: LabelContext,
+  primary: string
+): string | undefined {
+  const rawNamed = item.name || item.id;
+  const target = rawNamed
+    ? resolveSubstitutions(rawNamed, ctx.substitutions)
+    : prettyDomain(item.parentKey ?? "");
+  return target !== primary ? target : undefined;
+}
+
+/** Title-case a trigger event key for the pre-catalog fallback
+ *  (``on_multi_click`` → ``On Multi Click``). */
+function humanizeEvent(eventKey: string): string {
+  return eventKey
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** Lead with the event: drop a ``Domain → `` prefix a catalog or legacy
+ *  fallback name may carry, since the row shows the domain via its glyph. */
+function eventOnly(name: string): string {
+  const i = name.lastIndexOf(" → ");
+  return i >= 0 ? name.slice(i + 3) : name;
 }
 
 /** Capitalize a YAML domain key for display (``binary_sensor`` →

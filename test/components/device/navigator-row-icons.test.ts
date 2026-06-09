@@ -9,6 +9,10 @@ vi.mock("@home-assistant/webawesome/dist/components/icon/library.js", () => ({
 import { iconForDomain } from "../../../src/components/device/navigator-row-icons.js";
 
 describe("iconForDomain", () => {
+  it("maps script to the script glyph (automation parentKey lookup)", () => {
+    expect(iconForDomain("script")).toBe("script-text-outline");
+  });
+
   it("maps known domains to their glyph", () => {
     expect(iconForDomain("sensor")).toBe("gauge");
     expect(iconForDomain("switch")).toBe("toggle-switch-outline");
