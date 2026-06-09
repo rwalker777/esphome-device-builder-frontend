@@ -11,6 +11,7 @@ import {
   visibleUnitOptions,
 } from "../../../util/float-with-unit.js";
 import { formatHexInt, parseHexInt } from "../../../util/hex-int.js";
+import { coerceIntFieldValue } from "../../../util/int-input.js";
 import { parseYamlBoolean, YamlRawValue } from "../../../util/yaml-serialize.js";
 import {
   effectiveDisabled,
@@ -59,6 +60,10 @@ export function renderNumberField(entry: ConfigEntry, path: string[], ctx: Rende
   if (entry.display_format === "hex") {
     return renderHexIntField(entry, path, ctx);
   }
+  if (entry.type === ConfigEntryType.INTEGER) {
+    return renderIntField(entry, path, ctx);
+  }
+  // FLOAT keeps the native number spinner — floats don't take 0x… literals.
   const value = String(raw ?? "");
   const invalid = ctx.errorAt(path) !== null;
   const min = entry.range ? String(entry.range[0]) : undefined;
@@ -75,12 +80,44 @@ export function renderNumberField(entry: ConfigEntry, path: string[], ctx: Rende
       ?disabled=${disabled}
       min=${min ?? ""}
       max=${max ?? ""}
-      step=${entry.type === ConfigEntryType.FLOAT ? "any" : "1"}
+      step="any"
       placeholder=${String(entry.default_value ?? "")}
       @input=${(e: Event) => {
         const raw = (e.target as HTMLInputElement).value;
         ctx.emitChange(path, raw === "" ? "" : Number(raw));
       }}
+    />`
+  );
+}
+
+// <input type="number"> rejects the 0x… literals cv.int_ accepts, so render
+// integers as text and commit through the shared ``coerceIntFieldValue``
+// (decimal → number, hex/other → verbatim string). The edit buffer keeps raw
+// keystrokes on screen while typing so the committed value's reformatting
+// (``0042`` → ``42``) doesn't fight the cursor; it clears on blur.
+function renderIntField(entry: ConfigEntry, path: string[], ctx: RenderCtx) {
+  const editingText = ctx.getEditingMagnitude(path);
+  const value = editingText ?? String(ctx.getAt(path) ?? "");
+  const invalid = ctx.errorAt(path) !== null;
+  const disabled = effectiveDisabled(entry, ctx);
+  return renderFieldShell(
+    entry,
+    path,
+    ctx,
+    html`<input
+      type="text"
+      autocomplete="off"
+      spellcheck="false"
+      class=${invalid ? "invalid" : ""}
+      .value=${value}
+      ?disabled=${disabled}
+      placeholder=${String(entry.default_value ?? "")}
+      @input=${(e: Event) => {
+        const raw = (e.target as HTMLInputElement).value;
+        ctx.setEditingMagnitude(path, raw);
+        ctx.emitChange(path, coerceIntFieldValue(raw));
+      }}
+      @blur=${() => ctx.clearEditingMagnitude(path)}
     />`
   );
 }
