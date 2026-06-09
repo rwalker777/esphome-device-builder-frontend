@@ -1542,12 +1542,19 @@ export class ESPHomeAPI {
    *
    * Unlike the static catalog commands, the result depends on YAML
    * contents — callers should re-fetch on each YAML change rather
-   * than caching across edits.
+   * than caching across edits. Pass ``yaml`` to scope off the unsaved
+   * draft so a wizard-added component's triggers surface pre-save.
    */
-  async getAvailableAutomations(configuration: string): Promise<AvailableAutomations> {
+  async getAvailableAutomations(
+    configuration: string,
+    yaml?: string
+  ): Promise<AvailableAutomations> {
     const raw = await this.sendCommand<AvailableAutomations>(
       "automations/get_available",
-      { configuration }
+      // Empty string is the uninitialized-draft sentinel (a load that
+      // races the page's YAML fetch); omit it so the backend falls back
+      // to disk rather than scoping off an empty document.
+      { configuration, ...(yaml ? { yaml } : {}) }
     );
     // Backend ships slim ``*Index`` shapes that drop ``config_entries``
     // entirely. Renderers (``automation-action-node``,
