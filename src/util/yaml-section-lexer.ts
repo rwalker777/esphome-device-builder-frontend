@@ -77,16 +77,38 @@ export const LIST_ITEM_START_RE = /^\s+-(\s|$)/;
  * conservative (they over-trigger raw mode, which is lossless),
  * but the anchor avoids the surprise of raw-mode kicking in on a
  * value the parser could otherwise round-trip.
+ *
+ * An optional YAML tag (`!lambda`, `!secret`) may sit between the
+ * colon and the `|`/`>` marker (`multiply: !lambda |-`); ESPHome's
+ * templatable fields emit that shape, so the tag has to count as a
+ * block-scalar header too.
  */
-export const BLOCK_SCALAR_RE = /^[^"']*:\s*[|>][-+]?\s*(?:#.*)?$/;
+export const BLOCK_SCALAR_RE = /^[^"']*:\s*(?:!\S+\s+)?[|>][-+]?\s*(?:#.*)?$/;
 
 /**
- * Match an inline block-scalar marker — the part AFTER the colon
- * on a `key: |-` line, captured by the parser as `raw`. Used to
- * detect the direct-block-scalar shape (a key whose value is a
- * block scalar header rather than a list of items).
+ * Match the part AFTER the colon on a `key: |-` line (the `raw` value
+ * the parser captures) as a block-scalar header: an optional YAML tag,
+ * the `|`/`>` marker, and an optional trailing comment. Capture group 1
+ * is the tag (or undefined), group 2 the marker.
+ *
+ * The trailing `\s*(?:#.*)?` mirrors `BLOCK_SCALAR_RE` so a header
+ * comment (`!lambda |- # note`) still reads as a block scalar rather
+ * than falling through to inline-scalar parsing. An undefined tag is
+ * the plain `|-`/`>` case; a `!lambda` tag is what the reader turns
+ * into an editable lambda instead of the literal string `"!lambda |-"`.
  */
-export const BLOCK_SCALAR_INLINE_RE = /^[|>][-+]?$/;
+const BLOCK_SCALAR_INLINE_RE = /^(?:(!\S+)\s+)?([|>][-+]?)\s*(?:#.*)?$/;
+
+/** A parsed block-scalar header: its optional tag and its `|`/`>` marker. */
+export interface BlockScalarHeader {
+  tag: string | undefined;
+  marker: string;
+}
+
+export const parseBlockScalarHeader = (raw: string): BlockScalarHeader | null => {
+  const m = raw.match(BLOCK_SCALAR_INLINE_RE);
+  return m ? { tag: m[1], marker: m[2] } : null;
+};
 
 /**
  * Match a bare-dash list item (``    -`` followed by EOL or only
