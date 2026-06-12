@@ -16,6 +16,7 @@ import {
   localizeContext,
   type RemoteBuildJobState,
 } from "../context/index.js";
+import { dialogActionButtonStyles } from "../styles/dialog-action-buttons.js";
 import { inputStyles } from "../styles/inputs.js";
 import { jobStatusPillStyles } from "../styles/job-status-pill.js";
 import { espHomeStyles } from "../styles/shared.js";
@@ -359,7 +360,7 @@ export class ESPHomeRemoteBuildJobDialog extends LitElement {
       return html`
         <p class="empty">${this._localize("settings.remote_build_submit_no_devices")}</p>
         <div class="actions">
-          <button class="btn-secondary" type="button" @click=${this._close}>
+          <button class="btn btn--cancel" type="button" @click=${this._close}>
             ${this._localize("layout.close")}
           </button>
         </div>
@@ -401,11 +402,11 @@ export class ESPHomeRemoteBuildJobDialog extends LitElement {
       </div>
       ${renderErrorBanner(this._submitErrorMessage)}
       <div class="actions">
-        <button class="btn-secondary" type="button" @click=${this._close}>
+        <button class="btn btn--cancel" type="button" @click=${this._close}>
           ${this._localize("layout.close")}
         </button>
         <button
-          class="btn-primary"
+          class="btn btn--primary"
           type="button"
           ?disabled=${!this._configuration}
           @click=${this._onSubmit}
@@ -442,7 +443,7 @@ export class ESPHomeRemoteBuildJobDialog extends LitElement {
       return html`
         <p class="empty">${this._localize("settings.remote_build_list_empty")}</p>
         <div class="actions">
-          <button class="btn-secondary" type="button" @click=${this._close}>
+          <button class="btn btn--cancel" type="button" @click=${this._close}>
             ${this._localize("layout.close")}
           </button>
         </div>
@@ -453,7 +454,7 @@ export class ESPHomeRemoteBuildJobDialog extends LitElement {
         ${jobs.map((job) => this._renderJobRow(job))}
       </ul>
       <div class="actions">
-        <button class="btn-secondary" type="button" @click=${this._close}>
+        <button class="btn btn--cancel" type="button" @click=${this._close}>
           ${this._localize("layout.close")}
         </button>
       </div>
@@ -502,14 +503,14 @@ export class ESPHomeRemoteBuildJobDialog extends LitElement {
                 <div class="row-actions">
                   ${terminal
                     ? html`<button
-                        class="btn-secondary"
+                        class="btn btn--cancel"
                         type="button"
                         @click=${() => this._onDismissRow(job.job_id)}
                       >
                         ${this._localize("settings.remote_build_dismiss_row")}
                       </button>`
                     : html`<button
-                        class="btn-danger"
+                        class="btn btn--danger"
                         type="button"
                         ?disabled=${row.cancelInFlight || row.cancelRequested}
                         @click=${() => this._onCancel(job)}
@@ -576,6 +577,7 @@ export class ESPHomeRemoteBuildJobDialog extends LitElement {
   static styles = [
     espHomeStyles,
     inputStyles,
+    dialogActionButtonStyles,
     jobStatusPillStyles,
     remoteBuildJobDialogStyles,
   ];
