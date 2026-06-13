@@ -32,6 +32,11 @@ import {
   hasSubstitutionReference,
   resolveSubstitutions,
 } from "../../util/substitutions.js";
+import {
+  escapeControlForInput,
+  hasEscapeWorthyChar,
+  unescapeControlForInput,
+} from "../../util/yaml-escape.js";
 import { configEntryFormExtraStyles } from "./config-entry-form-extra.styles.js";
 import { configEntryFormStyles } from "./config-entry-form.styles.js";
 import { filterRenderable, renderFilterOptions } from "./config-entry-render-filter.js";
@@ -465,13 +470,23 @@ export function renderStringField(
       </div>
     `;
   }
+  // A single-line input can't show control characters. Only when the
+  // stored value actually contains one (a CRLF in a uart.write payload, an
+  // invisible glyph) do we reveal them as ``\r`` / ``\n`` / ``\xNN`` and
+  // decode on edit; an ordinary string renders verbatim so a typed path
+  // like ``C:\temp`` is never rewritten into control bytes. Display and
+  // decode stay coupled on this one flag.
+  const escapeMode = hasEscapeWorthyChar(value);
   const textInput = html`<input
     type=${inputType}
     class=${invalid ? "invalid" : ""}
-    .value=${value}
+    .value=${escapeMode ? escapeControlForInput(value) : value}
     ?disabled=${disabled}
     placeholder=${placeholder}
-    @input=${(e: Event) => ctx.emitChange(path, (e.target as HTMLInputElement).value)}
+    @input=${(e: Event) => {
+      const raw = (e.target as HTMLInputElement).value;
+      ctx.emitChange(path, escapeMode ? unescapeControlForInput(raw) : raw);
+    }}
   />`;
   return html`
     <div class="field" data-field-key=${fieldKeyAttr(path)}>
