@@ -19,6 +19,7 @@ import {
   type TimePeriodUnit,
 } from "../../../util/time-period.js";
 import { parseYamlBoolean, YamlRawValue } from "../../../util/yaml-serialize.js";
+import type { OptionsComboboxValueChange } from "../../options-combobox-event.js";
 import {
   effectiveDisabled,
   fieldKeyAttr,
@@ -433,25 +434,22 @@ export function renderSelectField(entry: ConfigEntry, path: string[], ctx: Rende
     `;
   }
   if (entry.allow_custom_value && entry.options && entry.options.length > 0) {
-    const listId = `combobox-${path.join("-")}`;
+    // ``label`` only names the combobox's shadow-DOM input (renderLabel's
+    // visible label isn't associated via for=); the combobox draws no label
+    // chrome of its own, so this isn't a duplicate visible label.
     return html`
       <div class="field" data-field-key=${fieldKeyAttr(path)}>
         ${renderLabel(entry, ctx)}
-        <input
-          type="text"
-          class="combobox-input ${invalid ? "invalid" : ""}"
-          list=${listId}
+        <esphome-options-combobox
+          .options=${entry.options}
           .value=${value}
-          ?disabled=${disabled}
+          label=${entry.label}
           placeholder=${String(entry.default_value ?? "")}
-          @input=${(e: Event) =>
-            ctx.emitChange(path, (e.target as HTMLInputElement).value)}
-        />
-        <datalist id=${listId}>
-          ${entry.options.map(
-            (opt) => html`<option value=${opt.value}>${opt.label}</option>`
-          )}
-        </datalist>
+          ?disabled=${disabled}
+          ?invalid=${invalid}
+          @options-combobox-change=${(e: CustomEvent<OptionsComboboxValueChange>) =>
+            ctx.emitChange(path, e.detail.value)}
+        ></esphome-options-combobox>
         ${renderFieldError(path, ctx)}
       </div>
     `;
