@@ -14,6 +14,10 @@ import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { seedBoardPinDefaults } from "../../util/board-pin-defaults.js";
 import { ComponentNameResolverController } from "../../util/component-name-resolver-controller.js";
+import {
+  findReferenceCandidates,
+  resolveSoleCandidate,
+} from "../../util/config-entry-yaml-scan.js";
 import { validateEntries, type ValidationError } from "../../util/config-validation.js";
 import {
   collectExistingIds,
@@ -273,6 +277,18 @@ export class ESPHomeAddComponentForm extends LitElement {
         continue;
       }
       if (!seedAll && !entry.required) continue;
+      // Resolve an id reference against the live YAML so a stale featured
+      // preset (`i2c_bus`) can't outlive the bus it names. Locked refs are
+      // deliberate pins — keep their literal.
+      if (entry.references_component && !entry.locked) {
+        const ref = this._seedReference(entry.references_component);
+        if (ref !== undefined) {
+          out[entry.key] = entry.multi_value ? [ref] : ref;
+        } else if (entry.multi_value && entry.required) {
+          out[entry.key] = [];
+        }
+        continue;
+      }
       if (entry.default_value != null) {
         out[entry.key] = entry.multi_value
           ? [String(entry.default_value)]
@@ -282,6 +298,22 @@ export class ESPHomeAddComponentForm extends LitElement {
       }
     }
     return out;
+  }
+
+  /**
+   * Seed an unlocked id-reference field with the matching component already in
+   * the config, so a stale featured preset can't write an id that doesn't
+   * exist. Ambiguous cases — none, several, or a `packages:`/`<<:` merge that
+   * could hide one — stay unset, deferring to the dep detour or the picker.
+   */
+  private _seedReference(domain: string): string | undefined {
+    // Resolve against same-domain candidates only (i2c/spi/uart buses); the
+    // picker also folds in async interface providers. A cross-domain ref finds
+    // nothing here and defers to the picker; for a domain that is both a block
+    // and a provided interface, seeding may fill a value the picker would call
+    // ambiguous — harmless, since it's a real id the user can still change.
+    const candidates = findReferenceCandidates(this.yaml, domain, []);
+    return resolveSoleCandidate(candidates, this.yaml)?.id;
   }
 
   private _generateDefaultId(): string | null {

@@ -35,15 +35,20 @@ function ags10Component(): ComponentCatalogEntry {
   } as unknown as ComponentCatalogEntry;
 }
 
-function seededValues(component: ComponentCatalogEntry): Record<string, unknown> {
+function seededValues(
+  component: ComponentCatalogEntry,
+  yaml = ""
+): Record<string, unknown> {
   const form = new ESPHomeAddComponentForm();
   const internals = form as unknown as {
     component: ComponentCatalogEntry;
+    yaml: string;
     _localize: (key: string) => string;
     _initValues: () => void;
     _values: Record<string, unknown>;
   };
   internals.component = component;
+  internals.yaml = yaml;
   internals._localize = (key) => key;
   internals._initValues();
   return internals._values;
@@ -58,6 +63,70 @@ describe("add-component-form seeds required nested entity names (#1423)", () => 
   it("leaves the optional reading unseeded", () => {
     const values = seededValues(ags10Component());
     expect(values.resistance).toBeUndefined();
+  });
+});
+
+describe("add-component-form resolves featured id references to the live config", () => {
+  // sensor.max17043's i2c_id carries the Apollo manifest preset `i2c_bus`;
+  // it must never leak into a config whose bus has a different id.
+  function batteryMonitor(presetLocked = false): ComponentCatalogEntry {
+    return {
+      id: "featured.apollo-esk-1.battery_monitor",
+      config_entries: [
+        makeConfigEntry({
+          key: "i2c_id",
+          type: ConfigEntryType.ID,
+          references_component: "i2c",
+          default_value: "i2c_bus",
+          locked: presetLocked,
+        }),
+      ],
+    } as unknown as ComponentCatalogEntry;
+  }
+
+  const ONE_BUS = "i2c:\n  - sda: 1\n    scl: 0\n    id: i2c_1\n";
+  const TWO_BUSES = `${ONE_BUS}  - sda: 3\n    scl: 2\n    id: i2c_2\n`;
+
+  it("fills the field with the sole existing bus instead of the stale preset", () => {
+    expect(seededValues(batteryMonitor(), ONE_BUS).i2c_id).toBe("i2c_1");
+  });
+
+  it("fills the sole bus even when its id equals the preset", () => {
+    const yaml = "i2c:\n  - id: i2c_bus\n";
+    expect(seededValues(batteryMonitor(), yaml).i2c_id).toBe("i2c_bus");
+  });
+
+  it("leaves the field unset when two buses exist so the user picks", () => {
+    expect(seededValues(batteryMonitor(), TWO_BUSES).i2c_id).toBeUndefined();
+  });
+
+  it("leaves the field unset (not the literal) when no bus exists", () => {
+    expect(seededValues(batteryMonitor(), "").i2c_id).toBeUndefined();
+  });
+
+  it("leaves the field unset when a packages merge could hide a bus", () => {
+    const yaml = `packages:\n  base: !include base.yaml\n${ONE_BUS}`;
+    expect(seededValues(batteryMonitor(), yaml).i2c_id).toBeUndefined();
+  });
+
+  it("keeps a locked reference's literal verbatim (bundled output pin)", () => {
+    expect(seededValues(batteryMonitor(true), ONE_BUS).i2c_id).toBe("i2c_bus");
+  });
+
+  it("seeds a required multi_value reference with [] when it can't resolve", () => {
+    const component = {
+      id: "featured.x.multi_ref",
+      config_entries: [
+        makeConfigEntry({
+          key: "buses",
+          type: ConfigEntryType.ID,
+          references_component: "i2c",
+          required: true,
+          multi_value: true,
+        }),
+      ],
+    } as unknown as ComponentCatalogEntry;
+    expect(seededValues(component, "").buses).toEqual([]);
   });
 });
 
