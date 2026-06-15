@@ -3,7 +3,12 @@ import {
   DeviceEventType,
   type InitialStateEventData,
 } from "../../../src/api/types/event-subscription.js";
-import { ExperienceLevel, type UserPreferences } from "../../../src/api/types/system.js";
+import {
+  EditorLayout,
+  ExperienceLevel,
+  SecretsEditorLayout,
+  type UserPreferences,
+} from "../../../src/api/types/system.js";
 import type { ESPHomeApp } from "../../../src/components/app-shell.js";
 import { handleEvent } from "../../../src/components/app-shell/events.js";
 
@@ -12,6 +17,8 @@ function prefs(over: Partial<UserPreferences> = {}): UserPreferences {
     dashboard_view: "cards" as UserPreferences["dashboard_view"],
     theme: "dark" as UserPreferences["theme"],
     navigator_visible: true,
+    device_editor_layout: EditorLayout.BOTH,
+    secrets_editor_layout: SecretsEditorLayout.VISUAL,
     table_page_size: 25,
     table_column_visibility: {},
     table_sort_column: null,

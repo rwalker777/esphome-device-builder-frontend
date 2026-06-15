@@ -52,6 +52,29 @@ export enum SortDirection {
 }
 
 /**
+ * Device editor pane layout: the form, the YAML pane, or both. Keep in
+ * lockstep with the backend's ``EditorLayout`` enum.
+ */
+export enum EditorLayout {
+  /** Form / guide only, YAML pane hidden. */
+  VISUAL = "visual",
+  /** YAML pane only. */
+  YAML = "yaml",
+  /** Split: form / guide alongside the YAML pane. */
+  BOTH = "both",
+}
+
+/**
+ * Secrets editor layout: the form or the YAML pane, never both. A
+ * dedicated enum keeps ``both`` off the wire. Keep in lockstep with the
+ * backend's ``SecretsEditorLayout`` enum.
+ */
+export enum SecretsEditorLayout {
+  VISUAL = "visual",
+  YAML = "yaml",
+}
+
+/**
  * How much ESPHome the user knows — tailors UI weight. Chosen in
  * onboarding, changeable in Settings. ``null`` (a fresh install that
  * hasn't picked) is distinct from any level. Keep in lockstep with
@@ -68,6 +91,10 @@ export interface UserPreferences {
   dashboard_view: DashboardView;
   theme: Theme;
   navigator_visible: boolean;
+  /** Which editor panes the user keeps open, persisted so the choice
+   *  survives a new browser. The secrets editor has no split view. */
+  device_editor_layout: EditorLayout;
+  secrets_editor_layout: SecretsEditorLayout;
   table_page_size: number;
   table_column_visibility: Record<string, boolean>;
   table_sort_column: string | null;

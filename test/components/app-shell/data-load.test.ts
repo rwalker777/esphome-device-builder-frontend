@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  EditorLayout,
   ExperienceLevel,
   type OnboardingState,
   OnboardingStepId,
   OnboardingStepStatus,
+  SecretsEditorLayout,
   type UserPreferences,
 } from "../../../src/api/types/system.js";
 import type { ESPHomeApp } from "../../../src/components/app-shell.js";
@@ -90,6 +92,8 @@ describe("loadPreferences (post-wizard context refresh)", () => {
     dashboard_view: "cards" as UserPreferences["dashboard_view"],
     theme: "dark" as UserPreferences["theme"],
     navigator_visible: true,
+    device_editor_layout: EditorLayout.BOTH,
+    secrets_editor_layout: SecretsEditorLayout.VISUAL,
     table_page_size: 25,
     table_column_visibility: {},
     table_sort_column: null,
