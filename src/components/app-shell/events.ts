@@ -36,6 +36,7 @@ import {
 } from "../../context/index.js";
 import { seededMap } from "../../util/snapshot.js";
 import type { ESPHomeApp } from "../app-shell.js";
+import { applyPreferences } from "./data-load.js";
 
 // Merge a partial diff into the matching offloader pairing row keyed by pin_sha256.
 // _buildOffloadPairings === null = snapshot not seeded; missing row = event raced
@@ -68,10 +69,14 @@ export function handleEvent(host: ESPHomeApp, event: string, data: unknown): voi
         remote_builds_enabled,
         version_match_policy,
       } = data as InitialStateEventData;
-      // Seed UI prefs from the snapshot so first paint skips a separate
-      // get_preferences round trip.
-      host.applyTheme(preferences.theme);
+      // Mark prefs known so creation gates on the subscription, not a separate
+      // get_preferences (preferences is always present). Skip the apply while a
+      // Settings write is in flight, so a reconnect's snapshot can't revert the
+      // optimistic change.
       host._prefsLoaded = true;
+      if (host._prefsWritesInFlight === 0) {
+        applyPreferences(host, preferences);
+      }
       host._devices = devices;
       host._importableDevices = importable;
       host._devicesLoaded = true;

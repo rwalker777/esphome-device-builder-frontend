@@ -30,6 +30,7 @@ import {
 } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { withBase } from "../util/base-path.js";
+import { editorLayoutForExperience } from "../util/experience.js";
 import { consumeJustCreated } from "../util/just-created.js";
 import { navigate, setLeaveGuard } from "../util/navigation.js";
 import { postInstallShowLogsHandler } from "../util/post-install-logs.js";
@@ -547,15 +548,26 @@ export class ESPHomePageDevice extends LitElement {
   private async _loadPreferences() {
     // Editor layout stored locally (not in backend preferences)
     const savedLayout = localStorage.getItem("esphome-editor-layout");
-    if (savedLayout === "both" || savedLayout === "left" || savedLayout === "right") {
+    const hasSavedLayout =
+      savedLayout === "both" || savedLayout === "left" || savedLayout === "right";
+    if (hasSavedLayout) {
       this._layout = savedLayout;
     }
 
     try {
       const prefs = await this._api.getPreferences();
       this._navCollapsed = !prefs.navigator_visible;
-    } catch {
-      // Preferences not critical — use defaults
+      // First editor open (no stored layout yet): seed the YAML pane from the
+      // experience level. Once the user touches the layout toggle it persists
+      // to localStorage and wins.
+      if (!hasSavedLayout) {
+        this._layout = editorLayoutForExperience(prefs.experience_level);
+      }
+    } catch (err) {
+      // Preferences not critical; fall back to defaults. Logged so a YAML
+      // user silently dropped into the non-YAML first-open layout is
+      // diagnosable.
+      console.warn("Failed to load device preferences:", err);
     }
   }
 
