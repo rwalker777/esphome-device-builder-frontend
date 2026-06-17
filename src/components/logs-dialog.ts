@@ -216,12 +216,24 @@ export class ESPHomeLogsDialog extends LitElement {
    * with a ``toast.error``.
    */
   public setSerialOpenFailed(message: string) {
-    // Same guard as setSerialStream: the reopen retries for ~5s, so a late
-    // failure can land after the dialog closed or switched to an OTA session —
-    // don't tear that unrelated session down or flip it into a passive `dead`.
+    // Same guard as setSerialStream: the reopen retries across the re-enum
+    // window, so a late failure can land after the dialog closed or switched to
+    // an OTA session — don't tear that unrelated session down or flip it dead.
     if (!this._open || !isPassive(this._session)) return;
     void this._teardownSession();
     this._lines = [...this._lines, message];
+    this._session = { kind: "dead" };
+  }
+
+  /**
+   * Return an in-flight reconnect to ``dead`` without surfacing an error — for
+   * when the user dismisses the Web Serial port picker. The ``Start`` button
+   * stays available; no log line or toast (a cancel isn't a failure). Only acts
+   * while ``reconnecting`` — never on a live ``serial`` session, which holds an
+   * open reader/port that flipping to ``dead`` would leak.
+   */
+  public abortSerialReconnect() {
+    if (this._session.kind !== "reconnecting") return;
     this._session = { kind: "dead" };
   }
 
