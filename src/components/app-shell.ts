@@ -69,6 +69,7 @@ import {
   subscribeToFollowJobs,
 } from "./app-shell/jobs.js";
 import { createRouter } from "./app-shell/router.js";
+import { dispatchOrStashSerialSetup } from "./app-shell/serial-setup.js";
 import {
   onPairRequestSent,
   onRemoteBuildJobDismissed,
@@ -342,9 +343,7 @@ export class ESPHomeApp extends LitElement {
           // reset can fire a new connect event before that runs.
           markSerialActivity();
           toast.dismiss("esphome-usb-device-connected");
-          window.dispatchEvent(
-            new CustomEvent("esphome-serial-setup", { detail: { port } })
-          );
+          void dispatchOrStashSerialSetup(port);
         },
       },
     });
