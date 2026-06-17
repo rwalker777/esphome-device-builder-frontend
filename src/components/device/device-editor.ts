@@ -2,6 +2,7 @@ import { consume } from "@lit/context";
 import {
   mdiAlertCircleOutline,
   mdiCheckCircleOutline,
+  mdiChevronDown,
   mdiContentSave,
   mdiDockLeft,
   mdiDockRight,
@@ -28,6 +29,7 @@ import {
 } from "../../util/split-ratio.js";
 import type { HighlightRange } from "../yaml-editor.js";
 import { deviceEditorStyles } from "./device-editor.styles.js";
+import { renderInstallAction } from "./install-action.js";
 
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -38,6 +40,7 @@ import "./device-board-info.js";
 registerMdiIcons({
   "alert-circle-outline": mdiAlertCircleOutline,
   "check-circle-outline": mdiCheckCircleOutline,
+  "chevron-down": mdiChevronDown,
   "content-save": mdiContentSave,
   eye: mdiEye,
   "eye-off": mdiEyeOff,
@@ -314,29 +317,7 @@ export class ESPHomeDeviceEditor extends LitElement {
         </header>
         <div class="card-body">
           <div class="editor-floating-actions">
-            ${this.hasUpdateAvailable
-              ? html`<button
-                  type="button"
-                  class="install-fab"
-                  ?disabled=${this.busy}
-                  @click=${this._onUpdate}
-                  title=${this._localize("dashboard.update")}
-                >
-                  <wa-icon library="mdi" name="upload"></wa-icon>
-                  ${this._localize("dashboard.update")}
-                </button>`
-              : this.hasPendingChanges
-                ? html`<button
-                    type="button"
-                    class="install-fab"
-                    ?disabled=${this.busy}
-                    @click=${this._onInstall}
-                    title=${this._localize("dashboard.install")}
-                  >
-                    <wa-icon library="mdi" name="upload"></wa-icon>
-                    ${this._localize("dashboard.install")}
-                  </button>`
-                : nothing}
+            ${this._renderPrimaryAction()}
             <!-- Span wrapper carries the title because a disabled
                  button isn't focusable and most browsers won't
                  surface its tooltip on hover. The disabled state
@@ -477,6 +458,17 @@ export class ESPHomeDeviceEditor extends LitElement {
 
   private _toggleRevealSensitive() {
     this._revealSensitive = !this._revealSensitive;
+  }
+
+  private _renderPrimaryAction() {
+    return renderInstallAction({
+      localize: this._localize,
+      hasUpdateAvailable: this.hasUpdateAvailable,
+      hasPendingChanges: this.hasPendingChanges,
+      busy: this.busy,
+      onUpdate: () => this._onUpdate(),
+      onInstall: () => this._onInstall(),
+    });
   }
 
   private _onInstall() {

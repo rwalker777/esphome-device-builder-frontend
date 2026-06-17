@@ -123,6 +123,41 @@ export const deviceEditorStyles = css`
       transform 0.12s;
   }
 
+  .install-split {
+    display: inline-flex;
+    align-items: stretch;
+  }
+
+  /* Join the two halves into one split control: square the inner corners and
+     overlap the seam by one border width so both buttons keep a full border.
+     The hovered / focused half is raised so it owns a single, consistent seam
+     colour (without the overlap, the seam keeps the un-hovered border). */
+  .install-split__main,
+  .install-split__caret {
+    position: relative;
+  }
+
+  .install-split__main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .install-split__caret {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    margin-left: calc(-1 * var(--wa-border-width-s));
+    padding-left: 8px;
+    padding-right: 8px;
+    gap: 0;
+  }
+
+  .install-split__main:hover:not(:disabled),
+  .install-split__caret:hover:not(:disabled),
+  .install-split__main:focus-visible,
+  .install-split__caret:focus-visible {
+    z-index: 1;
+  }
+
   .save-button {
     background: var(--esphome-primary);
     color: var(--esphome-on-primary);
@@ -197,6 +232,19 @@ export const deviceEditorStyles = css`
     color: color-mix(in srgb, var(--esphome-primary), transparent 50%);
     border-color: var(--wa-color-surface-border);
     cursor: not-allowed;
+  }
+
+  /* In sync: nothing to apply, so drop the primary tint to a neutral, still
+     usable button (you can re-flash, but the config matches the firmware). */
+  .install-fab--muted {
+    background: var(--wa-color-surface-default);
+    color: var(--wa-color-text-normal);
+    border-color: var(--wa-color-surface-border);
+  }
+
+  .install-fab--muted:hover:not(:disabled) {
+    background: var(--wa-color-surface-raised);
+    border-color: color-mix(in srgb, var(--wa-color-text-normal), transparent 70%);
   }
 
   .save-button wa-icon,
