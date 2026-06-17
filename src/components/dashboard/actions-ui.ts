@@ -10,6 +10,7 @@ import type { ESPHomePageDashboard } from "../../pages/dashboard.js";
 import { getErrorMessage } from "../../util/error-message.js";
 import { firmwareJobDisplayName } from "../../util/firmware-job-display.js";
 import { clearJustCreated } from "../../util/just-created.js";
+import { resolveLogBaudRate } from "../../util/log-baud-rate.js";
 import {
   attachSerialLogStream,
   reconnectWebSerialLogs,
@@ -199,9 +200,17 @@ export async function openLogsWithMethod(
       });
       return;
     }
+    const baudRate = resolveLogBaudRate(device.logger_baud_rate);
+    if (baudRate === null) {
+      // logger: baud_rate: 0 — UART logging is disabled; serial would be silent.
+      toast.error(host._localize("dashboard.logs_serial_disabled"), {
+        richColors: true,
+      });
+      return;
+    }
     let serialPort: SerialPort | null;
     try {
-      serialPort = await requestAndOpenSerialPort();
+      serialPort = await requestAndOpenSerialPort(baudRate);
     } catch {
       // The user picked a port but it couldn't open (claimed by another tab,
       // driver error); unlike a picker dismissal this needs feedback.
@@ -216,12 +225,13 @@ export async function openLogsWithMethod(
     // Reconnect (the dialog's "click Start to reconnect") re-acquires a fresh
     // port via the picker — the cached handle can be dead after a device reset.
     host._logsDialog.openPassive({
-      onReconnect: () => reconnectWebSerialLogs(host._logsDialog, host._localize),
+      onReconnect: () =>
+        reconnectWebSerialLogs(host._logsDialog, host._localize, baudRate),
     });
     // attach toasts the reopen-retry failure itself; cover any other rejection
     // so it can't escape this fire-and-forget call as an unhandled rejection.
     try {
-      await attachSerialLogStream(serialPort, host._logsDialog, host._localize);
+      await attachSerialLogStream(serialPort, host._logsDialog, host._localize, baudRate);
     } catch {
       toast.error(host._localize("dashboard.logs_web_serial_open_failed"), {
         richColors: true,

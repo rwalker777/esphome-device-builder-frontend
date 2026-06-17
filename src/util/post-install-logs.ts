@@ -3,6 +3,7 @@ import type { LocalizeFunc } from "../common/localize.js";
 import { streamSerialToDialog } from "../components/dashboard/actions.js";
 import type { ESPHomeLogsDialog } from "../components/logs-dialog.js";
 import { OTA_PORT } from "../components/logs-session.js";
+import { resolveLogBaudRate } from "./log-baud-rate.js";
 import { isPortPickerCancel, SERIAL_ACTIVITY_WINDOW_MS } from "./web-serial.js";
 
 // Reopen budget for a port closed by the post-install reset: covers the
@@ -29,7 +30,9 @@ export function formatSerialPortLabel(port: SerialPort): string {
  * or ``null`` if the user dismissed the picker. Throws if a picked port can't
  * be opened (claimed by another tab, driver error) — the caller surfaces that.
  */
-export async function requestAndOpenSerialPort(): Promise<SerialPort | null> {
+export async function requestAndOpenSerialPort(
+  baudRate: number
+): Promise<SerialPort | null> {
   let port: SerialPort;
   try {
     port = await navigator.serial.requestPort();
@@ -39,7 +42,7 @@ export async function requestAndOpenSerialPort(): Promise<SerialPort | null> {
     }
     throw err; // A real requestPort failure — let the caller surface it.
   }
-  await port.open({ baudRate: 115200 });
+  await port.open({ baudRate });
   return port;
 }
 
@@ -56,11 +59,12 @@ export async function requestAndOpenSerialPort(): Promise<SerialPort | null> {
  */
 export async function reconnectWebSerialLogs(
   logsDialog: ESPHomeLogsDialog,
-  localize: LocalizeFunc
+  localize: LocalizeFunc,
+  baudRate: number
 ): Promise<void> {
   let port: SerialPort | null;
   try {
-    port = await requestAndOpenSerialPort();
+    port = await requestAndOpenSerialPort(baudRate);
   } catch {
     const message = localize("dashboard.logs_web_serial_open_failed");
     logsDialog.setSerialOpenFailed(message);
@@ -71,7 +75,7 @@ export async function reconnectWebSerialLogs(
     logsDialog.abortSerialReconnect(); // Picker dismissed — back to "Start", quietly.
     return;
   }
-  await attachSerialLogStream(port, logsDialog, localize);
+  await attachSerialLogStream(port, logsDialog, localize, baudRate);
 }
 
 /**
@@ -91,6 +95,10 @@ export interface PostInstallShowLogsDetail {
   name: string;
   port?: string;
   webSerialPort?: SerialPort;
+  // Raw device logger baud_rate, only meaningful on the webSerialPort path.
+  // The handler resolves it: null / absent ⇒ 115200 default, 0 ⇒ serial
+  // logging disabled (skip with a notice).
+  loggerBaudRate?: number | null;
   reopenInstall: () => void;
 }
 
@@ -243,10 +251,11 @@ async function openLiveSerialPort(
 export async function attachSerialLogStream(
   port: SerialPort,
   logsDialog: ESPHomeLogsDialog,
-  localize: LocalizeFunc
+  localize: LocalizeFunc,
+  baudRate: number
 ): Promise<void> {
   if (!port.readable) {
-    const live = await openLiveSerialPort(port, 115200, SERIAL_REOPEN_TIMEOUT_MS);
+    const live = await openLiveSerialPort(port, baudRate, SERIAL_REOPEN_TIMEOUT_MS);
     if (!live) {
       const message = localize("dashboard.logs_port_reopen_failed", {
         port: formatSerialPortLabel(port),
@@ -273,16 +282,23 @@ export async function handlePostInstallShowLogs(
   localize: LocalizeFunc
 ) {
   e.preventDefault();
-  const { configuration, name, port, webSerialPort, reopenInstall } = e.detail;
+  const { configuration, name, port, webSerialPort, loggerBaudRate, reopenInstall } =
+    e.detail;
   logsDialog.configuration = configuration;
   logsDialog.name = name;
   if (webSerialPort) {
+    const baudRate = resolveLogBaudRate(loggerBaudRate);
+    if (baudRate === null) {
+      // logger: baud_rate: 0 — UART logging disabled; the port would be silent.
+      toast.error(localize("dashboard.logs_serial_disabled"), { richColors: true });
+      return;
+    }
     logsDialog.openPassive({
       onBackToInstall: reopenInstall,
       // "click Start to reconnect" after a reopen failure (#636). Re-acquire a
       // fresh port via the picker rather than reopening the cached esptool
       // handle, which a native-USB chip's post-flash re-enumeration leaves dead.
-      onReconnect: () => reconnectWebSerialLogs(logsDialog, localize),
+      onReconnect: () => reconnectWebSerialLogs(logsDialog, localize, baudRate),
     });
     /* Settling delay — some USB-UART bridges (notably the CH9102F on
        M5Stamp boards) don't resync their internal CDC state cleanly
@@ -294,7 +310,7 @@ export async function handlePostInstallShowLogs(
     /* The install just left the port closed via ``resetAndDisconnect``;
        the attach reopens the still-granted port (retrying the native-USB
        re-enumeration window) and starts reading. */
-    await attachSerialLogStream(webSerialPort, logsDialog, localize);
+    await attachSerialLogStream(webSerialPort, logsDialog, localize, baudRate);
   } else {
     logsDialog.open(port ?? OTA_PORT, { onBackToInstall: reopenInstall });
   }
