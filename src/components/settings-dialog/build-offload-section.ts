@@ -46,6 +46,7 @@ import "../edit-pairing-endpoint-dialog.js";
 import "../pair-build-server-dialog.js";
 import "../reauth-wizard-dialog.js";
 import "../remote-build-job-dialog.js";
+import "./build-offload-advanced.js";
 
 registerMdiIcons({
   delete: mdiDelete,
@@ -145,8 +146,7 @@ export class ESPHomeSettingsBuildOffload extends LitElement {
 
   protected render() {
     return html`
-      ${this._renderAlerts()} ${this._renderRemoteBuildsToggle()}
-      ${this._renderVersionMatchPolicyPicker()}
+      ${this._renderAlerts()}
 
       <div class="section-heading">
         ${this._localize("settings.paired_build_servers_heading")}
@@ -178,6 +178,9 @@ export class ESPHomeSettingsBuildOffload extends LitElement {
           ${this._localize("settings.pair_build_server_open_action")}
         </button>
       </div>
+
+      ${this._renderRemoteBuildsToggle()} ${this._renderVersionMatchPolicyPicker()}
+      <esphome-settings-build-offload-advanced></esphome-settings-build-offload-advanced>
 
       <esphome-pair-build-server-dialog
         @pair-request-sent=${this._onPairRequestSent}
