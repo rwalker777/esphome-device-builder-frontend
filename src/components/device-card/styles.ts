@@ -209,6 +209,10 @@ export const deviceCardStyles = [
       animation: completed-pulse 1s ease-in-out infinite;
     }
 
+    .device-status.queued {
+      color: var(--wa-color-warning);
+    }
+
     /* RECENT_JOB_TTL_MS_COMPLETED is short; throb signals "transient". */
     @keyframes completed-pulse {
       0%,

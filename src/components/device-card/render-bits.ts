@@ -29,8 +29,6 @@ const RECENT_JOB_LABEL: Record<JobStatus, string> = {
   [JobStatus.CANCELLED]: "firmware_jobs.status_cancelled",
 };
 
-// Caps at 4 visible chips with a "+N" overflow chip — heavily-tagged
-// devices don't blow out the card height; full set lives in the drawer.
 export function renderLabels(card: ESPHomeDeviceCard): TemplateResult | typeof nothing {
   const labels = resolveLabelIds(card.labelIds, card._labelCatalog);
   if (labels.length === 0) return nothing;
@@ -39,8 +37,6 @@ export function renderLabels(card: ESPHomeDeviceCard): TemplateResult | typeof n
   </div>`;
 }
 
-// Compact view: no lock for encrypted devices, only the attention
-// states (plaintext / pending / mismatch) get an icon.
 export function renderEncryptionIcon(
   card: ESPHomeDeviceCard
 ): TemplateResult | typeof nothing {
@@ -89,9 +85,17 @@ export function renderStatusBadge(card: ESPHomeDeviceCard): TemplateResult {
       </div>`;
     }
   }
-  // Transport-agnostic icons — wifi/wifi-off implied wireless; plenty of
-  // devices on the network are on ethernet. check/off/help-network reads
-  // as "online" / "offline" / "unknown" without baking in a link guess.
+
+  // Added logic for queued update state
+  if (card.queuedUpdate) {
+    return html`
+      <div class="status-badge" style="color: var(--status-queued-color, #ff9800);">
+        <wa-icon library="mdi" name="clock-outline"></wa-icon>
+        Update Queued
+      </div>
+    `;
+  }
+
   const stateIcon =
     card.state === DeviceState.ONLINE
       ? "check-network-outline"

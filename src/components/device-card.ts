@@ -5,6 +5,7 @@ import {
   mdiCheckNetworkOutline,
   mdiCheckboxBlankOutline,
   mdiCheckboxMarked,
+  mdiClockOutline,
   mdiCloseCircle,
   mdiDotsVertical,
   mdiHelpNetworkOutline,
@@ -58,6 +59,7 @@ registerMdiIcons({
   "open-in-new": mdiOpenInNew,
   pencil: mdiPencil,
   upload: mdiUpload,
+  "clock-outline": mdiClockOutline,
 });
 
 @customElement("esphome-device-card")
@@ -79,6 +81,7 @@ export class ESPHomeDeviceCard extends LitElement {
     false;
   @property({ type: Boolean, attribute: "has-update-available" }) hasUpdateAvailable =
     false;
+  @property({ type: Boolean, attribute: "queued-update" }) queuedUpdate = false;
   @property({ type: Boolean, attribute: "api-enabled" }) apiEnabled = false;
   @property({ type: Boolean, attribute: "api-encrypted" }) apiEncrypted = false;
 
@@ -231,10 +234,24 @@ export class ESPHomeDeviceCard extends LitElement {
     `;
   }
 
+  private _onClearQueue(e: Event) {
+    e.stopPropagation(); // Prevent the card from being clicked
+    this._emit("clear-queued-update");
+  }
+
   // Update / Install accent: icon-only so only Edit keeps a label.
   // Long-language locales (French / Dutch) overflow a 300px-min card if
   // every action is labelled; upload icon reads clearly without one.
   private _renderAccentAction() {
+    if (this.queuedUpdate) {
+      return html`<button
+        class="action-btn action-btn--ghost action-btn--tile"
+        title=${this._localize("dashboard.clear_queued") || "Clear Queue"}
+        @click=${this._onClearQueue}
+      >
+        <wa-icon library="mdi" name="cancel"></wa-icon>
+      </button>`;
+    }
     if (this.hasUpdateAvailable) {
       return html`<button
         class="action-btn action-btn--accent action-btn--tile"
