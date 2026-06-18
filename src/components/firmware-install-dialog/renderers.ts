@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { type FirmwareBinary, JobSource } from "../../api/types/firmware-jobs.js";
+import { configurationStem, downloadAnsiText } from "../../util/download-text.js";
 import type { ESPHomeFirmwareInstallDialog } from "../firmware-install-dialog.js";
 import type { ProcessTerminalState } from "../process-terminal/process-terminal.js";
 import {
@@ -133,6 +134,9 @@ export function cardStatusDetail(host: ESPHomeFirmwareInstallDialog): string {
   }
   if (host._step === "download-ready") return downloadReadyDetail(host);
   if (host._step === "error") return host._errorMessage;
+  // Hidden tabs throttle timers, which can stall the Web Serial write and fail
+  // the flash; there's no API to opt out, so warn the user to stay on the page.
+  if (host._step === "flashing") return host._localize("firmware.flashing_keep_visible");
   return "";
 }
 
@@ -206,6 +210,11 @@ export function renderStatusExtra(
   return html`<div slot="status-extra">${binaryList} ${downloadExtra} ${logs}</div>`;
 }
 
+function downloadInstallLogs(host: ESPHomeFirmwareInstallDialog): void {
+  const stem = configurationStem(host._device?.configuration, "install");
+  downloadAnsiText(host._logLines, `${stem}-install.txt`);
+}
+
 export function renderLogs(
   host: ESPHomeFirmwareInstallDialog
 ): TemplateResult | typeof nothing {
@@ -225,6 +234,10 @@ export function renderLogs(
         ${host._logsExpanded
           ? host._localize("firmware.hide_details")
           : host._localize("firmware.show_details")}
+      </button>
+      <button class="logs-toggle" @click=${() => downloadInstallLogs(host)}>
+        <wa-icon library="mdi" name="download"></wa-icon>
+        ${host._localize("dashboard.logs_download")}
       </button>
     </div>
     ${host._logsExpanded
@@ -297,6 +310,26 @@ export function renderFooter(host: ESPHomeFirmwareInstallDialog): TemplateResult
         >
           ${host._localize("firmware.web_download_open_button")}
         </a>
+      </div>
+    `;
+  }
+  // A failed Web Serial flash can be retried in place — re-run the install.
+  // Excludes compile / validate failures, which surface the reset-build hint
+  // (renderResetSuggestion) instead; re-flashing wouldn't address those.
+  const canRetry =
+    host._step === "error" &&
+    host._installer === "web-serial" &&
+    !host._failedDuringCompile &&
+    !host._failedDuringValidate;
+  if (canRetry) {
+    return html`
+      <div class="footer">
+        <button class="btn btn--ghost" @click=${host._close}>
+          ${host._localize("command.close")}
+        </button>
+        <button class="btn btn--primary" @click=${host._retry}>
+          ${host._localize("command.retry")}
+        </button>
       </div>
     `;
   }

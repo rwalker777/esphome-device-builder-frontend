@@ -108,11 +108,14 @@ export const pairingRowStyles = css`
   }
 
   /* Shared chrome for the section's secondary action buttons: the
-     pairing row's icon-only squares and the alert's text Unpair
-     (.offloader-alert-unpair markup lives in build-offload-alert.ts;
-     its chrome stays here with its siblings). */
-  .btn-unpair,
+     pairing row's icon Edit square, its Build-remote / View-build
+     text actions, and the alert's text Unpair (.offloader-alert-unpair
+     markup lives in build-offload-alert.ts; its chrome stays here with
+     its siblings). The pairing row's trash button is the shared
+     .peer-remove in shared-styles.ts. */
   .btn-edit-endpoint,
+  .btn-build-remote,
+  .btn-view-remote-build,
   .offloader-alert-unpair {
     height: 32px;
     display: inline-flex;
@@ -125,33 +128,35 @@ export const pairingRowStyles = css`
     flex-shrink: 0;
   }
 
-  .btn-unpair,
   .btn-edit-endpoint {
     width: 32px;
     border-radius: var(--wa-border-radius-s);
   }
 
-  .btn-unpair wa-icon,
   .btn-edit-endpoint wa-icon {
     font-size: 16px;
   }
 
   /* Destructive actions tint error on hover; edit tints primary. */
-  .btn-unpair:hover,
   .offloader-alert-unpair:hover {
     background: color-mix(in srgb, var(--esphome-error), white 90%);
     color: var(--esphome-error);
     border-color: var(--esphome-error);
   }
 
-  .btn-edit-endpoint:hover {
+  .btn-edit-endpoint:hover,
+  .btn-build-remote:hover,
+  .btn-view-remote-build:hover {
     background: color-mix(in srgb, var(--esphome-primary), white 90%);
     color: var(--esphome-primary);
     border-color: var(--esphome-primary);
   }
 
-  /* Text variant — the alert spells the action out next to the
-     Re-pair pill, so it gets padding and the pill's radius. */
+  /* Text variant — the pairing row's Build-remote / View-build actions
+     and the alert's spelled-out Unpair (next to the Re-pair pill) get
+     padding and the pill's radius instead of the icon-square shape. */
+  .btn-build-remote,
+  .btn-view-remote-build,
   .offloader-alert-unpair {
     padding: 0 12px;
     border-radius: var(--wa-border-radius-m);
@@ -160,6 +165,9 @@ export const pairingRowStyles = css`
     font-weight: var(--wa-font-weight-semibold);
   }
 
+  .btn-edit-endpoint:focus-visible,
+  .btn-build-remote:focus-visible,
+  .btn-view-remote-build:focus-visible,
   .offloader-alert-unpair:focus-visible {
     outline: none;
     box-shadow: var(--esphome-focus-ring);

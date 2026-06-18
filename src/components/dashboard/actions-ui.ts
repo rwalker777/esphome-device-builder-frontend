@@ -5,11 +5,17 @@ import type {
   ConfiguredDevice,
   Label,
 } from "../../api/types/devices.js";
+import { DeviceState } from "../../api/types/devices.js";
 import type { ESPHomePageDashboard } from "../../pages/dashboard.js";
 import { getErrorMessage } from "../../util/error-message.js";
 import { firmwareJobDisplayName } from "../../util/firmware-job-display.js";
 import { clearJustCreated } from "../../util/just-created.js";
-import { attachSerialLogStream } from "../../util/post-install-logs.js";
+import { resolveLogBaudRate } from "../../util/log-baud-rate.js";
+import {
+  attachSerialLogStream,
+  reconnectWebSerialLogs,
+  requestAndOpenSerialPort,
+} from "../../util/post-install-logs.js";
 
 export async function executeFriendlyName(
   host: ESPHomePageDashboard,
@@ -90,13 +96,36 @@ export async function executeRename(
   if (!device) return;
   const newName = e.detail;
   if (newName === device.name) return;
+  // The default rename compiles + OTA-installs, which only works against a
+  // reachable device. Route offline/unknown devices to a confirm before a
+  // config-only rename (renames the YAML now; the device keeps its old name
+  // until reflashed, which the prompt spells out).
+  if (device.state !== DeviceState.ONLINE) {
+    host._openConfirm({ kind: "rename-config-only", device, newName });
+    return;
+  }
+  await performRename(host, device, newName, false);
+}
+
+/** Call ``devices/rename`` and surface the result (job-follow, success, or error). */
+export async function performRename(
+  host: ESPHomePageDashboard,
+  device: ConfiguredDevice,
+  newName: string,
+  configOnly: boolean
+): Promise<void> {
   let response: Awaited<ReturnType<ESPHomeAPI["renameDevice"]>>;
   try {
-    response = await host._api.renameDevice(device.configuration, newName);
-  } catch {
-    toast.error(host._localize("dashboard.action_rename_failed", { name: device.name }), {
-      richColors: true,
-    });
+    response = await host._api.renameDevice(device.configuration, newName, configOnly);
+  } catch (err) {
+    const reason = getErrorMessage(err);
+    toast.error(
+      host._localize("dashboard.action_rename_failed", {
+        name: device.name,
+        reason,
+      }),
+      { richColors: true }
+    );
     return;
   }
   clearJustCreated();
@@ -171,18 +200,17 @@ export async function openLogsWithMethod(
       });
       return;
     }
-    let serialPort: SerialPort;
-    try {
-      serialPort = await (
-        navigator as unknown as {
-          serial: { requestPort: () => Promise<SerialPort> };
-        }
-      ).serial.requestPort();
-    } catch {
-      return; // User dismissed the port picker.
+    const baudRate = resolveLogBaudRate(device.logger_baud_rate);
+    if (baudRate === null) {
+      // logger: baud_rate: 0 — UART logging is disabled; serial would be silent.
+      toast.error(host._localize("dashboard.logs_serial_disabled"), {
+        richColors: true,
+      });
+      return;
     }
+    let serialPort: SerialPort | null;
     try {
-      await serialPort.open({ baudRate: 115200 });
+      serialPort = await requestAndOpenSerialPort(baudRate);
     } catch {
       // The user picked a port but it couldn't open (claimed by another tab,
       // driver error); unlike a picker dismissal this needs feedback.
@@ -191,16 +219,19 @@ export async function openLogsWithMethod(
       });
       return;
     }
+    if (!serialPort) return; // User dismissed the port picker.
     host._logsDialog.configuration = device.configuration;
     host._logsDialog.name = device.friendly_name || device.name;
-    // Reconnect hook drives the dialog's "click Start to reconnect" path.
-    const reconnect = () =>
-      attachSerialLogStream(serialPort, host._logsDialog, host._localize);
-    host._logsDialog.openPassive({ onReconnect: reconnect });
+    // Reconnect (the dialog's "click Start to reconnect") re-acquires a fresh
+    // port via the picker — the cached handle can be dead after a device reset.
+    host._logsDialog.openPassive({
+      onReconnect: () =>
+        reconnectWebSerialLogs(host._logsDialog, host._localize, baudRate),
+    });
     // attach toasts the reopen-retry failure itself; cover any other rejection
     // so it can't escape this fire-and-forget call as an unhandled rejection.
     try {
-      await reconnect();
+      await attachSerialLogStream(serialPort, host._logsDialog, host._localize, baudRate);
     } catch {
       toast.error(host._localize("dashboard.logs_web_serial_open_failed"), {
         richColors: true,

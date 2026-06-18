@@ -8,6 +8,7 @@ import {
   parseYamlTopLevelSections,
   resolveCurrentFromLine,
   sectionAtLine,
+  sectionKeyOf,
   type YamlSection,
 } from "../../src/util/yaml-sections.js";
 
@@ -50,6 +51,41 @@ wifi:
     expect(sections[0].parentKey).toBe("sensor");
     expect(sections[1].platform).toBe("bme280");
     expect(sections[1].name).toBe("bedroom");
+  });
+
+  it("resolves a bare-mapping platform section to its platform editor (#1436)", () => {
+    const yaml = `ota:
+  platform: esphome
+  password: "x"
+`;
+    const sections = parseYamlTopLevelSections(yaml);
+    expect(sections).toHaveLength(1);
+    expect(sections[0].key).toBe("ota");
+    expect(sections[0].platform).toBe("esphome");
+    expect(sections[0].parentKey).toBeUndefined();
+    expect(sectionKeyOf(sections[0])).toBe("ota.esphome");
+  });
+
+  it("leaves a plain singleton without a platform key", () => {
+    const yaml = `logger:
+  level: DEBUG
+`;
+    const sections = parseYamlTopLevelSections(yaml);
+    expect(sections[0].platform).toBeUndefined();
+    expect(sectionKeyOf(sections[0])).toBe("logger");
+  });
+
+  it("ignores a nested platform: deeper than the singleton's direct keys", () => {
+    // The direct-child indent guard must keep a nested ``platform:``
+    // from overriding the section's own (mirrors the id/name guard).
+    const yaml = `ota:
+  platform: esphome
+  some_block:
+    platform: bogus
+`;
+    const sections = parseYamlTopLevelSections(yaml);
+    expect(sections[0].platform).toBe("esphome");
+    expect(sectionKeyOf(sections[0])).toBe("ota.esphome");
   });
 
   it("extracts continuation id/name when the dash has extra spaces", () => {
@@ -299,7 +335,7 @@ sensor:
   //   6: logger:                — logger [6..7]
   //   7:   level: INFO
   //   8: (blank)                — gap
-  //   9: sensor:                — covered by list-item ranges (no parent)
+  //   9: sensor:                — header line, selects the first item (dht)
   //  10:   - platform: dht      — sensor.dht [10..12]
   //  11:     name: kitchen
   //  12:     pin: D1
@@ -329,6 +365,22 @@ sensor:
   it("crosses to the next list item", () => {
     const m = sectionAtLine(yaml, 13);
     expect(m?.platform).toBe("bme280");
+  });
+
+  it("selects the first item when the bare-sequence header line is clicked", () => {
+    // `sensor:` header isn't covered by any item range; the click should
+    // still land on the first instance instead of leaving the selection put.
+    const m = sectionAtLine(yaml, 9);
+    expect(m?.key).toBe("sensor");
+    expect(m?.platform).toBe("dht");
+    expect(m?.fromLine).toBe(10); // the dash line, so the loader parses it
+  });
+
+  it("selects the first item for a bare-sequence header with a trailing comment", () => {
+    const commented = `sensor:  # my sensors\n  - platform: dht\n    name: x\n`;
+    const m = sectionAtLine(commented, 1);
+    expect(m?.key).toBe("sensor");
+    expect(m?.platform).toBe("dht");
   });
 
   it("returns null for the file header above the first section", () => {

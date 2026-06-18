@@ -30,6 +30,7 @@ import {
 } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { withBase } from "../util/base-path.js";
+import { deviceLayoutToPref, prefToDeviceLayout } from "../util/editor-layout.js";
 import { consumeJustCreated } from "../util/just-created.js";
 import { navigate, setLeaveGuard } from "../util/navigation.js";
 import { postInstallShowLogsHandler } from "../util/post-install-logs.js";
@@ -134,6 +135,12 @@ export class ESPHomePageDevice extends LitElement {
 
   @state()
   private _scrollToHighlight = false;
+
+  /** Lifecycle of an error-jump highlight (the validation prompt's
+   *  "Go to error"): "active" until the user edits, "edited" after,
+   *  which arms the next lint pass to clear the highlight. Navigation
+   *  and field-focus highlights stay "none". */
+  private _errorHighlight: "none" | "active" | "edited" = "none";
 
   @state()
   private _selectedSection: string | null = this._readUrlParam("section", null);
@@ -538,18 +545,34 @@ export class ESPHomePageDevice extends LitElement {
     }
   };
 
+  private _readStoredLayout(): DeviceLayoutMode | null {
+    const stored = localStorage.getItem("esphome-editor-layout");
+    return stored === "both" || stored === "left" || stored === "right" ? stored : null;
+  }
+
   private async _loadPreferences() {
-    // Editor layout stored locally (not in backend preferences)
-    const savedLayout = localStorage.getItem("esphome-editor-layout");
-    if (savedLayout === "both" || savedLayout === "left" || savedLayout === "right") {
+    // localStorage is the instant per-browser seed; the backend pref below is
+    // the durable cross-browser source when localStorage is empty.
+    const savedLayout = this._readStoredLayout();
+    if (savedLayout) {
       this._layout = savedLayout;
     }
 
     try {
       const prefs = await this._api.getPreferences();
       this._navCollapsed = !prefs.navigator_visible;
-    } catch {
-      // Preferences not critical — use defaults
+      // No local layout yet (new browser): restore the backend choice, which
+      // defaults to the split view on a fresh install. Re-check after the
+      // await: a toggle during the in-flight fetch writes a valid value that
+      // must win, but a stale invalid value still seeds from the backend.
+      if (!savedLayout && this._readStoredLayout() === null) {
+        this._layout = prefToDeviceLayout(prefs.device_editor_layout);
+      }
+    } catch (err) {
+      // Preferences not critical; fall back to defaults. Logged so a YAML
+      // user silently dropped into the non-YAML first-open layout is
+      // diagnosable.
+      console.warn("Failed to load device preferences:", err);
     }
   }
 
@@ -618,8 +641,7 @@ export class ESPHomePageDevice extends LitElement {
     // event, but the navigator's update-from-prop-change path
     // doesn't emit, so URL-only arrivals would otherwise mount
     // the editor without ever scrolling.
-    this._highlightRange = resolved.range;
-    this._scrollToHighlight = true;
+    this._setHighlight(resolved.range, true);
   }
 
   /** Promise resolver wired up while the validation dialog is open.
@@ -758,6 +780,12 @@ export class ESPHomePageDevice extends LitElement {
         console.error("Failed to save YAML:", e);
       }
     }
+    // A committed save ends the fix-the-error errand the error-jump
+    // highlight was guiding (validation passed, or the user chose
+    // "Save anyway"), so drop it. A failed save keeps it.
+    if (saved && this._errorHighlight !== "none") {
+      this._setHighlight(null, false);
+    }
     const message = saved ? "device.yaml_saved" : "device.yaml_save_error";
     const variant = saved ? toast.success : toast.error;
     variant(this._localize(message), { richColors: true });
@@ -782,11 +810,11 @@ export class ESPHomePageDevice extends LitElement {
       // to the split view so the user actually sees where they're
       // landing.
       if (this._layout === "left") {
-        this._layout = "both";
-        localStorage.setItem("esphome-editor-layout", "both");
+        // Implicit expand to reveal the error: cache it locally but don't
+        // record it as the user's durable layout preference.
+        this._cacheLayout("both");
       }
-      this._highlightRange = { fromLine: line, toLine: line };
-      this._scrollToHighlight = true;
+      this._setHighlight({ fromLine: line, toLine: line }, true, true);
       const resolved = resolveSectionForUrlLine(this._yaml, line, null);
       if (resolved) {
         this._selectedSection = resolved.sectionKey;
@@ -887,6 +915,7 @@ export class ESPHomePageDevice extends LitElement {
           @section-reveal=${this._onSectionReveal}
           @layout-change=${this._onLayoutChange}
           @yaml-change=${this._onYamlChange}
+          @yaml-diagnostics=${this._onYamlDiagnostics}
           @yaml-cursor-line=${this._onYamlCursorLine}
           @yaml-highlight=${this._onYamlHighlight}
           @yaml-updated=${this._onYamlUpdated}
@@ -1005,8 +1034,7 @@ export class ESPHomePageDevice extends LitElement {
         this._selectedSection = null;
         this._selectedFromLine = undefined;
       }
-      this._highlightRange = null;
-      this._scrollToHighlight = false;
+      this._setHighlight(null, false);
       this._updateUrl();
     });
   };
@@ -1089,8 +1117,23 @@ export class ESPHomePageDevice extends LitElement {
   }
 
   private _onLayoutChange(e: CustomEvent<DeviceLayoutMode>) {
-    this._layout = e.detail;
-    localStorage.setItem("esphome-editor-layout", e.detail);
+    this._persistLayout(e.detail);
+  }
+
+  // Instant per-browser cache only; used for implicit layout changes (e.g.
+  // auto-expanding to show a validation error) that shouldn't become the
+  // user's durable cross-browser preference.
+  private _cacheLayout(mode: DeviceLayoutMode) {
+    this._layout = mode;
+    localStorage.setItem("esphome-editor-layout", mode);
+  }
+
+  // A deliberate toggle: cache locally and record the cross-browser pref.
+  private _persistLayout(mode: DeviceLayoutMode) {
+    this._cacheLayout(mode);
+    this._api
+      .updatePreferences({ device_editor_layout: deviceLayoutToPref(mode) })
+      .catch((err) => console.warn("Failed to persist device layout preference:", err));
   }
 
   /**
@@ -1115,9 +1158,30 @@ export class ESPHomePageDevice extends LitElement {
     ></esphome-device-navigator>`;
   }
 
+  /** Advance the YAML buffer. Any mutation while an error-jump
+   *  highlight is active (YAML-pane typing, form drafts, completed
+   *  component edits) arms the next lint pass to clear it. */
+  private _setYaml(value: string) {
+    this._yaml = value;
+    if (this._errorHighlight === "active") this._errorHighlight = "edited";
+  }
+
   private _onYamlChange(e: CustomEvent<{ value: string }>) {
-    this._yaml = e.detail.value;
+    this._setYaml(e.detail.value);
     this._retryPendingFieldLine();
+  }
+
+  /** Inline lint pass completed. If the user has edited since jumping
+   *  to the error, the highlight has served its purpose; clear it
+   *  rather than leave a stale blue line the user can't dismiss
+   *  (esphome/device-builder#1404). */
+  private _onYamlDiagnostics(
+    e: CustomEvent<{ errors: string[]; configuration: string }>
+  ) {
+    if (e.detail.configuration !== this.id) return;
+    if (this._errorHighlight === "edited") {
+      this._setHighlight(null, false);
+    }
   }
 
   /**
@@ -1208,8 +1272,7 @@ export class ESPHomePageDevice extends LitElement {
     const section = this._focusedSection();
     const line = section ? findFieldLine(this._yaml, section, path) : null;
     if (line !== null) {
-      this._highlightRange = { fromLine: line, toLine: line };
-      this._scrollToHighlight = true;
+      this._setHighlight({ fromLine: line, toLine: line }, true);
     }
     return { section, found: line !== null };
   }
@@ -1230,10 +1293,10 @@ export class ESPHomePageDevice extends LitElement {
       section: this._selectedSection,
       fromLine: this._selectedFromLine,
     };
-    this._highlightRange = section
-      ? { fromLine: section.fromLine, toLine: section.toLine }
-      : null;
-    this._scrollToHighlight = section !== undefined;
+    this._setHighlight(
+      section ? { fromLine: section.fromLine, toLine: section.toLine } : null,
+      section !== undefined
+    );
   }
 
   /** Once the pending field's YAML line exists (debounced write landed),
@@ -1260,8 +1323,15 @@ export class ESPHomePageDevice extends LitElement {
   private _onYamlHighlight(
     e: CustomEvent<{ range: HighlightRange | null; scroll: boolean }>
   ) {
-    this._highlightRange = e.detail.range;
-    this._scrollToHighlight = e.detail.scroll;
+    this._setHighlight(e.detail.range, e.detail.scroll);
+  }
+
+  /** Single write path for the editor highlight, so the error-jump
+   *  flag can't leak into navigation / field-focus highlights. */
+  private _setHighlight(range: HighlightRange | null, scroll: boolean, isError = false) {
+    this._highlightRange = range;
+    this._scrollToHighlight = scroll;
+    this._errorHighlight = isError && range !== null ? "active" : "none";
   }
 
   private _onYamlUpdated(e: CustomEvent<{ yaml: string }>) {
@@ -1275,7 +1345,7 @@ export class ESPHomePageDevice extends LitElement {
      * ``yaml-draft`` event (see ``_onYamlDraft`` below) which
      * advances only ``_yaml`` — those are committed via the right-
      * pane Save button. */
-    this._yaml = e.detail.yaml;
+    this._setYaml(e.detail.yaml);
     this._savedYaml = e.detail.yaml;
   }
 
@@ -1285,7 +1355,7 @@ export class ESPHomePageDevice extends LitElement {
      * in the YAML pane. Only ``_yaml`` advances; ``_savedYaml``
      * stays put so the right-pane Save button activates and the
      * user sees the buffer is dirty. */
-    this._yaml = e.detail.yaml;
+    this._setYaml(e.detail.yaml);
     this._retryPendingFieldLine();
   }
 

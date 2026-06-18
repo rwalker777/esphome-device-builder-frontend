@@ -13,6 +13,7 @@ import { findUsedPins, sectionEndLine } from "../../util/config-entry-yaml-scan.
 import { isPlainObject, isPrimitiveOrNullish } from "../../util/nested-values.js";
 import { formatPinValue, parsePinGpio } from "../../util/pin-gpio.js";
 import { expandPinModeShorthand } from "../../util/pin-mode.js";
+import { renderDisclosure } from "../shared/disclosure.js";
 import {
   effectiveDisabled,
   fieldKeyAttr,
@@ -45,6 +46,24 @@ interface PinOptionView {
   /** Positively carries the field's required features and has no direction
    *  conflict — grouped under "Supports …". */
   supported: boolean;
+}
+
+/** Resolve a pin value that names a pin by alias (ESP8266 ``RX``, ``D1``)
+ *  to its GPIO, so the option still selects when the value isn't a
+ *  ``GPIOn`` form ``parsePinGpio`` recognises. Reads the bare string or a
+ *  long-form block's ``number``; matches the catalog's per-pin ``aliases``
+ *  case-insensitively. ``null`` when nothing matches. */
+function gpioFromAlias(rawValue: unknown, pins: BoardPin[]): number | null {
+  const name =
+    typeof rawValue === "string"
+      ? rawValue.trim()
+      : isPlainObject(rawValue) && typeof rawValue.number === "string"
+        ? rawValue.number.trim()
+        : "";
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  const match = pins.find((p) => p.aliases?.some((a) => a.toLowerCase() === lower));
+  return match ? match.gpio : null;
 }
 
 function buildPinOption(
@@ -182,7 +201,10 @@ export function renderPinField(
   // for nRF52), so normalise before comparing or the disabled select renders
   // blank.
   const rawValue = ctx.getAt(path);
-  const valueGpio = parsePinGpio(rawValue);
+  // Fall back to alias resolution (`RX` → GPIO3) when the value isn't a
+  // `GPIOn` form; this drives both the selected option and the re-add of a
+  // filtered-out active pin below.
+  const valueGpio = parsePinGpio(rawValue) ?? gpioFromAlias(rawValue, ctx.board.pins);
   const platform = ctx.board.esphome.platform;
   // Fallback to ``String(rawValue)`` only when the value is a
   // primitive — js-yaml emits null-prototype maps for partial /
@@ -198,6 +220,19 @@ export function renderPinField(
         ? String(rawValue ?? "")
         : "";
   const invalid = ctx.errorAt(path) !== null;
+  // When the field is unset, grey the schema default in the box (parity with
+  // the select renderer). A default named by alias (i2c ``sda: SDA``) resolves
+  // to its GPIO so the box shows the real pin label rather than the raw name.
+  const defaultGpio =
+    entry.default_value != null
+      ? (parsePinGpio(entry.default_value) ??
+        gpioFromAlias(entry.default_value, ctx.board.pins))
+      : null;
+  const defaultPlaceholder =
+    defaultGpio !== null
+      ? (ctx.board.pins.find((p) => p.gpio === defaultGpio)?.label ??
+        formatPinValue(defaultGpio, platform))
+      : "";
   // Show every board pin; a pin that doesn't match the field's required
   // features (or direction) isn't hidden — it's grouped under "Other pins"
   // and stays selectable (issue #1012). Only a direction conflict
@@ -270,6 +305,7 @@ export function renderPinField(
       <wa-select
         data-no-value-sync
         class=${invalid ? "invalid" : ""}
+        placeholder=${defaultPlaceholder}
         ?disabled=${fieldDisabled}
         @change=${onPinChange}
       >
@@ -366,21 +402,17 @@ function renderPinAdvanced(
       data-field-key="${advancedKey}"
       data-reveal-for="${fieldKeyAttr(path)}"
     >
-      <button
-        type="button"
-        class="pin-advanced-toggle"
-        aria-expanded=${isOpen}
-        ?disabled=${fieldDisabled}
-        @click=${onAdvancedToggle}
-      >
-        <wa-icon library="mdi" name=${isOpen ? "chevron-up" : "chevron-down"}></wa-icon>
-        <span>${ctx.localize("device.pin_advanced")}</span>
-      </button>
-      ${isOpen
-        ? html`<div class="pin-advanced-fields">
-            ${longFormFields.map((child) => renderLongFormChild(child, path, ctx))}
-          </div>`
-        : nothing}
+      ${renderDisclosure({
+        open: isOpen,
+        onToggle: onAdvancedToggle,
+        localize: ctx.localize,
+        labelKey: "device.pin_advanced",
+        variant: "quiet",
+        iconBefore: true,
+        disabled: fieldDisabled,
+        body: () =>
+          html`${longFormFields.map((child) => renderLongFormChild(child, path, ctx))}`,
+      })}
     </div>
   `;
 }

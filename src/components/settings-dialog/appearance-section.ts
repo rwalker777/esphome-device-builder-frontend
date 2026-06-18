@@ -1,15 +1,49 @@
 import { consume } from "@lit/context";
-import { LitElement, html } from "lit";
+import { mdiCodeBraces, mdiMagnify, mdiVectorDifference } from "@mdi/js";
+import { LitElement, css, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 
 import type { LocalizeFunc } from "../../common/localize.js";
-import { localizeContext } from "../../context/index.js";
+import {
+  expertModeContext,
+  localizeContext,
+  remoteComputeOnlyContext,
+} from "../../context/index.js";
+import { disclosureStyles } from "../../styles/disclosure.js";
 import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
+import { registerMdiIcons } from "../../util/register-icons.js";
+import { renderDisclosure } from "../shared/disclosure.js";
+import { renderToggleRow } from "./settings-rows.js";
 import { settingsRowStyles, settingsSharedStyles } from "./shared-styles.js";
 
+import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "@home-assistant/webawesome/dist/components/option/option.js";
 import "@home-assistant/webawesome/dist/components/select/select.js";
+
+registerMdiIcons({
+  "code-braces": mdiCodeBraces,
+  magnify: mdiMagnify,
+  "vector-difference": mdiVectorDifference,
+});
+
+const EXPERT_FEATURES: { icon: string; titleKey: string; descKey: string }[] = [
+  {
+    icon: "vector-difference",
+    titleKey: "settings.expert_mode_feature_diff",
+    descKey: "settings.expert_mode_feature_diff_desc",
+  },
+  {
+    icon: "magnify",
+    titleKey: "settings.expert_mode_feature_navigator",
+    descKey: "settings.expert_mode_feature_navigator_desc",
+  },
+  {
+    icon: "code-braces",
+    titleKey: "settings.expert_mode_feature_yaml",
+    descKey: "settings.expert_mode_feature_yaml_desc",
+  },
+];
 
 @customElement("esphome-settings-appearance")
 export class ESPHomeSettingsAppearance extends LitElement {
@@ -17,10 +51,81 @@ export class ESPHomeSettingsAppearance extends LitElement {
   @state()
   private _localize: LocalizeFunc = (key) => key;
 
+  @consume({ context: expertModeContext, subscribe: true })
+  @state()
+  private _expertMode = false;
+
+  @consume({ context: remoteComputeOnlyContext, subscribe: true })
+  @state()
+  private _remoteComputeOnly = false;
+
   @state()
   private _theme: string = localStorage.getItem("esphome-theme") ?? "system";
 
-  static styles = [espHomeStyles, inputStyles, settingsSharedStyles, settingsRowStyles];
+  // Collapsed by default so the feature list doesn't lengthen the page.
+  @state()
+  private _featuresOpen = false;
+
+  static styles = [
+    espHomeStyles,
+    inputStyles,
+    settingsSharedStyles,
+    settingsRowStyles,
+    disclosureStyles,
+    css`
+      .expert-row {
+        border-bottom: none;
+        padding-bottom: var(--wa-space-2xs);
+      }
+
+      .expert-features {
+        margin: var(--wa-space-s) 0 var(--wa-space-m);
+        padding: var(--wa-space-s) var(--wa-space-m);
+        background: var(--wa-color-surface-lowered);
+        border-radius: var(--wa-border-radius-m);
+      }
+
+      .expert-feature-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--wa-space-s);
+      }
+
+      .expert-feature {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--wa-space-s);
+      }
+
+      .expert-feature wa-icon {
+        font-size: 18px;
+        color: var(--esphome-primary);
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+
+      .expert-feature-text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+
+      .expert-feature-title {
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-semibold);
+        color: var(--wa-color-text-normal);
+      }
+
+      .expert-feature-desc {
+        font-size: var(--wa-font-size-xs);
+        color: var(--wa-color-text-quiet);
+      }
+    `,
+  ];
 
   protected render() {
     return html`
@@ -35,7 +140,63 @@ export class ESPHomeSettingsAppearance extends LitElement {
           <wa-option value="system">${this._localize("layout.theme_system")}</wa-option>
         </wa-select>
       </div>
+      ${this._renderExpertMode()} ${this._renderRemoteCompute()}
     `;
+  }
+
+  private _renderRemoteCompute() {
+    return renderToggleRow(this._localize, {
+      titleId: "remote-compute-title",
+      titleKey: "settings.remote_compute_only",
+      descKey: "settings.remote_compute_only_desc",
+      checked: this._remoteComputeOnly,
+      onToggle: this._onToggleRemoteCompute,
+    });
+  }
+
+  private _renderExpertMode() {
+    return html`
+      ${renderToggleRow(this._localize, {
+        titleId: "expert-mode-title",
+        titleKey: "settings.expert_mode",
+        descKey: "settings.expert_mode_desc",
+        checked: this._expertMode,
+        onToggle: this._onToggleExpertMode,
+        rowClass: "expert-row",
+      })}
+      <div class="expert-features">
+        ${renderDisclosure({
+          open: this._featuresOpen,
+          onToggle: () => this._onToggleFeatures(),
+          localize: this._localize,
+          labelKey: "settings.expert_mode_features_title",
+          variant: "heading",
+          body: () => html`
+            <ul class="expert-feature-list">
+              ${EXPERT_FEATURES.map(
+                (f) => html`
+                  <li class="expert-feature">
+                    <wa-icon library="mdi" name=${f.icon}></wa-icon>
+                    <div class="expert-feature-text">
+                      <span class="expert-feature-title">
+                        ${this._localize(f.titleKey)}
+                      </span>
+                      <span class="expert-feature-desc">
+                        ${this._localize(f.descKey)}
+                      </span>
+                    </div>
+                  </li>
+                `
+              )}
+            </ul>
+          `,
+        })}
+      </div>
+    `;
+  }
+
+  private _onToggleFeatures() {
+    this._featuresOpen = !this._featuresOpen;
   }
 
   private _onChange(e: Event) {
@@ -44,6 +205,26 @@ export class ESPHomeSettingsAppearance extends LitElement {
     this.dispatchEvent(
       new CustomEvent("set-theme", {
         detail: theme,
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private _onToggleExpertMode() {
+    this.dispatchEvent(
+      new CustomEvent("set-expert-mode", {
+        detail: !this._expertMode,
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private _onToggleRemoteCompute() {
+    this.dispatchEvent(
+      new CustomEvent("set-remote-compute-only", {
+        detail: !this._remoteComputeOnly,
         bubbles: true,
         composed: true,
       })

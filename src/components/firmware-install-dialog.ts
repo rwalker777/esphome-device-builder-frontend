@@ -5,6 +5,7 @@ import {
   mdiChevronDown,
   mdiChevronUp,
   mdiClose,
+  mdiDownload,
   mdiTextBoxOutline,
 } from "@mdi/js";
 import { LitElement, html } from "lit";
@@ -47,6 +48,7 @@ registerMdiIcons({
   "chevron-down": mdiChevronDown,
   "chevron-up": mdiChevronUp,
   close: mdiClose,
+  download: mdiDownload,
   "text-box-outline": mdiTextBoxOutline,
 });
 
@@ -293,6 +295,13 @@ export class ESPHomeFirmwareInstallDialog extends LitElement {
 
   _showLogsAgain = () => {
     if (this._detected) flipToLogs(this, this._detected.port);
+  };
+
+  // Re-run the Web Serial install after a flash failure: a full reset (_init) +
+  // fresh connect/flash, so a transient serial error (noise, dropped port) can
+  // be retried without closing and reopening the dialog.
+  _retry = () => {
+    if (this._device) this.installWebSerial(this._device);
   };
 
   _cancel = async () => {

@@ -184,6 +184,63 @@ describe("create-config-dialog create de-dupe + retry", () => {
   });
 });
 
+// A failed create shows a dialog-level error bar that outlives step changes.
+// Navigating (Back, or forward into a new step with another board) must clear
+// it so a stale message doesn't follow the user onto the next attempt (#1487).
+describe("create-config-dialog stale error on navigation", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  const errorText = (el: ESPHomeCreateConfigDialog): string | null =>
+    el.shadowRoot!.querySelector("p.error")?.textContent ?? null;
+
+  // Drive the dialog onto the setup step (where the Back button renders) by
+  // dispatching the next-step a board pick would.
+  function goToSetup(el: ESPHomeCreateConfigDialog, boardId = "esp32dev"): void {
+    el.shadowRoot!.querySelector("esphome-base-dialog")!.dispatchEvent(
+      new CustomEvent("next-step", {
+        detail: { step: "setup", board: { id: boardId } },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  it("clears the error when pressing Back after a failed create", async () => {
+    const createDevice = vi.fn().mockRejectedValue(new Error("boom"));
+    const el = await mount({ createDevice });
+
+    goToSetup(el);
+    await el.updateComplete;
+    emitFinish(el, "kitchen");
+    await flush();
+    await el.updateComplete;
+    expect(errorText(el)).not.toBeNull();
+
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".back-button")!.click();
+    await el.updateComplete;
+    expect(errorText(el)).toBeNull();
+  });
+
+  it("clears the error on forward (next-step) navigation", async () => {
+    const createDevice = vi.fn().mockRejectedValue(new Error("boom"));
+    const el = await mount({ createDevice });
+
+    goToSetup(el, "esp32dev");
+    await el.updateComplete;
+    emitFinish(el, "kitchen");
+    await flush();
+    await el.updateComplete;
+    expect(errorText(el)).not.toBeNull();
+
+    // Re-enter setup with a different board, as picking another board would.
+    goToSetup(el, "esp8266");
+    await el.updateComplete;
+    expect(errorText(el)).toBeNull();
+  });
+});
+
 // The migration onto esphome-base-dialog swapped the imperative
 // `_dialog.open = …` for a reactive `_open` flag. _onRequestClose flipping
 // _open back to false is the load-bearing part — without it a user-driven
@@ -437,5 +494,59 @@ describe("create-config-dialog upload overwrite", () => {
 
     expect(step(el)).toBe("method");
     expect(createDevice).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The "Advanced" disclosure flag lives on the dialog (not the method step) so
+// it survives the method element being unmounted and re-created when the user
+// navigates into an advanced option (empty-config / import) and back.
+describe("create-config-dialog advanced disclosure persistence", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  const methodEl = (el: ESPHomeCreateConfigDialog): HTMLElement | null =>
+    el.shadowRoot!.querySelector("esphome-wizard-step-method");
+
+  const advancedOpen = (el: ESPHomeCreateConfigDialog): boolean | undefined =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (methodEl(el) as any)?.advancedOpen;
+
+  function toggleAdvanced(el: ESPHomeCreateConfigDialog): void {
+    el.shadowRoot!.querySelector("esphome-base-dialog")!.dispatchEvent(
+      new CustomEvent("toggle-advanced", { bubbles: true, composed: true })
+    );
+  }
+
+  it("keeps Advanced open when navigating into empty-config and back", async () => {
+    const el = await mount({});
+    expect(advancedOpen(el)).toBe(false);
+
+    toggleAdvanced(el);
+    await el.updateComplete;
+    expect(advancedOpen(el)).toBe(true);
+
+    // Into the advanced option — the method element unmounts.
+    emitNextStep(el, "empty-config");
+    await el.updateComplete;
+    expect(methodEl(el)).toBeNull();
+
+    // Back to the chooser — the re-mounted method step still gets it open.
+    emitNextStep(el, "method");
+    await el.updateComplete;
+    expect(advancedOpen(el)).toBe(true);
+  });
+
+  it("starts collapsed again after the dialog is reopened", async () => {
+    const el = await mount({});
+    toggleAdvanced(el);
+    await el.updateComplete;
+    expect(advancedOpen(el)).toBe(true);
+
+    el.close();
+    await el.updateComplete;
+    el.open();
+    await el.updateComplete;
+    expect(advancedOpen(el)).toBe(false);
   });
 });

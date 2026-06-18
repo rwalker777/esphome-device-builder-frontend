@@ -39,4 +39,41 @@ describe("renderNestedField auto-expand", () => {
     renderNestedField(rawEntry(), ["raw"], ctx);
     expect(open.has("raw")).toBe(false);
   });
+
+  it("seeds a required group open even with no value", () => {
+    // ethernet's clk: required group whose required children would
+    // otherwise hide behind a collapsed header.
+    const entry = makeEntry(ConfigEntryType.NESTED, {
+      key: "clk",
+      required: true,
+      config_entries: [makeEntry(ConfigEntryType.PIN, { key: "pin", required: true })],
+    });
+    const { ctx, open } = ctxWithOpenSet({});
+    renderNestedField(entry, ["clk"], ctx);
+    expect(open.has("clk")).toBe(true);
+  });
+
+  it("collapses an optional empty group in the add dialog (#1423)", () => {
+    // requiredOnly no longer forces every group open; an optional empty
+    // reading (ags10's resistance) stays collapsed so it doesn't overload
+    // the dialog.
+    const entry = makeEntry(ConfigEntryType.NESTED, {
+      key: "resistance",
+      platform_type: "sensor",
+      config_entries: [makeEntry(ConfigEntryType.STRING, { key: "name" })],
+    });
+    const open = new Set<string>();
+    const ctx = makeRenderCtx(
+      {},
+      {
+        overrides: {
+          requiredOnly: true,
+          nestedOpenSections: open,
+          seedNestedOpen: (k: string) => open.add(k),
+        },
+      }
+    );
+    renderNestedField(entry, ["resistance"], ctx);
+    expect(open.has("resistance")).toBe(false);
+  });
 });

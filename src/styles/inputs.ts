@@ -8,6 +8,31 @@
  */
 import { css } from "lit";
 
+/**
+ * Compact search-field height, shared so the dashboard and navigator
+ * searches stay in lockstep. Inline into whichever element draws the
+ * border (the dashboard ``input``, the navigator ``.search`` wrapper).
+ */
+export const searchControlBox = css`
+  min-height: var(--esphome-control-height);
+  box-sizing: border-box;
+`;
+
+/** Search-field text sizing, paired with {@link searchControlBox} on the input. */
+export const searchControlText = css`
+  font-size: var(--wa-font-size-s);
+  line-height: var(--wa-form-control-value-line-height);
+`;
+
+/**
+ * Focus treatment shared by native inputs and the search wrappers that
+ * carry the border themselves, so the focus ring stays in lockstep.
+ */
+export const inputFocusRing = css`
+  border-color: var(--esphome-primary);
+  box-shadow: var(--esphome-focus-ring);
+`;
+
 export const inputStyles = css`
   input[type="text"],
   input[type="number"],
@@ -42,8 +67,7 @@ export const inputStyles = css`
   }
 
   input:focus {
-    border-color: var(--esphome-primary);
-    box-shadow: var(--esphome-focus-ring);
+    ${inputFocusRing}
   }
 
   input:disabled {
@@ -96,6 +120,22 @@ export const inputStyles = css`
 
   wa-select.invalid:focus-within::part(combobox) {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--esphome-error), transparent 80%);
+  }
+
+  /* Default option in a select menu: a label with a quiet second line, so
+     the default stays identifiable even though wa-select activates the
+     first option when nothing is committed. Mirrors the pin menu's notes. */
+  .option-default-stack {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.25;
+  }
+
+  .option-default-note {
+    font-size: var(--wa-font-size-2xs);
+    color: var(--wa-color-text-quiet);
+    font-style: italic;
   }
 
   wa-select::part(listbox) {

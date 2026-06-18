@@ -6,11 +6,12 @@ import type { ArchivedDevice, BulkActionResult } from "../../api/types/system.js
 import type { LocalizeFunc } from "../../common/localize.js";
 import { withBase } from "../../util/base-path.js";
 import { getErrorMessage } from "../../util/error-message.js";
-import { ESPHomeLogParser } from "../../util/esphome-log-parser.js";
+import { ESPHomeLogParser, isLikelyGarbageLine } from "../../util/esphome-log-parser.js";
 import {
   connectToPort,
   detectChip,
   disconnect,
+  isPortPickerCancel,
   readDeviceManifest,
   readMacAddress,
 } from "../../util/web-serial.js";
@@ -359,7 +360,18 @@ export async function detectAndOpenWizard(
     }
 
     createDialog.openAtBoardStep(chipNameToFilterLabel(chipName) ?? undefined);
-  } catch {
+  } catch (err) {
+    // Detection failed (or the picker was cancelled) — the wizard still
+    // opens so the user can pick a board by hand, but a real connect
+    // failure gets named instead of vanishing (#1414).
+    if (!isPortPickerCancel(err) && options.localize) {
+      toast.error(
+        options.localize("dashboard.serial_connect_failed", {
+          error: getErrorMessage(err),
+        }),
+        { richColors: true }
+      );
+    }
     createDialog.open("board");
   }
 }
@@ -447,6 +459,12 @@ export function streamSerialToDialog(port: any, dialog: any): () => void {
                replaces it in place — so a stream of CRLF-terminated
                boot lines would collapse to just the last one. */
             const cleaned = line.endsWith("\r") ? line.slice(0, -1) : line;
+            // Drop mis-sampled UART garbage (e.g. an ESP8266's 74880-baud boot
+            // banner read at the app's baud) before it reaches the parser, so it
+            // neither pollutes the carried prefix/color nor floods the view.
+            if (isLikelyGarbageLine(cleaned)) {
+              continue;
+            }
             /* Stamp every line — including blanks — at receive time
                so the log pane shows the same ``[HH:MM:SS]`` anchor it
                does for WS-fed sessions. esphome/dashboard's
@@ -458,7 +476,7 @@ export function streamSerialToDialog(port: any, dialog: any): () => void {
             // Keep draining while paused (Stop) but don't display, so resume
             // needs no port reopen / device reset (#526).
             if (!dialog._serialPaused) {
-              dialog._lines = [...dialog._lines, stamped];
+              dialog._enqueueLine(stamped);
             }
           }
         }

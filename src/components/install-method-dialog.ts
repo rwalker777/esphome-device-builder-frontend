@@ -19,6 +19,7 @@ import { DeviceState } from "../api/types/devices.js";
 import type { LocalizeFunc } from "../common/localize.js";
 import { apiContext, localizeContext } from "../context/index.js";
 import { primaryDialogHeaderStyles } from "../styles/dialog-header.js";
+import { disclosureStyles } from "../styles/disclosure.js";
 import { inputStyles } from "../styles/inputs.js";
 import { newItemHighlightStyles } from "../styles/new-item-highlight.js";
 import { espHomeStyles } from "../styles/shared.js";
@@ -31,6 +32,7 @@ import {
   type WebSerialAvailability,
 } from "../util/web-serial.js";
 import { installMethodDialogStyles } from "./install-method-dialog.styles.js";
+import { renderDisclosure } from "./shared/disclosure.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
@@ -112,14 +114,24 @@ export class ESPHomeInstallMethodDialog extends LitElement {
   }
 
   /**
-   * web.esphome.io / esp-web-tools only supports ESP32 (all variants)
-   * and ESP8266. UF2 platforms (RP2040, nrf52, libretiny) ship a
-   * different binary format that the browser flasher can't handle, so
-   * we hide the option entirely for those.
+   * ESP32 (all variants) and ESP8266 / ESP8285 — the only chips the browser
+   * flashers can handle. Both Web Serial (esptool-js) and web.esphome.io /
+   * esp-web-tools speak the esptool ROM protocol. Non-ESP targets can't be
+   * flashed from the browser: RP2040 / RP2350 and nrf52 use a BOOTSEL /
+   * 1200-baud touch + UF2 mass-storage copy, and libretiny (bk72xx / rtl87xx /
+   * ln882x) uses ltchiptool's own serial protocol — only the backend
+   * (`esphome run` / server-serial) flashes those. So the Web Serial and
+   * web-download rows are hidden for them.
+   *
+   * Fail-closed: an empty / unknown platform returns false, so we never offer a
+   * browser flasher that won't work (server-serial / OTA stay). target_platform
+   * is reliably populated for configured devices, so this only ever hides Web
+   * Serial transiently before metadata loads.
    */
-  private get _supportsWebDownload(): boolean {
+  private get _isEsptoolPlatform(): boolean {
     const p = this.deviceTargetPlatform.toLowerCase();
-    return p.startsWith("esp32") || p === "esp8266";
+    // esp82… covers esp8266 and esp8285.
+    return p.startsWith("esp32") || p.startsWith("esp82");
   }
 
   protected willUpdate(changed: Map<string, unknown>) {
@@ -139,6 +151,7 @@ export class ESPHomeInstallMethodDialog extends LitElement {
 
   static styles = [
     espHomeStyles,
+    disclosureStyles,
     primaryDialogHeaderStyles,
     inputStyles,
     newItemHighlightStyles,
@@ -174,8 +187,12 @@ export class ESPHomeInstallMethodDialog extends LitElement {
     // Replaces the disabled WebSerial row with web-download when
     // not online (offline or unknown) and no Web Serial. OTA is
     // offered above but may fail; web-download always works.
+    // Browser flashers (Web Serial esptool-js, web.esphome.io) are ESP-only.
+    // Non-ESP targets (RP2040 / RP2350, nrf52, libretiny) flash over serial
+    // only via the backend (`esphome run` / server-serial), never the browser.
+    const isEsptool = this._isEsptoolPlatform;
     const swapInWebDownload =
-      this.mode === "install" && !hasWebSerial && !isOnline && this._supportsWebDownload;
+      this.mode === "install" && !hasWebSerial && !isOnline && isEsptool;
     // On localhost the WebSerial option and the server-serial option
     // target the same physical USB stack. There are two collapse cases:
     //
@@ -191,7 +208,10 @@ export class ESPHomeInstallMethodDialog extends LitElement {
     // KEEP the disabled row — it carries an actionable "open at 127.0.0.1 /
     // https" fix, so it isn't dead weight. On HA / remote both rows point at
     // different machines, so both always stay.
-    const showServerSerialRow = !(env === "localhost" && hasWebSerial);
+    // Only collapse the server-serial row in favour of Web Serial when Web
+    // Serial is actually shown (esptool platform) — otherwise a non-ESP device
+    // on localhost would lose its only working serial path.
+    const showServerSerialRow = !(env === "localhost" && hasWebSerial && isEsptool);
     const dropDisabledWebSerial =
       env === "localhost" && availability === "unsupported" && !swapInWebDownload;
     const serverSerialKeys = this._serverSerialCopyKeys(env);
@@ -201,9 +221,9 @@ export class ESPHomeInstallMethodDialog extends LitElement {
         ${this._renderOtaOption(isOnline)}
         ${swapInWebDownload
           ? this._renderWebDownloadOption()
-          : dropDisabledWebSerial
-            ? nothing
-            : this._renderWebSerialOption(availability)}
+          : isEsptool && !dropDisabledWebSerial
+            ? this._renderWebSerialOption(availability)
+            : nothing}
         ${showServerSerialRow
           ? html`<div class="option" @click=${this._onServerSerial}>
               <wa-icon library="mdi" name="serial-port"></wa-icon>
@@ -469,31 +489,20 @@ export class ESPHomeInstallMethodDialog extends LitElement {
    * option (compile here, flash with an external tool).
    */
   private _renderAdvancedSection() {
-    const expanded = this._advancedExpanded;
-    return html`
-      <button
-        type="button"
-        class="advanced-toggle"
-        aria-expanded=${expanded ? "true" : "false"}
-        aria-controls=${expanded ? "advanced-panel" : nothing}
-        @click=${this._onToggleAdvanced}
-      >
-        ${this._localize("dashboard.install_method_advanced_toggle")}
-        <wa-icon
-          class="advanced-toggle__chevron"
-          library="mdi"
-          name=${expanded ? "chevron-up" : "chevron-down"}
-        ></wa-icon>
-      </button>
-      ${expanded
-        ? html`
-            <div id="advanced-panel" class="advanced-panel">
-              ${this._renderOtaAddressCard()}
-              ${this.mode === "install" ? this._renderManualDownloadOption() : nothing}
-            </div>
-          `
-        : nothing}
-    `;
+    return renderDisclosure({
+      open: this._advancedExpanded,
+      onToggle: () => this._onToggleAdvanced(),
+      localize: this._localize,
+      labelKey: "dashboard.install_method_advanced_toggle",
+      variant: "link",
+      panelId: "advanced-panel",
+      body: () => html`
+        <div class="advanced-panel-content">
+          ${this._renderOtaAddressCard()}
+          ${this.mode === "install" ? this._renderManualDownloadOption() : nothing}
+        </div>
+      `,
+    });
   }
 
   /**

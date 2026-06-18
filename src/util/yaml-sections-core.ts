@@ -14,10 +14,13 @@ import { ESPHOME_YAML_INDENT } from "./esphome-yaml-lang.js";
 import { LIST_SECTIONS } from "./section-entry-overrides.js";
 import { indentOf, RE_PAIR_LINE, stripComment } from "./yaml-line-walker.js";
 import { splitInlineComment, stripQuotes } from "./yaml-scalar.js";
-import { endsBlockAtIndent } from "./yaml-section-lexer.js";
+import {
+  _skipBlankAndCommentLines,
+  endsBlockAtIndent,
+  LIST_ITEM_START_RE,
+  TOP_LEVEL_KEY_RE,
+} from "./yaml-section-lexer.js";
 
-/** A YAML list-item line: leading indent, a dash, then a space or EOL. */
-export const RE_LIST_ITEM = /^\s*-(\s|$)/;
 /** A field-path segment that addresses a list index (``["areas","0",…]``). */
 const RE_PATH_INDEX = /^\d+$/;
 
@@ -121,7 +124,7 @@ export function parseYamlTopLevelSections(yaml: string): YamlSection[] {
   const rawSections: Array<{ key: string; fromLine: number; toLine: number }> = [];
 
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
+    const match = lines[i].match(TOP_LEVEL_KEY_RE);
     if (match) {
       if (rawSections.length > 0) {
         // The previous section content ends one line before the new
@@ -187,7 +190,7 @@ export function _clearYamlSectionsMemo(): void {
 }
 
 /**
- * If a top-level section contains YAML list items (`  - `), expand each into
+ * If a top-level section contains YAML list items, expand each into
  * its own YamlSection with name, platform, and parentKey metadata.
  * Otherwise return the section as-is.
  */
@@ -211,27 +214,40 @@ function _expandListItems(
   const keyIdx = section.fromLine - 1; // 0-indexed line of the top-level key
   const endIdx = section.toLine - 1; // 0-indexed last line (inclusive)
 
-  // Find list item starts (`  - ` or `  -\n`)
-  const listStarts: number[] = [];
-  for (let i = keyIdx + 1; i <= endIdx; i++) {
-    if (/^  -\s/.test(lines[i]) || /^  -$/.test(lines[i])) {
-      listStarts.push(i);
-    }
-  }
+  // The section is a list iff its first content line is a dash. Its
+  // indent — column 0 (YAML's zero-indented sequence), 2, 4, ... —
+  // is the item indent; deeper dashes belong to nested sequences.
+  const firstContentIdx = _skipBlankAndCommentLines(lines, keyIdx + 1);
+  const firstContentIndent =
+    firstContentIdx <= endIdx ? lineIndent(lines[firstContentIdx]) : -1;
+
+  // A list iff the first content line is a dash; then every sibling dash at
+  // that indent is an item (shared with the reference scan's level walk).
+  const listStarts =
+    firstContentIdx <= endIdx && LIST_ITEM_START_RE.test(lines[firstContentIdx])
+      ? _dashesAtIndent(lines, firstContentIdx, endIdx, firstContentIndent)
+      : [];
 
   if (listStarts.length === 0) {
     // Single-instance section (e.g. `uart:` configured as a flat
     // dict with `id:`, `tx_pin:` etc. directly under it). Extract a
     // top-level `id:`/`name:` so the navigator can show them as the
-    // primary label instead of falling back to the bare key.
+    // primary label instead of falling back to the bare key, and a
+    // top-level `platform:` so a bare-mapping platform component (the
+    // legacy `ota:\n  platform: esphome` form) resolves to its
+    // `<key>.<platform>` editor like the `- platform:` list form does.
     let name = "";
     let id = "";
+    let platform = "";
     for (let i = keyIdx + 1; i <= endIdx; i++) {
-      // Only the block's own direct keys; deeper nested keys aren't the
-      // singleton's id/name.
-      if (lineIndent(lines[i]) !== ESPHOME_YAML_INDENT.length) continue;
+      // Only the block's own direct keys; deeper nested keys aren't
+      // the singleton's id/name, and a compact child sequence's
+      // `- id:` at the direct-child indent isn't either.
+      if (lineIndent(lines[i]) !== firstContentIndent) continue;
+      if (LIST_ITEM_START_RE.test(lines[i])) continue;
       name = readInstanceScalar(lines[i], "name") ?? name;
       id = readInstanceScalar(lines[i], "id") ?? id;
+      platform = readInstanceScalar(lines[i], "platform") ?? platform;
     }
     return [
       {
@@ -240,6 +256,7 @@ function _expandListItems(
         toLine: section.toLine,
         name: name || undefined,
         id: id || undefined,
+        platform: platform || undefined,
       },
     ];
   }
@@ -388,21 +405,6 @@ export function findFieldLine(
   if (relPath[0] === section.key) relPath = relPath.slice(1);
   if (relPath.length === 0) return null;
   const lines = yaml.split("\n");
-  const start = section.fromLine - 1;
-  const end = Math.min(section.toLine - 1, lines.length - 1);
-  if (start < 0 || start >= lines.length) return null;
-
-  // A dash item's inline key (``- name: x``) sits at the content column
-  // after ``- ``, not the dash column.
-  const keyIndentOf = (line: string): number =>
-    RE_LIST_ITEM.test(line) ? listItemChildIndent(line) : indentOf(line);
-  const firstChildIndent = (lo: number, hi: number): number | null => {
-    for (let i = lo; i <= hi; i++) {
-      const s = stripComment(lines[i]);
-      if (s.trim()) return indentOf(s);
-    }
-    return null;
-  };
 
   // Descend *path* within [lo, hi]; keys / dashes for this level sit at
   // *baseIndent*.
@@ -414,23 +416,17 @@ export function findFieldLine(
   ): number | null => {
     const seg = path[0];
     const rest = path.slice(1);
-    if (RE_PATH_INDEX.test(seg)) {
-      const dashes: number[] = [];
-      for (let i = lo; i <= hi; i++) {
-        const s = stripComment(lines[i]);
-        if (s.trim() && indentOf(s) === baseIndent && RE_LIST_ITEM.test(s))
-          dashes.push(i);
-      }
-      // A numeric segment is a list index only where this level actually has
-      // dash items; with none it's a literal numeric mapping key (a ``0:``
-      // substitution), so fall through to the key match below.
-      if (dashes.length) {
-        const itemLo = dashes[Number(seg)];
-        if (itemLo === undefined) return null;
-        if (rest.length === 0) return itemLo + 1;
-        const itemHi = Number(seg) + 1 < dashes.length ? dashes[Number(seg) + 1] - 1 : hi;
-        return descend(itemLo, itemHi, listItemChildIndent(lines[itemLo]), rest);
-      }
+    // A numeric segment is a list index only when this level actually is a
+    // list (first content line a dash); otherwise it's a literal numeric
+    // mapping key (a ``0:`` substitution) and falls through to the key match.
+    // A compact block-sequence value deeper in a mapping must not flip this.
+    if (RE_PATH_INDEX.test(seg) && _levelIsList(lines, lo, hi, baseIndent)) {
+      const dashes = _dashesAtIndent(lines, lo, hi, baseIndent);
+      const itemLo = dashes[Number(seg)];
+      if (itemLo === undefined) return null;
+      if (rest.length === 0) return itemLo + 1;
+      const itemHi = Number(seg) + 1 < dashes.length ? dashes[Number(seg) + 1] - 1 : hi;
+      return descend(itemLo, itemHi, listItemChildIndent(lines[itemLo]), rest);
     }
     for (let i = lo; i <= hi; i++) {
       const s = stripComment(lines[i]);
@@ -438,26 +434,160 @@ export function findFieldLine(
       const m = s.match(RE_PAIR_LINE);
       if (!m || m[1] !== seg) continue;
       if (rest.length === 0) return i + 1;
-      let blockHi = hi;
-      for (let j = i + 1; j <= hi; j++) {
-        // Shared block-end rule: a same-indent compact block-sequence
-        // value (``key:\n- a\n- b``) stays in the block; comments don't end it.
-        if (endsBlockAtIndent(lines[j], baseIndent)) {
-          blockHi = j - 1;
-          break;
-        }
-      }
-      const childIndent = firstChildIndent(i + 1, blockHi);
+      const blockHi = _blockEndAtIndent(lines, i + 1, hi, baseIndent);
+      const childIndent = firstContentIndentIn(lines, i + 1, blockHi);
       return childIndent === null ? null : descend(i + 1, blockHi, childIndent, rest);
     }
     return null;
   };
 
-  if (RE_LIST_ITEM.test(lines[start])) {
-    // List-item section: keys live at the item's child indent, and the
-    // header line itself carries the inline key.
-    return descend(start, end, listItemChildIndent(lines[start]), relPath);
+  const body = _sectionScanStart(lines, section);
+  return body === null ? null : descend(body.lo, body.hi, body.baseIndent, relPath);
+}
+
+/** Indent at which a line's key sits: a dash item's inline key (``- name: x``)
+ *  is at the content column after ``- ``, not the dash column. */
+function keyIndentOf(line: string): number {
+  return LIST_ITEM_START_RE.test(line) ? listItemChildIndent(line) : indentOf(line);
+}
+
+/** Raw indent column of the first non-blank line in [lo, hi], or null. */
+function firstContentIndentIn(lines: string[], lo: number, hi: number): number | null {
+  for (let i = lo; i <= hi; i++) {
+    const s = stripComment(lines[i]);
+    if (s.trim()) return indentOf(s);
   }
-  const childIndent = firstChildIndent(start + 1, end);
-  return childIndent === null ? null : descend(start + 1, end, childIndent, relPath);
+  return null;
+}
+
+/** Line indices of the list-item dashes sitting at exactly *indent* in [lo, hi]. */
+function _dashesAtIndent(
+  lines: string[],
+  lo: number,
+  hi: number,
+  indent: number
+): number[] {
+  const dashes: number[] = [];
+  for (let i = lo; i <= hi; i++) {
+    const s = stripComment(lines[i]);
+    if (s.trim() && indentOf(s) === indent && LIST_ITEM_START_RE.test(s)) dashes.push(i);
+  }
+  return dashes;
+}
+
+/** Last line of the block a key at *baseIndent* opens: the line before the
+ *  next sibling at or above *baseIndent*. A same-indent compact block-sequence
+ *  value (``key:\n- a``) and comments don't end it (see {@link endsBlockAtIndent}). */
+function _blockEndAtIndent(
+  lines: string[],
+  afterLine: number,
+  hi: number,
+  baseIndent: number
+): number {
+  for (let j = afterLine; j <= hi; j++) {
+    if (endsBlockAtIndent(lines[j], baseIndent)) return j - 1;
+  }
+  return hi;
+}
+
+/** Where to begin scanning *section*'s body: a list-item section starts at its
+ *  header (inline key at the item's child indent); a flat section opens below
+ *  its key line. Null when the section range is empty / out of bounds. */
+function _sectionScanStart(
+  lines: string[],
+  section: YamlSection
+): { lo: number; hi: number; baseIndent: number } | null {
+  const start = section.fromLine - 1;
+  const hi = Math.min(section.toLine - 1, lines.length - 1);
+  if (start < 0 || start >= lines.length) return null;
+  if (LIST_ITEM_START_RE.test(lines[start])) {
+    return { lo: start, hi, baseIndent: listItemChildIndent(lines[start]) };
+  }
+  const baseIndent = firstContentIndentIn(lines, start + 1, hi);
+  return baseIndent === null ? null : { lo: start + 1, hi, baseIndent };
+}
+
+/** Whether [lo, hi] is a YAML list at *levelIndent*: its *first* content line
+ *  is a dash there. Keying off the first line, not "any dash at this indent",
+ *  is what tells a list apart from a mapping that merely holds a compact
+ *  block-sequence value (``channels:\n- id: …``) deeper down. */
+function _levelIsList(
+  lines: string[],
+  lo: number,
+  hi: number,
+  levelIndent: number
+): boolean {
+  for (let i = lo; i <= hi; i++) {
+    const s = stripComment(lines[i]);
+    if (!s.trim()) continue;
+    return indentOf(s) === levelIndent && LIST_ITEM_START_RE.test(s);
+  }
+  return false;
+}
+
+/** Item sub-regions of [lo, hi] whose own keys sit at *levelIndent*: a list
+ *  yields one region per dash (keys at the dash's child indent); otherwise the
+ *  region is a single mapping (keys at *levelIndent*). */
+function _itemRegions(
+  lines: string[],
+  lo: number,
+  hi: number,
+  levelIndent: number
+): Array<{ lo: number; hi: number; keyIndent: number }> {
+  if (!_levelIsList(lines, lo, hi, levelIndent))
+    return [{ lo, hi, keyIndent: levelIndent }];
+  const dashes = _dashesAtIndent(lines, lo, hi, levelIndent);
+  return dashes.map((d, k) => ({
+    lo: d,
+    hi: k + 1 < dashes.length ? dashes[k + 1] - 1 : hi,
+    keyIndent: listItemChildIndent(lines[d]),
+  }));
+}
+
+/**
+ * Collect ``{id, name}`` for every instance at the key-path *path* within
+ * *section* (``["channels", "id"]`` → each usb_uart channel's id).
+ *
+ * Each segment is a mapping key; a segment whose value is a list expands over
+ * every item, so a nested-list provider (usb_uart channels, tca9548a channels)
+ * yields one entry per configured instance. The final segment is read as a
+ * scalar, its sibling ``name`` (if any) becoming the label. Takes pre-split
+ * *lines* so a caller scanning many sections / paths splits the YAML once.
+ */
+export function collectIdsAtPath(
+  lines: string[],
+  section: YamlSection,
+  path: string[]
+): Array<{ id: string; name: string }> {
+  if (path.length === 0) return [];
+  const out: Array<{ id: string; name: string }> = [];
+
+  const walk = (lo: number, hi: number, levelIndent: number, segs: string[]): void => {
+    for (const item of _itemRegions(lines, lo, hi, levelIndent)) {
+      if (segs.length === 1) {
+        let id = "";
+        let name = "";
+        for (let i = item.lo; i <= item.hi; i++) {
+          if (keyIndentOf(lines[i]) !== item.keyIndent) continue;
+          id = readInstanceScalar(lines[i], segs[0]) ?? id;
+          name = readInstanceScalar(lines[i], "name") ?? name;
+        }
+        if (id) out.push({ id, name });
+        continue;
+      }
+      for (let i = item.lo; i <= item.hi; i++) {
+        if (keyIndentOf(lines[i]) !== item.keyIndent) continue;
+        const m = stripComment(lines[i]).match(RE_PAIR_LINE);
+        if (!m || m[1] !== segs[0]) continue;
+        const blockHi = _blockEndAtIndent(lines, i + 1, item.hi, item.keyIndent);
+        const childIndent = firstContentIndentIn(lines, i + 1, blockHi);
+        if (childIndent !== null) walk(i + 1, blockHi, childIndent, segs.slice(1));
+        break;
+      }
+    }
+  };
+
+  const body = _sectionScanStart(lines, section);
+  if (body !== null) walk(body.lo, body.hi, body.baseIndent, path);
+  return out;
 }

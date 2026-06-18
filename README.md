@@ -29,7 +29,7 @@ Create-device wizard's board picker — searchable, filterable by chip family, w
 
 ## Backlog
 
-Before filing anything, take a look at the **[shared backlog](https://github.com/orgs/esphome/projects/7/views/1?filterQuery=project%3A%22device-builder-dashboard%22)** — it lists everything that's already planned, in progress, or shipped for the dashboard. Saves duplicates and gives you a feel for where the project is heading.
+Before filing anything, take a look at the **[shared backlog](https://github.com/orgs/esphome/projects/7/views/1?filterQuery=project%3A%22device-builder%22)** — it lists everything that's already planned, in progress, or shipped for the dashboard. Saves duplicates and gives you a feel for where the project is heading.
 
 ## Issues and feature requests
 
@@ -114,7 +114,7 @@ The frontend loader (`src/common/localize.ts`) is data-driven with no hardcoded 
 
 In CI this is automated by:
 
-- `translations-upload.yml` — pushes to Lokalise whenever `en.json` lands on `main`.
+- `translations-upload.yml` — pushes to Lokalise whenever `en.json` lands on `main`. Automated pushes never prune; run it manually from the Actions tab with the `cleanup` input checked to delete keys no longer in `en.json`.
 - `release.yml` — downloads translations before bundling so the released wheel ships every locale.
 
 There's no scheduled download workflow: because the locale files are gitignored, there's nothing to commit back to `main`. The translations only need to exist at build time, and `release.yml` pulls them fresh for the wheel; locally, run `npm run translations:download` whenever you want to work against the latest copy.

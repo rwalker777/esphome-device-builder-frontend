@@ -39,6 +39,16 @@ export const KEY_PATTERN = "[a-zA-Z_][^\\s:#]*";
 export const TOP_LEVEL_KEY_START_RE = /^[a-zA-Z_]/;
 
 /**
+ * Capture a column-0 top-level key. Group 1 is the key; the prefix
+ * form (no end anchor) matches whether or not the key carries an
+ * inline value, so callers that only want the name can ignore the
+ * rest of the line. Companion to ``TOP_LEVEL_KEY_START_RE`` — shared
+ * so the several "what's the top-level key on this line" sites don't
+ * each re-spell the identifier class.
+ */
+export const TOP_LEVEL_KEY_RE = /^([a-zA-Z_][a-zA-Z0-9_]*):/;
+
+/**
  * Match the inline-key form on a YAML list-item line
  * (`  - platform: esphome`). Capture group 1 is the key.
  *
@@ -49,7 +59,7 @@ export const TOP_LEVEL_KEY_START_RE = /^[a-zA-Z_]/;
  * "inline key" means; sharing the regex makes that a compile-time
  * fact.
  */
-export const LIST_ITEM_INLINE_KEY_RE = new RegExp(`^\\s+-\\s+(${KEY_PATTERN}):\\s*(.*)$`);
+export const LIST_ITEM_INLINE_KEY_RE = new RegExp(`^\\s*-\\s+(${KEY_PATTERN}):\\s*(.*)$`);
 
 /**
  * Detect a YAML list-item start. Accepts both the standard
@@ -60,9 +70,11 @@ export const LIST_ITEM_INLINE_KEY_RE = new RegExp(`^\\s+-\\s+(${KEY_PATTERN}):\\
  * Loosened from a stricter `/^\s+-\s/` so the parser agrees with
  * what the serializer (`updateSectionInYaml` in `yaml-section-values.ts`) emits. ESPHome's
  * own YAML output never produces a bare-`-` outside that
- * round-trip path, so this is the only realistic source.
+ * round-trip path, so this is the only realistic source. The indent
+ * is `\s*`, not `\s+`: a zero-indented sequence puts dashes at
+ * column 0.
  */
-export const LIST_ITEM_START_RE = /^\s+-(\s|$)/;
+export const LIST_ITEM_START_RE = /^\s*-(\s|$)/;
 
 /**
  * Block-scalar header on a YAML line: `key: |`, `key: |-`, `key: >`,
@@ -120,9 +132,10 @@ export const parseBlockScalarHeader = (raw: string): BlockScalarHeader | null =>
  * dropped from the values dict, and the user's empty row vanishes
  * on save. Marking it complex routes the block through
  * ``collectBlockListMappings`` which already treats bare dashes
- * as ``{}`` placeholders.
+ * as ``{}`` placeholders. Indent is ``\s*`` for
+ * ``LIST_ITEM_START_RE``'s column-0 reason.
  */
-export const LIST_ITEM_BARE_DASH_RE = /^\s+-\s*$/;
+export const LIST_ITEM_BARE_DASH_RE = /^\s*-\s*$/;
 
 /**
  * Capture the ``<indent>-<spaces>`` prefix up to the first non-space of a
@@ -150,9 +163,10 @@ export const LIST_ITEM_INLINE_KEY_PREFIX_RE = /^(\s*-\s*)\S/;
  *
  * Allows zero trailing whitespace after the colon (header-only
  * line) AND content after it (`- lambda: |-`); both forms are
- * complex.
+ * complex. Indent is ``\s*`` for ``LIST_ITEM_START_RE``'s
+ * column-0 reason.
  */
-export const LIST_ITEM_DICT_KEY_RE = /^\s+-\s+[a-zA-Z_][\w.]*:(?:\s|$)/;
+export const LIST_ITEM_DICT_KEY_RE = /^\s*-\s+[a-zA-Z_][\w.]*:(?:\s|$)/;
 
 export const childRegexFor = (indent: string) =>
   new RegExp(`^${indent}(${KEY_PATTERN}):\\s*(.*)$`);

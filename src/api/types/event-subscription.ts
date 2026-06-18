@@ -12,6 +12,7 @@ import {
 import { JobStatus, type FirmwareJob } from "./firmware-jobs.js";
 import type { OffloaderAlertSnapshotEntry } from "./remote-build-events.js";
 import type { PairingSummary, PeerSummary, RemoteBuildPeer } from "./remote-build.js";
+import type { UserPreferences } from "./system.js";
 
 // ─── Event Subscription ─────────────────────────────────────
 
@@ -67,8 +68,8 @@ export enum DeviceEventType {
   // to the receiver enters / leaves the post-handshake parked
   // state. Drives the PairingSummary.connected indicator on
   // the offloader-side Paired-build-servers list. Both events
-  // share the same OffloaderPeerLinkSessionEventData shape;
-  // the discriminator is the event type itself.
+  // share the OffloaderPeerLinkSessionEventData identity base;
+  // OPENED adds esphome_version, CLOSED adds reason/error_detail.
   OFFLOADER_PEER_LINK_OPENED = "offloader_peer_link_opened",
   OFFLOADER_PEER_LINK_CLOSED = "offloader_peer_link_closed",
   // Offloader-side remote-build job lifecycle. Fired by the
@@ -122,6 +123,8 @@ export enum DeviceEventType {
   OFFLOADER_PAIRING_ENABLED_CHANGED = "offloader_pairing_enabled_changed",
   // Master version-match policy change.
   OFFLOADER_VERSION_MATCH_POLICY_CHANGED = "offloader_version_match_policy_changed",
+  // "Include local in build pool" advanced toggle change.
+  OFFLOADER_INCLUDE_LOCAL_CHANGED = "offloader_include_local_changed",
 }
 
 /**
@@ -148,6 +151,13 @@ export interface JobOutputEventData {
 
 /** Data payload for initial_state event. */
 export interface InitialStateEventData {
+  /** User preferences snapshot. Always sent (the backend reads defaults when
+   *  nothing is stored), so the type is required — lockstep deployment rules out
+   *  version skew. The ``experience_level`` and ``remote_compute_only`` fields
+   *  gate first-paint UI, so they ride the subscription snapshot rather than a
+   *  separate ``config/get_preferences`` round-trip; the app shell marks
+   *  ``_prefsLoaded`` from this and stops failing device creation closed. */
+  preferences: UserPreferences;
   devices: ConfiguredDevice[];
   /** Discovered factory-firmware devices the dashboard knew about
    *  before this client subscribed. The backend follows up with
@@ -226,6 +236,12 @@ export interface InitialStateEventData {
   /** Offloader-side master version-match policy. See
    *  :type:`VersionMatchPolicy` for the per-value semantics. */
   version_match_policy?: VersionMatchPolicy;
+  /** Advanced: when set, the local machine joins the build pool
+   *  and compiles overflow once every paired server is busy.
+   *  Optional for the same reason as the fields above; defaults
+   *  to `false`. Live updates flow through
+   *  ``OFFLOADER_INCLUDE_LOCAL_CHANGED``. */
+  include_local_in_pool?: boolean;
 }
 
 /**

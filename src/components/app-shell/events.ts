@@ -10,6 +10,7 @@ import type {
 } from "../../api/types/event-subscription.js";
 import { DeviceEventType } from "../../api/types/event-subscription.js";
 import type {
+  OffloaderIncludeLocalChangedEventData,
   OffloaderJobOutputEventData,
   OffloaderJobStateChangedEventData,
   OffloaderPairAlertDismissedEventData,
@@ -19,7 +20,7 @@ import type {
   OffloaderPairPinMismatchEventData,
   OffloaderPairStatusChangedEventData,
   OffloaderPeerLinkClosedEventData,
-  OffloaderPeerLinkSessionEventData,
+  OffloaderPeerLinkOpenedEventData,
   OffloaderRemoteBuildsToggledEventData,
   OffloaderVersionMatchPolicyChangedEventData,
   ReceiverPeerLinkSessionEventData,
@@ -36,6 +37,7 @@ import {
 } from "../../context/index.js";
 import { seededMap } from "../../util/snapshot.js";
 import type { ESPHomeApp } from "../app-shell.js";
+import { applyPreferences } from "./data-load.js";
 
 // Merge a partial diff into the matching offloader pairing row keyed by pin_sha256.
 // _buildOffloadPairings === null = snapshot not seeded; missing row = event raced
@@ -57,6 +59,7 @@ export function handleEvent(host: ESPHomeApp, event: string, data: unknown): voi
   switch (event) {
     case DeviceEventType.INITIAL_STATE: {
       const {
+        preferences,
         devices,
         importable,
         peers,
@@ -66,7 +69,16 @@ export function handleEvent(host: ESPHomeApp, event: string, data: unknown): voi
         remote_jobs,
         remote_builds_enabled,
         version_match_policy,
+        include_local_in_pool,
       } = data as InitialStateEventData;
+      // Mark prefs known so creation gates on the subscription, not a separate
+      // get_preferences (preferences is always present). Skip the apply while a
+      // Settings write is in flight, so a reconnect's snapshot can't revert the
+      // optimistic change.
+      host._prefsLoaded = true;
+      if (host._prefsWritesInFlight === 0) {
+        applyPreferences(host, preferences);
+      }
       host._devices = devices;
       host._importableDevices = importable;
       host._devicesLoaded = true;
@@ -92,11 +104,18 @@ export function handleEvent(host: ESPHomeApp, event: string, data: unknown): voi
         }
         host._buildOffloadJobs = seeded;
       }
-      if (remote_builds_enabled !== undefined) {
-        host._offloaderRemoteBuildsEnabled = remote_builds_enabled;
-      }
-      if (version_match_policy !== undefined) {
-        host._offloaderVersionMatchPolicy = version_match_policy;
+      // Skip re-applying offloader settings while a toggle write is in flight,
+      // so a reconnect's snapshot can't revert the optimistic value mid-write.
+      if (host._offloaderWritesInFlight === 0) {
+        if (remote_builds_enabled !== undefined) {
+          host._offloaderRemoteBuildsEnabled = remote_builds_enabled;
+        }
+        if (version_match_policy !== undefined) {
+          host._offloaderVersionMatchPolicy = version_match_policy;
+        }
+        if (include_local_in_pool !== undefined) {
+          host._offloaderIncludeLocalInPool = include_local_in_pool;
+        }
       }
       break;
     }
@@ -271,11 +290,12 @@ export function handleEvent(host: ESPHomeApp, event: string, data: unknown): voi
     case DeviceEventType.OFFLOADER_PEER_LINK_OPENED: {
       // OPENED clears the failure record: a successful session-open
       // invalidates whatever caused the previous close.
-      const evt = data as OffloaderPeerLinkSessionEventData;
+      const evt = data as OffloaderPeerLinkOpenedEventData;
       patchOffloadPairing(host, evt.pin_sha256, {
         connected: true,
         connecting: false,
         last_connect_error: "",
+        esphome_version: evt.esphome_version,
       });
       break;
     }
@@ -343,6 +363,11 @@ export function handleEvent(host: ESPHomeApp, event: string, data: unknown): voi
     case DeviceEventType.OFFLOADER_VERSION_MATCH_POLICY_CHANGED: {
       const evt = data as OffloaderVersionMatchPolicyChangedEventData;
       host._offloaderVersionMatchPolicy = evt.version_match_policy;
+      break;
+    }
+    case DeviceEventType.OFFLOADER_INCLUDE_LOCAL_CHANGED: {
+      const evt = data as OffloaderIncludeLocalChangedEventData;
+      host._offloaderIncludeLocalInPool = evt.include_local_in_pool;
       break;
     }
     case DeviceEventType.OFFLOADER_JOB_STATE_CHANGED: {

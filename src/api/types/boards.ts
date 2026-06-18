@@ -13,6 +13,8 @@ export interface BoardEsphomeConfig {
   board: string;
   variant: string | null;
   framework: string | null;
+  // rp2040-only chip series ('rp2040' / 'rp2350'); null on other platforms.
+  mcu: string | null;
 }
 
 export interface BoardHardware {
@@ -29,6 +31,9 @@ export interface BoardPin {
   available: boolean | null;
   occupied_by: string | null;
   notes: string | null;
+  /** Named forms a config may refer to this pin by (``RX``, ``D1``); the
+   *  catalog omits the key when there are none. */
+  aliases?: string[];
 }
 
 /**
@@ -80,6 +85,9 @@ export interface FeaturedBundle {
   name: string;
   description: string;
   component_ids: string[];
+  // Photo of the physical module this bundle maps to; rendered on the
+  // bundle card in place of the box icon when set.
+  image_url?: string;
 }
 
 export interface BoardCatalogEntry {

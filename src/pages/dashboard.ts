@@ -88,10 +88,13 @@ import {
   buildOffloadPairingsContext,
   devicesContext,
   devicesLoadedContext,
+  expertModeContext,
   importableDevicesContext,
   labelsContext,
   localizeContext,
+  prefsLoadedContext,
   recentJobsContext,
+  remoteComputeOnlyContext,
   versionContext,
 } from "../context/index.js";
 import { inputStyles } from "../styles/inputs.js";
@@ -103,6 +106,7 @@ import { UPDATE_FACET_BUCKETS, UPDATE_FACET_PREDICATES } from "../util/facets.js
 import { computeLabelUsage } from "../util/label-usage.js";
 import { navigate } from "../util/navigation.js";
 import { consumePendingHighlight } from "../util/pending-highlight.js";
+import { consumePendingSerialSetup } from "../util/pending-serial-setup.js";
 import { postInstallShowLogsHandler } from "../util/post-install-logs.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 import { classifyNoCompatiblePeerReason } from "../util/version-mismatch.js";
@@ -183,6 +187,25 @@ export class ESPHomePageDashboard extends LitElement {
     [];
   @consume({ context: apiContext }) _api!: ESPHomeAPI;
 
+  // When true this install is a remote build node: every device-creation
+  // affordance (New device card, FAB, table Create, Adopt, serial wizard)
+  // is hidden. See _hideDeviceCreation for the actual gate.
+  @consume({ context: remoteComputeOnlyContext, subscribe: true })
+  @state()
+  _remoteComputeOnly = false;
+
+  // False until preferences load once. Creation fails closed while it's
+  // false so a remote-compute install can't flash creation UI when the
+  // initial prefs fetch fails (remote_compute_only would still be default).
+  @consume({ context: prefsLoadedContext, subscribe: true })
+  @state()
+  _prefsLoaded = false;
+
+  /** Whether every device-creation affordance should be hidden. */
+  get _hideDeviceCreation(): boolean {
+    return this._remoteComputeOnly || !this._prefsLoaded;
+  }
+
   // Used by the NO_COMPATIBLE_PEER toast classifier — see
   // classifyNoCompatiblePeerReason. Same context the settings
   // dialog reads; null until the subscribe_events seed lands.
@@ -193,6 +216,10 @@ export class ESPHomePageDashboard extends LitElement {
   @consume({ context: versionContext, subscribe: true })
   @state()
   _appVersion = "";
+
+  @consume({ context: expertModeContext, subscribe: true })
+  @state()
+  _expertMode = false;
 
   @state() _showDiscovered = false;
   @state() _search = "";
@@ -286,6 +313,13 @@ export class ESPHomePageDashboard extends LitElement {
 
   private _onSerialSetup = (event: Event) => {
     const port = (event as CustomEvent<{ port: SerialPort | null }>).detail?.port ?? null;
+    this._startSerialSetup(port);
+  };
+
+  private _startSerialSetup(port: SerialPort | null): void {
+    // Remote-compute installs don't create devices; a plugged-in board
+    // shouldn't pop the creation wizard.
+    if (this._hideDeviceCreation) return;
     void detectAndOpenWizard(this._api, this._createDialog, {
       port,
       devices: this._devices,
@@ -298,7 +332,7 @@ export class ESPHomePageDashboard extends LitElement {
       },
       localize: this._localize,
     });
-  };
+  }
   private _onShowIgnoredChanged = (e: Event) => {
     this._showIgnored = (e as CustomEvent<{ value: boolean }>).detail.value;
   };
@@ -349,6 +383,18 @@ export class ESPHomePageDashboard extends LitElement {
     if (pending !== null) {
       this._highlightFreshDevice(pending);
       this._tryConsumePendingScroll();
+    }
+    // USB "Set it up" actioned from another route stashes the port and
+    // navigates here. Defer to first render: _createDialog (@query) and
+    // the prefs contexts driving _hideDeviceCreation land during it.
+    const pendingSerial = consumePendingSerialSetup();
+    if (pendingSerial !== null) {
+      void this.updateComplete.then(() => {
+        // Bailed back off `/` before first render resolved; don't open the
+        // wizard against a torn-down host (the stash is already consumed).
+        if (!this.isConnected) return;
+        this._startSerialSetup(pendingSerial.port);
+      });
     }
   }
 
@@ -458,6 +504,11 @@ export class ESPHomePageDashboard extends LitElement {
   }
 
   protected willUpdate(changed: PropertyValues) {
+    if (!this._expertMode && this._yamlMode) {
+      this._yamlMode = false;
+      this._search = "";
+      this._yamlSearch.clear();
+    }
     if (changed.has("_view")) this.setAttribute("view", this._view);
     if (changed.has("_yamlMode")) this.toggleAttribute("yaml", this._yamlMode);
     // ``has-discovered`` is the hook that adds top padding for the

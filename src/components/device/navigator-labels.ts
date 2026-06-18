@@ -1,5 +1,7 @@
 import type { LocalizeFunc } from "../../common/localize.js";
+import { actionFieldLabel } from "../../util/action-field-label.js";
 import { getCachedComponent } from "../../util/component-name-cache.js";
+import { stripRedundantComponentSuffix } from "../../util/component-title.js";
 import { resolveSubstitutions } from "../../util/substitutions.js";
 import { type YamlSection, sectionKeyOf } from "../../util/yaml-sections.js";
 import type { NavigatorBuckets } from "./navigator-buckets.js";
@@ -55,12 +57,7 @@ export function resolveNavItemLabels(
   let primary = raw;
   const cached = getCachedComponent(raw, ctx.platform || undefined);
   if (cached?.name) primary = cached.name;
-  if (category === "core") {
-    // Core infrastructure names carry a redundant suffix in the nav:
-    // " Component" ("Native API Component"), and esphome's catalog title
-    // is "ESPHome Core Configuration" — trim both so rows stay scannable.
-    primary = primary.replace(/ (Component|Configuration)$/, "") || primary;
-  }
+  if (category === "core") primary = stripRedundantComponentSuffix(primary);
 
   // Prefer the backend-resolved node name for the esphome core section
   // so a `name: $devicename` substitution shows the expanded hostname,
@@ -162,9 +159,10 @@ function automationLabels(
   }
   // Component action-list field (``turn_on_action`` / ``set_action``) — lead
   // with the action so the two switch.template actions (turn on vs turn off)
-  // are distinct; entity on line 2, mirroring the trigger rows.
+  // are distinct; entity on line 2, mirroring the trigger rows. Shared
+  // ``actionFieldLabel`` so the row matches the editor heading ("Set action").
   if (item.parentKey && item.actionField) {
-    const primary = humanizeEvent(item.actionField.replace(/_action$/, ""));
+    const primary = actionFieldLabel(item.actionField, ctx.localize);
     return { primary, secondary: componentTarget(item, ctx, primary) };
   }
   // Unscoped / unrecognised — fall back to displayLabel.

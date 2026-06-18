@@ -796,24 +796,25 @@ export class ESPHomeAPI {
     return this.sendCommand<UpdateDeviceResponse>("devices/update", args);
   }
 
-  /** Rename a device via the ESPHome CLI (renames YAML file + hostname).
+  /** Rename a device (renames YAML file + ``esphome.name``).
    *
-   *  When the YAML validates, this kicks off a queued firmware
-   *  ``RENAME`` job that compiles + OTA-installs + swaps the YAML —
-   *  the returned ``job`` is what the caller follows in the
-   *  command-dialog so the user sees streaming output.
+   *  Default kicks off a queued firmware ``RENAME`` job that compiles,
+   *  OTA-installs, and swaps the YAML; the returned ``job`` is what the
+   *  caller follows in the command-dialog so the user sees streaming
+   *  output. Only succeeds against a reachable device.
    *
-   *  When the YAML doesn't validate (typical for a freshly-created
-   *  empty config), the backend does a pure file-level rename inline
-   *  and returns ``job: null``.
+   *  ``configOnly`` renames the YAML + ``esphome.name`` with no compile
+   *  or flash and returns ``job: null``, used after the user confirms
+   *  renaming an offline device.
    */
   async renameDevice(
     configuration: string,
-    newName: string
+    newName: string,
+    configOnly = false
   ): Promise<{ configuration: string; job: FirmwareJob | null }> {
     return this.sendCommand<{ configuration: string; job: FirmwareJob | null }>(
       "devices/rename",
-      { configuration, new_name: newName },
+      { configuration, new_name: newName, ...(configOnly ? { config_only: true } : {}) },
       60000
     );
   }
@@ -1324,6 +1325,7 @@ export class ESPHomeAPI {
     query?: string;
     platform?: string;
     variant?: string;
+    mcu?: string;
     tag?: string;
     offset?: number;
     limit?: number;
@@ -1804,7 +1806,7 @@ export class ESPHomeAPI {
   }
 
   /**
-   * Flip one or both offloader-side master settings.
+   * Flip one or more offloader-side master settings.
    *
    * ``remote_builds_enabled=false`` short-circuits every install
    * to LOCAL; paired peer-link sessions stay open and the
@@ -1812,13 +1814,28 @@ export class ESPHomeAPI {
    * ``version_match_policy`` selects how strictly the scheduler
    * filters paired peers by ESPHome version — see
    * :type:`VersionMatchPolicy` for the per-value contract.
-   * The arg type requires at least one of the two; an
+   * ``include_local_in_pool`` (advanced) lets the local machine
+   * compile overflow when every paired server is busy.
+   * The arg type requires at least one of the three; an
    * all-undefined call is rejected as INVALID_ARGS.
    */
   async setOffloaderRemoteBuildSettings(
     args:
-      | { remote_builds_enabled: boolean; version_match_policy?: VersionMatchPolicy }
-      | { remote_builds_enabled?: boolean; version_match_policy: VersionMatchPolicy }
+      | {
+          remote_builds_enabled: boolean;
+          version_match_policy?: VersionMatchPolicy;
+          include_local_in_pool?: boolean;
+        }
+      | {
+          remote_builds_enabled?: boolean;
+          version_match_policy: VersionMatchPolicy;
+          include_local_in_pool?: boolean;
+        }
+      | {
+          remote_builds_enabled?: boolean;
+          version_match_policy?: VersionMatchPolicy;
+          include_local_in_pool: boolean;
+        }
   ): Promise<OffloaderRemoteBuildSettings> {
     return this.sendCommand<OffloaderRemoteBuildSettings>(
       "remote_build/set_offloader_settings",

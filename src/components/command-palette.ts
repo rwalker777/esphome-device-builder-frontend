@@ -6,7 +6,7 @@ import {
   mdiKeyVariant,
   mdiMagnify,
   mdiThemeLightDark,
-  mdiVectorDifference,
+  mdiTune,
   mdiWeatherNight,
   mdiWeatherSunny,
 } from "@mdi/js";
@@ -15,26 +15,25 @@ import { customElement, query, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../api/index.js";
 import type { ConfiguredDevice } from "../api/types/devices.js";
 import type { LanguageChoice, LocalizeFunc } from "../common/localize.js";
-import { LANGUAGES, languageLabel } from "../common/localize.js";
 import {
   apiContext,
   devicesContext,
+  expertModeContext,
   localizeContext,
-  yamlDiffButtonContext,
 } from "../context/index.js";
 import { espHomeStyles } from "../styles/shared.js";
-import { EscapeController } from "../util/escape-controller.js";
-import { navigate } from "../util/navigation.js";
 import { registerMdiIcons } from "../util/register-icons.js";
+import { yamlEmptyMessageKey } from "../util/yaml-search-helpers.js";
+import type { CommandAction } from "./command-palette-actions.js";
 import {
-  forEachYamlMatch,
-  yamlEmptyMessageKey,
-  yamlHitHref,
-  yamlHitLabel,
-} from "../util/yaml-search-helpers.js";
+  OPEN_COMMAND_PALETTE_EVENT,
+  buildCommands,
+  buildYamlHitActions,
+} from "./command-palette-actions.js";
 import { commandPaletteStyles } from "./command-palette.styles.js";
 import { YamlSearchController } from "./yaml-search-controller.js";
 
+import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 
 registerMdiIcons({
@@ -44,7 +43,7 @@ registerMdiIcons({
   "key-variant": mdiKeyVariant,
   magnify: mdiMagnify,
   "theme-light-dark": mdiThemeLightDark,
-  "vector-difference": mdiVectorDifference,
+  tune: mdiTune,
   "weather-night": mdiWeatherNight,
   "weather-sunny": mdiWeatherSunny,
 });
@@ -59,21 +58,6 @@ function closeAllOpenPopovers(root: Document | ShadowRoot) {
   }
 }
 
-interface CommandAction {
-  id: string;
-  group: string;
-  label: string;
-  /** MDI icon name registered via ``registerMdiIcons``; rendered
-   *  through ``<wa-icon library="mdi">``. Mutually exclusive with
-   *  ``flag`` — when both are set, ``flag`` wins. */
-  icon?: string;
-  /** Emoji prefix shown in place of the MDI icon column. Used for
-   *  language entries so the picker reads as flags-not-icons. */
-  flag?: string;
-  keywords?: string[];
-  run: () => void;
-}
-
 @customElement("esphome-command-palette")
 export class ESPHomeCommandPalette extends LitElement {
   @consume({ context: localizeContext, subscribe: true })
@@ -84,14 +68,17 @@ export class ESPHomeCommandPalette extends LitElement {
   @state()
   private _devices: ConfiguredDevice[] = [];
 
-  @consume({ context: yamlDiffButtonContext, subscribe: true })
+  @consume({ context: expertModeContext, subscribe: true })
   @state()
-  private _yamlDiffEnabled = false;
+  private _expertMode = false;
 
   @consume({ context: apiContext })
   private _api!: ESPHomeAPI;
 
   @state() private _open = false;
+  /* True from open() until the hide animation ends; gates content so a
+     closed palette doesn't re-render the command list on device events. */
+  @state() private _contentRendered = false;
   @state() private _query = "";
   @state() private _selectedId = "";
 
@@ -114,6 +101,9 @@ export class ESPHomeCommandPalette extends LitElement {
 
   static styles = [espHomeStyles, commandPaletteStyles];
 
+  /* Cmd+K is always-on (it opens the palette), so it stays on a
+     dedicated keydown listener. Esc is wa-dialog's job: its
+     dismissible stack closes only the topmost open dialog. */
   private _onGlobalKeyDown = (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
@@ -121,44 +111,40 @@ export class ESPHomeCommandPalette extends LitElement {
     }
   };
 
-  /* Cmd+K is always-on (it opens the palette), so it stays on a
-     dedicated keydown listener. Esc only matters while the palette is
-     open and is handled by EscapeController, which attaches/detaches
-     in lockstep with ``_open``. */
-  private _escape = new EscapeController(this, (e) => {
-    e.preventDefault();
-    this.close();
-  });
+  /* The kebab menu's Search item fires this so a visible affordance opens
+     the same palette as Cmd+K. */
+  private _onOpenEvent = () => this.open();
 
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this._onGlobalKeyDown);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, this._onOpenEvent);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this._onGlobalKeyDown);
+    window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, this._onOpenEvent);
   }
 
   open() {
-    // Any open wa-select / wa-dropdown sits in the browser top layer
-    // via the popover API and would float above us regardless of
-    // z-index. Walk the document + every shadow root and close them
-    // before showing the palette.
+    // Close any open wa-select / wa-dropdown popover so it doesn't
+    // linger inert under the modal backdrop.
     closeAllOpenPopovers(document);
     this._open = true;
+    this._contentRendered = true;
     this._query = "";
     this._selectedId = "";
     this._yamlSearch.clear();
+    // Belt and braces with wa-dialog's own [autofocus] handling.
     requestAnimationFrame(() => this._searchInput?.focus());
   }
 
   close() {
     this._open = false;
-    // The palette is hidden by ``render() → nothing``, not by
-    // disconnecting from the DOM, so ``hostDisconnected`` doesn't
-    // fire and a pending debounce timer / queued dispatcher input
-    // would otherwise still flush a ``yaml/search`` after close.
+    // wa-dialog hides via its close animation, not by disconnecting,
+    // so a pending debounce timer / queued dispatcher input would
+    // otherwise still flush a ``yaml/search`` after close.
     this._yamlSearch.clear();
   }
 
@@ -167,90 +153,30 @@ export class ESPHomeCommandPalette extends LitElement {
     else this.open();
   }
 
+  // Esc and light-dismiss close the wa-dialog on their own; sync state
+  // on the initiating hide so a queued yaml/search can't flush during
+  // the hide animation.
+  private _onHide = (e: Event) => {
+    if (e.target !== e.currentTarget) return;
+    this.close();
+  };
+
+  // Drop the content once the hide animation ends; keep it when the
+  // palette was reopened mid-animation.
+  private _onAfterHide = (e: Event) => {
+    if (e.target !== e.currentTarget) return;
+    if (!this._open) this._contentRendered = false;
+  };
+
   private _allCommands(): CommandAction[] {
-    const t = this._localize;
-
-    const nav: CommandAction[] = [
-      {
-        id: "nav.home",
-        group: t("command_palette.group_navigation"),
-        label: t("command_palette.go_dashboard"),
-        icon: "home",
-        keywords: ["dashboard", "devices"],
-        run: () => navigate("/"),
-      },
-      {
-        id: "nav.secrets",
-        group: t("command_palette.group_navigation"),
-        label: t("layout.secrets"),
-        icon: "key-variant",
-        keywords: ["password", "wifi"],
-        run: () => navigate("/secrets"),
-      },
-    ];
-
-    const deviceGroup = t("command_palette.group_devices");
-    const devices: CommandAction[] = this._devices.map((d) => ({
-      id: `device.${d.configuration}`,
-      group: deviceGroup,
-      label: d.friendly_name || d.name || d.configuration,
-      icon: "chip",
-      keywords: [d.configuration, d.name],
-      run: () => navigate(`/device/${d.configuration}`),
-    }));
-
-    const themeGroup = t("layout.theme");
-    const themes: CommandAction[] = [
-      {
-        id: "theme.light",
-        group: themeGroup,
-        label: t("layout.theme_light"),
-        icon: "weather-sunny",
-        keywords: ["light", "theme"],
-        run: () => this._setTheme("light"),
-      },
-      {
-        id: "theme.dark",
-        group: themeGroup,
-        label: t("layout.theme_dark"),
-        icon: "weather-night",
-        keywords: ["dark", "theme"],
-        run: () => this._setTheme("dark"),
-      },
-      {
-        id: "theme.system",
-        group: themeGroup,
-        label: t("layout.theme_system"),
-        icon: "theme-light-dark",
-        keywords: ["system", "auto"],
-        run: () => this._setTheme("system"),
-      },
-    ];
-
-    const editor: CommandAction[] = [
-      {
-        id: "editor.yaml_diff_button",
-        group: t("layout.editor"),
-        label: this._yamlDiffEnabled
-          ? t("command_palette.hide_yaml_diff_button")
-          : t("command_palette.show_yaml_diff_button"),
-        icon: "vector-difference",
-        keywords: ["diff", "yaml", "compare"],
-        run: () => this._toggleDiffButton(),
-      },
-    ];
-
-    const languageGroup = t("command_palette.group_language");
-    const languages: CommandAction[] = LANGUAGES.map((l) => ({
-      id: `language.${l.value}`,
-      group: languageGroup,
-      label: languageLabel(l, t),
-      flag: l.flag,
-      keywords: ["language", "locale", l.value],
-      run: () => this._setLanguage(l.value),
-    }));
-
-    return [...nav, ...devices, ...themes, ...languages, ...editor];
+    return buildCommands({
+      t: this._localize,
+      devices: this._devices,
+      expertMode: this._expertMode,
+      setTheme: (theme) => this._setTheme(theme),
+      setLanguage: (lang) => this._setLanguage(lang),
+      toggleExpertMode: () => this._toggleExpertMode(),
+    });
   }
 
   /**
@@ -266,7 +192,10 @@ export class ESPHomeCommandPalette extends LitElement {
 
   /** True when the current query is in YAML-search mode. */
   private get _isYamlMode(): boolean {
-    return this._query.trimStart().startsWith(ESPHomeCommandPalette._YAML_PREFIX);
+    return (
+      this._expertMode &&
+      this._query.trimStart().startsWith(ESPHomeCommandPalette._YAML_PREFIX)
+    );
   }
 
   /** The YAML query body — i.e. the input minus the leading ``/``. */
@@ -296,34 +225,11 @@ export class ESPHomeCommandPalette extends LitElement {
     });
   }
 
-  /**
-   * Materialise the live YAML-content hits as ``CommandAction``s
-   * so the existing render + keyboard-nav code handles them
-   * without a parallel branch. Each match becomes its own row
-   * (one device with three matches → three rows) so the user can
-   * pick the specific line they want to land on. Click → navigate
-   * to ``/device/<configuration>?line=<n>``; the editor's
-   * ``_readUrlLine`` already wires that param to scroll-to + the
-   * existing highlight machinery.
-   */
   private _yamlHitActions(): CommandAction[] {
-    const groupName = this._localize("command_palette.group_yaml_matches");
-    return forEachYamlMatch(this._yamlSearch.hits, (hit, match) => ({
-      id: `yaml.${hit.configuration}:${match.line_number}`,
-      group: groupName,
-      label: yamlHitLabel(hit, match),
-      icon: "code-braces",
-      // No ``keywords`` — YAML mode bypasses ``_filtered()``'s
-      // keyword search entirely (the backend already did the
-      // matching) so an unused keywords array would just retain
-      // raw YAML line text — including potentially-sensitive
-      // values — in memory for nothing.
-      run: () => navigate(yamlHitHref(hit, match)),
-    }));
+    return buildYamlHitActions(this._yamlSearch.hits, this._localize);
   }
 
   protected willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("_open")) this._escape.set(this._open);
     if (changed.has("_open") || changed.has("_query")) {
       const items = this._filtered();
       if (items.length && !items.find((i) => i.id === this._selectedId)) {
@@ -332,9 +238,27 @@ export class ESPHomeCommandPalette extends LitElement {
     }
   }
 
+  /* wa-dialog shows via showModal(), so the palette lives in the top
+     layer and stacks above an already-open dialog (Settings, Firmware
+     Tasks, ...) instead of painting behind it. Raw wa-dialog on purpose:
+     base-dialog's header / close-button / busy chrome isn't wanted here.
+     The header is hidden via ::part(header) rather than without-header
+     so ``label`` still gives the dialog its accessible name. */
   protected render() {
-    if (!this._open) return nothing;
+    return html`
+      <wa-dialog
+        label=${this._localize("command_palette.title")}
+        light-dismiss
+        ?open=${this._open}
+        @wa-hide=${this._onHide}
+        @wa-after-hide=${this._onAfterHide}
+      >
+        ${this._contentRendered ? this._renderContent() : nothing}
+      </wa-dialog>
+    `;
+  }
 
+  private _renderContent() {
     const items = this._filtered();
     const groups: { name: string; items: CommandAction[] }[] = [];
     let cursor = "";
@@ -354,22 +278,27 @@ export class ESPHomeCommandPalette extends LitElement {
        discoverable from the UI rather than only via docs. */
     const inYamlMode = this._isYamlMode;
     const searchIcon = inYamlMode ? "code-braces" : "magnify";
+    const placeholder = this._localize(
+      this._expertMode
+        ? "command_palette.placeholder"
+        : "command_palette.placeholder_basic"
+    );
     return html`
-      <div class="backdrop" @click=${this.close}></div>
-      <div class="dialog" role="dialog" aria-modal="true">
-        <div class="search">
-          <wa-icon library="mdi" name=${searchIcon}></wa-icon>
-          <input
-            class="search-input"
-            type="text"
-            .value=${this._query}
-            placeholder=${this._localize("command_palette.placeholder")}
-            @input=${this._onQueryInput}
-            @keydown=${this._onInputKeyDown}
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <!--
+      <div class="search">
+        <wa-icon library="mdi" name=${searchIcon}></wa-icon>
+        <input
+          class="search-input"
+          type="text"
+          .value=${this._query}
+          placeholder=${placeholder}
+          aria-label=${placeholder}
+          @input=${this._onQueryInput}
+          @keydown=${this._onInputKeyDown}
+          autocomplete="off"
+          spellcheck="false"
+          autofocus
+        />
+        <!--
             Mode toggle: explicit switch-to-YAML / switch-to-commands
             button next to the input. Same effect as typing or removing
             the leading slash but discoverable for users who haven't
@@ -377,52 +306,55 @@ export class ESPHomeCommandPalette extends LitElement {
             mode so the affordance reads as an action rather than a
             status badge.
           -->
-          <button
-            class="mode-toggle ${inYamlMode ? "mode-toggle--yaml" : ""}"
-            type="button"
-            title=${this._localize(
-              inYamlMode
-                ? "command_palette.switch_to_commands"
-                : "command_palette.switch_to_yaml"
-            )}
-            aria-label=${this._localize(
-              inYamlMode
-                ? "command_palette.switch_to_commands"
-                : "command_palette.switch_to_yaml"
-            )}
-            aria-pressed=${inYamlMode ? "true" : "false"}
-            @click=${this._onToggleMode}
-          >
-            <wa-icon
-              library="mdi"
-              name=${inYamlMode ? "magnify" : "code-braces"}
-            ></wa-icon>
-          </button>
-        </div>
-        <div class="list" role="listbox">
-          ${items.length === 0
-            ? html`<div class="empty">${this._renderEmptyMessage()}</div>`
-            : groups.map(
-                (g) => html`
-                  <div class="group">
-                    <div class="group-heading">${g.name}</div>
-                    ${g.items.map((item) => this._renderItem(item))}
-                  </div>
-                `
+        ${this._expertMode
+          ? html`<button
+              class="mode-toggle ${inYamlMode ? "mode-toggle--yaml" : ""}"
+              type="button"
+              title=${this._localize(
+                inYamlMode
+                  ? "command_palette.switch_to_commands"
+                  : "command_palette.switch_to_yaml"
               )}
-        </div>
-        <div class="footer">
-          <span
-            ><kbd>↑</kbd><kbd>↓</kbd> ${this._localize(
-              "command_palette.navigate_hint"
-            )}</span
-          >
-          <span><kbd>↵</kbd> ${this._localize("command_palette.select_hint")}</span>
-          <span><kbd>esc</kbd> ${this._localize("command_palette.close_hint")}</span>
-          <span class="yaml-hint">
-            <kbd>/</kbd> ${this._localize("command_palette.yaml_search_hint")}
-          </span>
-        </div>
+              aria-label=${this._localize(
+                inYamlMode
+                  ? "command_palette.switch_to_commands"
+                  : "command_palette.switch_to_yaml"
+              )}
+              aria-pressed=${inYamlMode ? "true" : "false"}
+              @click=${this._onToggleMode}
+            >
+              <wa-icon
+                library="mdi"
+                name=${inYamlMode ? "magnify" : "code-braces"}
+              ></wa-icon>
+            </button>`
+          : nothing}
+      </div>
+      <div class="list" role="listbox">
+        ${items.length === 0
+          ? html`<div class="empty">${this._renderEmptyMessage()}</div>`
+          : groups.map(
+              (g) => html`
+                <div class="group">
+                  <div class="group-heading">${g.name}</div>
+                  ${g.items.map((item) => this._renderItem(item))}
+                </div>
+              `
+            )}
+      </div>
+      <div class="footer">
+        <span
+          ><kbd>↑</kbd><kbd>↓</kbd> ${this._localize(
+            "command_palette.navigate_hint"
+          )}</span
+        >
+        <span><kbd>↵</kbd> ${this._localize("command_palette.select_hint")}</span>
+        <span><kbd>esc</kbd> ${this._localize("command_palette.close_hint")}</span>
+        ${this._expertMode
+          ? html`<span class="yaml-hint">
+              <kbd>/</kbd> ${this._localize("command_palette.yaml_search_hint")}
+            </span>`
+          : nothing}
       </div>
     `;
   }
@@ -566,10 +498,10 @@ export class ESPHomeCommandPalette extends LitElement {
     );
   }
 
-  private _toggleDiffButton() {
+  private _toggleExpertMode() {
     this.dispatchEvent(
-      new CustomEvent("set-yaml-diff-button", {
-        detail: !this._yamlDiffEnabled,
+      new CustomEvent("set-expert-mode", {
+        detail: !this._expertMode,
         bubbles: true,
         composed: true,
       })

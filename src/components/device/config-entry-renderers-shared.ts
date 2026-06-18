@@ -12,14 +12,15 @@ import {
   mdiLockOutline,
 } from "@mdi/js";
 import { html, nothing } from "lit";
-import type { BoardCatalogEntry } from "../../api/types/boards.js";
 import type { ConfigEntry } from "../../api/types/config-entries.js";
 import { ConfigEntryType } from "../../api/types/config-entries.js";
 import type { LocalizeFunc } from "../../common/localize.js";
+import { warningBannerStyles } from "../../styles/banners.js";
+import { disclosureStyles } from "../../styles/disclosure.js";
 import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
-import type { ComponentProvider } from "../../util/config-entry-yaml-scan.js";
-import type { ValidationError } from "../../util/config-validation.js";
+import { stripConstraintProse } from "../../util/constraint-groups.js";
+import { coerceIntFieldValue } from "../../util/int-input.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { isPrimitiveOrNullish } from "../../util/nested-values.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
@@ -32,9 +33,16 @@ import {
   hasSubstitutionReference,
   resolveSubstitutions,
 } from "../../util/substitutions.js";
+import {
+  escapeControlForInput,
+  hasEscapeWorthyChar,
+  unescapeControlForInput,
+} from "../../util/yaml-escape.js";
 import { configEntryFormExtraStyles } from "./config-entry-form-extra.styles.js";
 import { configEntryFormStyles } from "./config-entry-form.styles.js";
 import { filterRenderable, renderFilterOptions } from "./config-entry-render-filter.js";
+import type { RenderCtx } from "./config-entry-renderers-types.js";
+import { constraintClusterStyles } from "./config-entry-renderers/constraint-cluster.styles.js";
 import { literalLambdaToggleStyles } from "./config-entry-renderers/literal-lambda-toggle.js";
 import { fieldHighlightStyles } from "./field-highlight.styles.js";
 import type { PasswordInputValueChange } from "./password-input.js";
@@ -51,9 +59,12 @@ import type { SecretSelectedDetail } from "./secret-picker.js";
 export const fieldRendererStyles = [
   espHomeStyles,
   inputStyles,
+  warningBannerStyles,
   configEntryFormStyles,
   configEntryFormExtraStyles,
+  disclosureStyles,
   literalLambdaToggleStyles,
+  constraintClusterStyles,
   fieldHighlightStyles,
 ];
 
@@ -72,6 +83,23 @@ registerMdiIcons({
  */
 export function effectiveDisabled(entry: ConfigEntry, ctx: RenderCtx): boolean {
   return ctx.disabled || entry.locked;
+}
+
+/**
+ * Coerce a control's string value back to the entry's declared numeric
+ * type before emitting. A wa-select / combo box always hands back a
+ * string, but an INTEGER/FLOAT field's YAML must be a number or downstream
+ * validation (and the backend's locked-value compare) rejects it. INTEGER
+ * goes through ``coerceIntFieldValue`` so a >2^53 decimal stays a string
+ * (64-bit precision, #378/#944) and a ``0x…`` literal isn't truncated.
+ * Non-numeric entries, an empty string, and unparseable input pass through
+ * unchanged so the inline validator can flag them.
+ */
+export function coerceValueToEntryType(entry: ConfigEntry, raw: string): string | number {
+  if (entry.type === ConfigEntryType.INTEGER) return coerceIntFieldValue(raw);
+  if (entry.type !== ConfigEntryType.FLOAT || raw === "") return raw;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : raw;
 }
 
 /** Serialize a field path into the ``data-field-key`` attribute. JSON
@@ -153,89 +181,10 @@ export function renderSubstitutionHint(value: string, ctx: RenderCtx) {
   </span>`;
 }
 
-export interface RenderCtx {
-  localize: LocalizeFunc;
-  disabled: boolean;
-  yaml: string;
-  /** Parsed ``substitutions:`` for ``yaml``; built once per render so
-   *  referencing fields share one parse. */
-  substitutions: Map<string, string>;
-  fromLine?: number;
-  /** Section being edited (``light.esp32_rmt_led_strip``,
-   *  ``sensor.template``, …). Empty when the form runs outside a
-   *  section context. The REGISTRY_LIST renderer reads this to
-   *  scope its picker against ``applies_to`` so a sensor's filter
-   *  dropdown doesn't offer binary_sensor filters. */
-  sectionKey: string;
-  /** Backend-resolved ESPHome node name (substitutions already expanded) for
-   *  the device being edited; the hostname for per-device secret keys
-   *  (``<hostname>__ota_password``). Empty outside a device context (e.g. the
-   *  add-component preview). */
-  deviceName?: string;
-  board: BoardCatalogEntry | null;
-  /** ``{provider_key: [allowed_mode_flags]}`` scoping the long-form pin Mode
-   *  checkboxes per external provider; absent provider / native pin → all flags. */
-  pinRegistryModes?: Record<string, string[]>;
-  requiredOnly: boolean;
-  /** Whether the section's advanced fields are shown. Read by
-   *  ``renderChildEntries({ includeAdvanced })`` so an exclusive-group's
-   *  chosen member can reveal all its fields regardless of the toggle. */
-  showAdvanced: boolean;
-  /** Top-level component keys present in the YAML — for the
-   *  ``depends_on_component`` visibility predicate when filtering directly. */
-  presentComponents: Set<string>;
-  nestedOpenSections: Set<string>;
-  getAt: (path: string[]) => unknown;
-  errorAt: (path: string[]) => ValidationError | null;
-  emitChange: (path: string[], value: unknown) => void;
-  toggleNested: (key: string) => void;
-  /** Open *key* once as a default (e.g. a pin disclosure with long-form
-   *  values), without overriding a later explicit user collapse. */
-  seedNestedOpen: (key: string) => void;
-  requestAddComponent: (domain: string) => void;
-  /**
-   * Providers of a cross-domain interface reference. Returns synchronously
-   * from a per-form cache; a miss kicks an async catalog fetch and
-   * re-renders. Empty until loaded, and ``[]`` for a same-domain reference.
-   */
-  resolveInterfaceProviders: (interfaceName: string) => ReadonlyArray<ComponentProvider>;
-  scopeValues: (path: string[]) => Record<string, unknown>;
-  filterRenderable: (
-    entries: ConfigEntry[],
-    values: Record<string, unknown>
-  ) => ConfigEntry[];
-  renderEntry: (entry: ConfigEntry, path: string[]) => unknown;
-  /**
-   * FLOAT_WITH_UNIT-only: stash a unit choice that the user picked
-   * before typing a numeric value. The form doesn't serialize the
-   * choice as YAML (a unit-only string isn't a valid value); instead
-   * the renderer reads it on next paint so the picker stays on the
-   * user's selection until they enter a number.
-   */
-  getPendingUnit: (path: string[]) => string | undefined;
-  setPendingUnit: (path: string[], unit: string) => void;
-  /**
-   * FLOAT_WITH_UNIT-only: transient editing buffer for the numeric
-   * input. `<input type="number">` reads `""` from `.value` while
-   * the user is typing intermediate states (`"-"`, `"1e"`, `"1."`),
-   * which would round-trip through serialize and reset the field
-   * mid-typing. Renderers stash the raw text here and read it on
-   * the next paint so partial input survives until the user types a
-   * parseable value (or blurs the field).
-   */
-  getEditingMagnitude: (path: string[]) => string | undefined;
-  setEditingMagnitude: (path: string[], text: string) => void;
-  clearEditingMagnitude: (path: string[]) => void;
-  /**
-   * Stable per-form object identity used by renderers that keep
-   * cross-render scratch state via a WeakMap (e.g. templatable
-   * literal/lambda stashing — see ``templatable.ts``). The form
-   * rebuilds the rest of the ctx every render so renderEntry /
-   * emitChange / etc. are fresh closures and can't be used as
-   * stable keys. ``stashOwner`` IS the host element itself.
-   */
-  stashOwner: object;
-}
+// The render-context data contract lives in its own module so it can be
+// imported without the helper runtime deps; re-exported here so every
+// renderer keeps importing it from the one shared entry point.
+export type { RenderCtx };
 
 /**
  * Resolve the user-visible label for *entry* given a `localize`
@@ -308,10 +257,23 @@ export function renderLabel(
         : nothing}
       ${includeHelpLink && entry.help_link ? renderHelpLink(entry, ctx) : nothing}
     </label>
-    ${entry.description
-      ? html`<p class="field-description">${renderMarkdown(entry.description)}</p>`
-      : nothing}
+    ${_fieldDescription(entry, ctx)}
   `;
+}
+
+/** The field's description, with the backend's baked constraint-prose paragraph
+ *  removed only for members the form replaces with a reactive banner/cluster
+ *  (top-level constraint keys). Nested-scope members keep their prose until
+ *  nested banners land, and a field whose docs merely start with bold "Set …"
+ *  isn't stripped by accident. */
+function _fieldDescription(entry: ConfigEntry, ctx: RenderCtx) {
+  const raw = entry.description ?? "";
+  const description = ctx.reactiveConstraintKeys?.has(entry.key)
+    ? stripConstraintProse(raw)
+    : raw;
+  return description
+    ? html`<p class="field-description">${renderMarkdown(description)}</p>`
+    : nothing;
 }
 
 export function renderFieldError(path: string[], ctx: RenderCtx) {
@@ -465,13 +427,24 @@ export function renderStringField(
       </div>
     `;
   }
+  // A single-line input can't show control characters. Only when the
+  // stored value actually contains one (a CRLF in a uart.write payload, an
+  // invisible glyph) do we reveal them as ``\r`` / ``\n`` / ``\xNN`` and
+  // decode on edit; an ordinary string renders verbatim so a typed path
+  // like ``C:\temp`` is never rewritten into control bytes. Display and
+  // decode stay coupled on this one flag.
+  const escapeMode = hasEscapeWorthyChar(value);
   const textInput = html`<input
     type=${inputType}
+    autocomplete="off"
     class=${invalid ? "invalid" : ""}
-    .value=${value}
+    .value=${escapeMode ? escapeControlForInput(value) : value}
     ?disabled=${disabled}
     placeholder=${placeholder}
-    @input=${(e: Event) => ctx.emitChange(path, (e.target as HTMLInputElement).value)}
+    @input=${(e: Event) => {
+      const raw = (e.target as HTMLInputElement).value;
+      ctx.emitChange(path, escapeMode ? unescapeControlForInput(raw) : raw);
+    }}
   />`;
   return html`
     <div class="field" data-field-key=${fieldKeyAttr(path)}>
@@ -498,18 +471,6 @@ function renderSuggestionSelect(
 ) {
   const valueLower = value.toLowerCase();
   const placeholder = String(entry.default_value ?? "");
-  // Coerce the picked value back to the entry's declared type before
-  // emitting — the wa-select hands us a string regardless, but a number
-  // entry's YAML value must be a number or downstream validation
-  // (and the backend's locked-value comparison) will reject it.
-  const isNumeric =
-    entry.type === ConfigEntryType.INTEGER || entry.type === ConfigEntryType.FLOAT;
-  const coerce = (raw: string): string | number => {
-    if (!isNumeric) return raw;
-    if (raw === "") return raw;
-    const n = entry.type === ConfigEntryType.INTEGER ? parseInt(raw, 10) : Number(raw);
-    return Number.isFinite(n) ? n : raw;
-  };
   return html`
     <div class="field" data-field-key=${fieldKeyAttr(path)}>
       ${renderLabel(entry, ctx)}
@@ -518,7 +479,10 @@ function renderSuggestionSelect(
         ?disabled=${disabled}
         placeholder=${placeholder}
         @change=${(e: Event) =>
-          ctx.emitChange(path, coerce((e.target as HTMLSelectElement).value))}
+          ctx.emitChange(
+            path,
+            coerceValueToEntryType(entry, (e.target as HTMLSelectElement).value)
+          )}
       >
         ${(entry.suggestions ?? []).map((s) => {
           const v = String(s);

@@ -321,7 +321,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
           <div class="section-header-title-row">
             <h3 class="section-title">
               ${this._isUnknown
-                ? this._localize("device.custom_component_title")
+                ? this._localize("device.external_component_title")
                 : this._config.title}
             </h3>
             ${this._config.docs_url
@@ -386,6 +386,7 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
               : nothing}
             <esphome-config-entry-form
               .entries=${renderEntries}
+              .requiredGroups=${this._config.required_groups}
               .values=${this._values}
               .errors=${this._fieldErrors}
               .board=${this.board}

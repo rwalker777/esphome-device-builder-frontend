@@ -12,8 +12,13 @@ import {
 import { MOBILE_BREAKPOINT } from "../styles/breakpoints.js";
 import { espHomeStyles } from "../styles/shared.js";
 import { stripBase, withBase } from "../util/base-path.js";
+import { deviceBuilderChannel } from "../util/device-builder-channel.js";
 import { navigate, runLeaveGuard } from "../util/navigation.js";
 import { registerMdiIcons } from "../util/register-icons.js";
+import {
+  deviceBuilderReleaseUrl,
+  esphomeChangelogUrl,
+} from "../util/release-notes-url.js";
 
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -66,10 +71,32 @@ export class ESPHomeLayout extends LitElement {
     return !this._isDashboard;
   }
 
+  /** Hardcoded (untranslated) badge label for a non-stable backend, else null. */
+  private get _versionBadge(): string | null {
+    if (!this._serverVersion) return null;
+    const channel = deviceBuilderChannel(this._serverVersion);
+    if (!channel) return null;
+    return channel === "dev" ? "Dev" : "Beta";
+  }
+
   protected updated() {
     // Reflect the consumed context to a host attribute so the slim-header
     // CSS (`:host([ingress])`) can key off it.
     this.toggleAttribute("ingress", this._isHaIngress);
+  }
+
+  // Footer version, linked to its release notes when a URL exists, else plain
+  // text. The anchor inherits the footer style so it reads as ordinary text.
+  private _footerVersion(text: string, href: string | null) {
+    return href
+      ? html`<a
+          href=${href}
+          target="_blank"
+          rel="noopener noreferrer"
+          title=${this._localize("layout.release_notes")}
+          >${text}</a
+        >`
+      : html`${text}`;
   }
 
   static styles = [
@@ -96,8 +123,7 @@ export class ESPHomeLayout extends LitElement {
         display: flex;
         align-items: center;
         gap: var(--wa-space-m);
-        padding-right: var(--content-gutter);
-        padding-left: var(--header-edge-inset);
+        padding: 0 var(--content-gutter);
         background: var(--esphome-primary);
         height: var(--esphome-header-height);
         box-sizing: border-box;
@@ -122,6 +148,9 @@ export class ESPHomeLayout extends LitElement {
         background: none;
         color: var(--esphome-on-primary);
         padding: var(--header-edge-inset);
+        /* Pull only the arrow to the bar edge; routes without an
+           arrow keep the header's content-gutter inset. */
+        margin-inline-start: calc(var(--header-edge-inset) - var(--content-gutter));
         border-radius: var(--wa-border-radius-m);
         opacity: 0.85;
         cursor: pointer;
@@ -292,6 +321,14 @@ export class ESPHomeLayout extends LitElement {
         color: color-mix(in srgb, var(--wa-color-text-quiet), transparent 30%);
         user-select: text;
       }
+
+      /* Version links read as plain footer text; only the cursor and the
+         title tooltip hint that they are clickable. */
+      .app-footer a {
+        color: inherit;
+        text-decoration: none;
+        cursor: pointer;
+      }
     `,
   ];
 
@@ -339,7 +376,9 @@ export class ESPHomeLayout extends LitElement {
         <div class="header-text">
           <h1>
             <span class="header-title-text">${this._localize("dashboard.title")}</span>
-            <span class="preview-badge">${this._localize("layout.preview_badge")}</span>
+            ${this._versionBadge
+              ? html`<span class="preview-badge">${this._versionBadge}</span>`
+              : nothing}
           </h1>
           <p>${this._localize("dashboard.subtitle")}</p>
         </div>
@@ -351,10 +390,20 @@ export class ESPHomeLayout extends LitElement {
       <slot></slot>
       <div class="app-footer">
         ${this._serverVersion
-          ? html`<span>ESPHome Device Builder v${this._serverVersion}</span>`
+          ? html`<span
+              >${this._footerVersion(
+                `ESPHome Device Builder v${this._serverVersion}`,
+                deviceBuilderReleaseUrl(this._serverVersion)
+              )}</span
+            >`
           : nothing}
         ${this._esphomeVersion
-          ? html`<span>ESPHome ${this._esphomeVersion}</span>`
+          ? html`<span
+              >${this._footerVersion(
+                `ESPHome ${this._esphomeVersion}`,
+                esphomeChangelogUrl(this._esphomeVersion)
+              )}</span
+            >`
           : nothing}
       </div>
     `;

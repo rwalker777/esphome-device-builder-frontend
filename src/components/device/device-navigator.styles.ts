@@ -28,8 +28,8 @@ export const deviceNavigatorStyles = css`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--wa-space-s);
-    padding: var(--wa-space-s) var(--wa-space-m);
+    gap: var(--wa-space-2xs);
+    padding: var(--wa-space-s) var(--wa-space-s) var(--wa-space-s) var(--wa-space-m);
     background: var(--esphome-tint);
     color: var(--esphome-primary);
     border-bottom: var(--wa-border-width-s) solid var(--wa-color-surface-border);
@@ -40,17 +40,28 @@ export const deviceNavigatorStyles = css`
     margin: 0;
     font-size: var(--wa-font-size-s);
     font-weight: var(--wa-font-weight-bold);
-    line-height: 1;
+    /* Match the editor header title's line-height so both header bars are the
+       same height (their dividers line up) and the title baselines align.
+       line-height 1 clipped the descender 'g' (#827) and left this header about
+       0.4px shorter than the editor's, offsetting the divider by a pixel. */
+    line-height: var(--wa-line-height-normal);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
   }
 
-  /* Box + hover come from .ghost-icon-btn (shared.ts). This button
-     swaps the shared padding for a fixed width/height and adds a hover
+  .header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* Box + hover come from .ghost-icon-btn (shared.ts). Both buttons swap
+     the shared padding for a fixed width/height and add a hover
      transition; the icon size is per-site. */
-  .collapse-btn {
+  .collapse-btn,
+  .search-btn {
     width: 30px;
     height: 22px;
     padding: 0;
@@ -58,7 +69,15 @@ export const deviceNavigatorStyles = css`
     transition: background 0.12s;
   }
 
-  .collapse-btn wa-icon {
+  /* Active search toggle gets a subtle tint, not the ghost-icon-btn filled
+     state; reset the color too so the icon stays primary, not on-primary. */
+  .search-btn[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--esphome-primary), transparent 88%);
+    color: var(--esphome-primary);
+  }
+
+  .collapse-btn wa-icon,
+  .search-btn wa-icon {
     font-size: 18px;
   }
 

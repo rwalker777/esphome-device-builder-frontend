@@ -1,4 +1,4 @@
-import type { ConfigEntry } from "../api/types/config-entries.js";
+import type { ConfigEntry, ConfigPrimitive } from "../api/types/config-entries.js";
 import { ConfigEntryType } from "../api/types/config-entries.js";
 import { parseFloatWithUnit } from "./float-with-unit.js";
 import { parseHexInt } from "./hex-int.js";
@@ -54,12 +54,17 @@ export function isEntryVisible(
   }
 
   if (!entry.depends_on) return true;
+  // The backend sets at most one of the three gate fields, so the
+  // check order below is immaterial.
   const depValue = values[entry.depends_on];
   if (entry.depends_on_value !== null && entry.depends_on_value !== undefined) {
     return depValue === entry.depends_on_value;
   }
   if (entry.depends_on_value_not !== null && entry.depends_on_value_not !== undefined) {
     return depValue !== entry.depends_on_value_not;
+  }
+  if (entry.depends_on_value_any != null) {
+    return entry.depends_on_value_any.includes(depValue as ConfigPrimitive);
   }
   return true;
 }
@@ -117,17 +122,28 @@ export function getDeviceNameWarning(name: string): ValidationError | null {
   return null;
 }
 
+/**
+ * A value counts as "present" for required / constraint-group purposes
+ * unless it's nullish, a blank/whitespace string, or an empty array.
+ * Shared so `validateEntry` and the constraint-group evaluator agree on
+ * what "set" means.
+ */
+export function isValuePresent(raw: unknown): boolean {
+  return !(
+    raw === undefined ||
+    raw === null ||
+    (typeof raw === "string" && raw.trim() === "") ||
+    (Array.isArray(raw) && raw.length === 0)
+  );
+}
+
 export function validateEntry(entry: ConfigEntry, raw: unknown): ValidationError | null {
   // UNKNOWN renders as the YAML-only notice (a mapping-or-list union the
   // form can't edit), so there is nothing to validate; a required one must
   // not block the wizard with an error the user can't clear in the form.
   if (entry.hidden || entry.type === ConfigEntryType.UNKNOWN) return null;
 
-  const isEmpty =
-    raw === undefined ||
-    raw === null ||
-    (typeof raw === "string" && raw.trim() === "") ||
-    (Array.isArray(raw) && raw.length === 0);
+  const isEmpty = !isValuePresent(raw);
 
   if (entry.required && isEmpty) {
     return { key: entry.key, code: "validation.required" };

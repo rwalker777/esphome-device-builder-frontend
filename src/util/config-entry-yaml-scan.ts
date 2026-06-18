@@ -16,8 +16,9 @@
  * collapses the worst case (paste a multi-thousand-line config,
  * type into a field) from O(N) per keystroke to O(1).
  */
+import type { ComponentCatalogEntry } from "../api/types/components.js";
 import { scanPinGpios } from "./pin-gpio.js";
-import { parseYamlTopLevelSections } from "./yaml-sections-core.js";
+import { collectIdsAtPath, parseYamlTopLevelSections } from "./yaml-sections-core.js";
 
 /**
  * Single-entry memo for the YAML scans. The hot path is the
@@ -236,10 +237,13 @@ export function sectionEndLine(yaml: string, fromLine?: number): number | undefi
 
 /** One provider of an interface: a catalog domain and optional platform
  *  stem. ``{sensor, adc}`` matches a ``sensor:`` item with ``platform: adc``;
- *  an empty stem matches every id in the ``domain:`` block. */
+ *  an empty stem matches every id in the ``domain:`` block. ``idPaths`` set
+ *  means the interface id is nested (usb_uart's ``channels[].id``): collect
+ *  ids at those key-paths within the matched section instead of its own id. */
 export interface ComponentProvider {
   domain: string;
   stem: string;
+  idPaths?: string[][];
 }
 
 /** Split a catalog id into a provider: ``"sensor.adc"`` → ``{sensor, adc}``;
@@ -249,6 +253,19 @@ export function parseCatalogId(id: string): ComponentProvider {
   return dot === -1
     ? { domain: id, stem: "" }
     : { domain: id.slice(0, dot), stem: id.slice(dot + 1) };
+}
+
+/** A catalog entry as a provider of *interfaceName*, carrying the nested
+ *  ``idPaths`` when its id for that interface isn't its own top-level id.
+ *  Single source of truth for the visual picker and YAML autocomplete so
+ *  the two surfaces can't drift on what counts as a candidate. */
+export function catalogEntryToProvider(
+  entry: ComponentCatalogEntry,
+  interfaceName: string
+): ComponentProvider {
+  const provider = parseCatalogId(entry.id);
+  const idPaths = entry.provides_id_paths?.[interfaceName];
+  return idPaths?.length ? { ...provider, idPaths } : provider;
 }
 
 interface ProviderKey {
@@ -276,34 +293,51 @@ export function findComponentsByProviders(
   providers: ReadonlyArray<ComponentProvider>
 ): Array<{ id: string; name: string }> {
   if (!providers.length) return [];
+  // JSON-encode each provider so the cache key can't collide on a separator
+  // char inside a domain / stem / path segment.
   const signature = providers
-    .map((p) => `${p.domain}.${p.stem}`)
+    .map((p) => JSON.stringify([p.domain, p.stem, p.idPaths ?? []]))
     .sort()
     .join(",");
   const probe: ProviderKey = { yaml, signature };
   const cached = providerMemo.get(probe);
   if (cached) return cached;
 
-  // ``stem === ""`` for any provider in a domain means "match every id".
-  const stemsByDomain = new Map<string, Set<string>>();
+  const byDomain = new Map<string, ComponentProvider[]>();
   for (const p of providers) {
-    const stems = stemsByDomain.get(p.domain) ?? new Set<string>();
-    stems.add(p.stem);
-    stemsByDomain.set(p.domain, stems);
+    const list = byDomain.get(p.domain) ?? [];
+    list.push(p);
+    byDomain.set(p.domain, list);
   }
 
   const result: Array<{ id: string; name: string }> = [];
   const seen = new Set<string>();
+  const add = (id: string, name: string): void => {
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      result.push({ id, name });
+    }
+  };
+  // Split once, lazily: only nested-id providers (the rare case) need the
+  // lines, so the common own-id scan pays nothing.
+  let lines: string[] | null = null;
   for (const section of parseYamlTopLevelSections(yaml)) {
-    if (!section.id || seen.has(section.id)) continue;
-    const stems = stemsByDomain.get(section.parentKey ?? section.key);
-    if (!stems) continue;
-    if (
-      stems.has("") ||
-      (section.platform !== undefined && stems.has(section.platform))
-    ) {
-      seen.add(section.id);
-      result.push({ id: section.id, name: section.name ?? "" });
+    const provs = byDomain.get(section.parentKey ?? section.key);
+    if (!provs) continue;
+    for (const p of provs) {
+      // ``stem === ""`` matches every id in the domain block.
+      if (p.stem !== "" && p.stem !== section.platform) continue;
+      if (p.idPaths?.length) {
+        // The interface id is nested (usb_uart channels[].id): collect the
+        // ids at those paths, not the section's own (non-interface) id.
+        lines ??= yaml.split("\n");
+        for (const path of p.idPaths) {
+          for (const inst of collectIdsAtPath(lines, section, path))
+            add(inst.id, inst.name);
+        }
+      } else if (section.id) {
+        add(section.id, section.name ?? "");
+      }
     }
   }
   providerMemo.set(probe, result);
@@ -325,6 +359,37 @@ export function findReferenceCandidates(
 ): Array<{ id: string; name: string }> {
   if (!domain) return [];
   return findComponentsByProviders(yaml, [{ domain, stem: "" }, ...providers]);
+}
+
+// A top-level (zero-indent) `packages:` block or `<<:` merge key — the two
+// constructs that merge whole component sections in from sources the scan
+// can't see. A value-position `!include` (`wifi: !include wifi.yaml`) only
+// replaces that key's value, so it deliberately doesn't match.
+const MERGED_SOURCE_RE = /^(?:packages|<<)\s*:/;
+
+/**
+ * Whether the YAML root-merges components the scan can't enumerate.
+ *
+ * True when a top-level `packages:` block or `<<:` merge key is present —
+ * either can introduce additional `<domain>:` sections from another file, so
+ * single-candidate reference resolution can't be trusted.
+ */
+export function yamlHasMergedSources(yaml: string): boolean {
+  if (!yaml) return false;
+  return yaml.split("\n").some((line) => MERGED_SOURCE_RE.test(line));
+}
+
+/**
+ * The single candidate to resolve an omitted reference to, or null when
+ * ambiguous — none, several, or a `packages:`/`<<:` merge that could hide one.
+ * Shared by the id-reference picker (shows it as the default) and featured-add
+ * seeding (writes it).
+ */
+export function resolveSoleCandidate(
+  candidates: ReadonlyArray<{ id: string; name: string }>,
+  yaml: string
+): { id: string; name: string } | null {
+  return candidates.length === 1 && !yamlHasMergedSources(yaml) ? candidates[0] : null;
 }
 
 /**
