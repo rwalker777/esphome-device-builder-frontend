@@ -1,5 +1,7 @@
 import { css } from "lit";
 
+import { MOBILE_BREAKPOINT } from "../../styles/breakpoints.js";
+
 /**
  * Styles for <esphome-wizard-step-board>. Extracted from the
  * component file to keep it under the repo's file-size cap (see
@@ -329,6 +331,19 @@ export const wizardStepBoardStyles = css`
      Copilot review on PR #400 — the prior placement inline
      with the base rules left align-items / width / height
      silently overridden. #41 */
+  /* The board list's inner scroller is a fixed 500px on desktop so the
+     filter chips stay pinned while only the grid scrolls. The wizard goes
+     full-screen at MOBILE_BREAKPOINT, and at that width the fixed height runs
+     past the viewport — the featured card's bottom is clipped and unreachable
+     (iPhone XR repro). Collapse the inner scroller at the same cutoff the
+     sheet uses so the dialog body scrolls as one. */
+  @media (max-width: ${MOBILE_BREAKPOINT}px) {
+    .boards-scroll {
+      height: auto;
+      overflow-y: visible;
+    }
+  }
+
   @media (max-width: 480px) {
     .boards-grid {
       grid-template-columns: 1fr;
