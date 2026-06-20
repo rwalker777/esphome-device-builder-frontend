@@ -9,6 +9,9 @@ import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { boardImageUrl } from "../../util/board-image.js";
 import { EnterController } from "../../util/enter-controller.js";
+import { fetchSecretKeys, hasSharedWifiSecret } from "../../util/secrets-cache.js";
+import { wifiFieldsStyles } from "../onboarding/wifi-fields-styles.js";
+import { isWifiPasswordTooShort, renderWifiFields } from "../onboarding/wifi-fields.js";
 
 @customElement("esphome-wizard-step-setup")
 export class ESPHomeWizardStepSetup extends LitElement {
@@ -29,14 +32,15 @@ export class ESPHomeWizardStepSetup extends LitElement {
   @state()
   private _stage: "name" | "wifi" = "name";
 
+  // secrets.yaml has both wifi_ssid and wifi_password keys (see
+  // hasSharedWifiSecret) — the wizard skips Wi-Fi and reuses !secret.
   @state()
-  private _secretWifiSsid = "";
+  private _wifiConfigured = false;
 
-  @state()
-  private _secretWifiPassword = "";
-
-  private get _hasSecretWifi(): boolean {
-    return Boolean(this._secretWifiSsid && this._secretWifiPassword);
+  /** Collect Wi-Fi only when the board needs it and no shared secret exists
+   *  yet; every other board skips the step. */
+  private get _collectWifi(): boolean {
+    return Boolean(this.board?.requires_wifi) && !this._wifiConfigured;
   }
 
   @state()
@@ -58,7 +62,10 @@ export class ESPHomeWizardStepSetup extends LitElement {
   });
 
   private _canAdvance(): boolean {
-    return this._stage === "name" ? !!this._deviceName.trim() : !!this._wifiSsid.trim();
+    if (this._stage === "name") return !!this._deviceName.trim();
+    // The Wi-Fi stage only appears when Wi-Fi is required, so an SSID is
+    // mandatory; a too-short WPA passphrase is also rejected.
+    return !!this._wifiSsid.trim() && !isWifiPasswordTooShort(this._wifiPassword);
   }
 
   protected willUpdate(changed: PropertyValues): void {
@@ -67,20 +74,15 @@ export class ESPHomeWizardStepSetup extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
-    try {
-      const yaml = await this._api.getConfig("secrets.yaml");
-      const ssid = yaml.match(/^wifi_ssid\s*:\s*["']?(.+?)["']?\s*$/m);
-      const pass = yaml.match(/^wifi_password\s*:\s*["']?(.+?)["']?\s*$/m);
-      if (ssid) this._secretWifiSsid = ssid[1];
-      if (pass) this._secretWifiPassword = pass[1];
-    } catch {
-      // No secrets file — leave defaults
-    }
+    // Already configured ⇒ skip the Wi-Fi stage and reuse !secret. Read via the
+    // shared, secrets-saved-refreshed key cache (caches [] on failure).
+    this._wifiConfigured = hasSharedWifiSecret(await fetchSecretKeys(this._api));
   }
 
   static styles = [
     espHomeStyles,
     inputStyles,
+    wifiFieldsStyles,
     css`
       :host {
         display: flex;
@@ -105,12 +107,12 @@ export class ESPHomeWizardStepSetup extends LitElement {
         border: none;
         background: none;
         cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
         color: var(--esphome-primary);
         font-size: var(--wa-font-size-s);
         padding: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
       }
 
       .board-info-title {
@@ -276,7 +278,7 @@ export class ESPHomeWizardStepSetup extends LitElement {
             ?disabled=${!this._canAdvance()}
             @click=${this._onNext}
           >
-            ${this._stage === "name" && !this._hasSecretWifi
+            ${this._stage === "name" && this._collectWifi
               ? this._localize("wizard.next")
               : this._localize("wizard.finish_setup")}
           </button>
@@ -317,36 +319,21 @@ export class ESPHomeWizardStepSetup extends LitElement {
       <section class="section">
         <div>
           <h3 class="section-title">${this._localize("wizard.wifi_configuration")}</h3>
-          <p class="section-subtitle">
-            ${this._localize("wizard.wifi_configuration_desc")}
-          </p>
+          <p class="section-subtitle">${this._localize("wizard.wifi_required_desc")}</p>
         </div>
 
-        <div class="field">
-          <label for="wifi-ssid">${this._localize("wizard.wifi_ssid")}</label>
-          <input
-            id="wifi-ssid"
-            type="text"
-            autocomplete="off"
-            .value=${this._wifiSsid}
-            @input=${(e: InputEvent) => {
-              this._wifiSsid = (e.target as HTMLInputElement).value;
-            }}
-          />
-        </div>
-
-        <div class="field">
-          <label for="wifi-password">${this._localize("wizard.wifi_password")}</label>
-          <input
-            id="wifi-password"
-            type="password"
-            autocomplete="off"
-            .value=${this._wifiPassword}
-            @input=${(e: InputEvent) => {
-              this._wifiPassword = (e.target as HTMLInputElement).value;
-            }}
-          />
-        </div>
+        ${renderWifiFields({
+          localize: this._localize,
+          ssid: this._wifiSsid,
+          password: this._wifiPassword,
+          disabled: false,
+          onSsidInput: (v) => {
+            this._wifiSsid = v;
+          },
+          onPasswordInput: (v) => {
+            this._wifiPassword = v;
+          },
+        })}
       </section>
     `;
   }
@@ -367,33 +354,19 @@ export class ESPHomeWizardStepSetup extends LitElement {
 
   private _onNext() {
     if (this._stage === "name") {
-      if (this._hasSecretWifi) {
-        // Empty ssid/psk tells the backend to emit unquoted !secret tags.
-        this._finish("", "");
+      if (this._collectWifi) {
+        this._stage = "wifi";
         return;
       }
-      if (this._secretWifiSsid && !this._wifiSsid) {
-        this._wifiSsid = this._secretWifiSsid;
-      }
-      if (this._secretWifiPassword && !this._wifiPassword) {
-        this._wifiPassword = this._secretWifiPassword;
-      }
-      this._stage = "wifi";
+      // Nothing to collect: a networked board uses Ethernet/Thread, a
+      // configured install reuses !secret, a no-Wi-Fi board gets a no-network
+      // stub. Finish straight from the name stage with no credentials.
+      this._finish("", "");
       return;
     }
-
-    // If the user kept the value from secrets, send empty so the backend
-    // emits the !secret reference instead of a hardcoded value.
-    const ssid =
-      this._wifiSsid === this._secretWifiSsid && this._secretWifiSsid
-        ? ""
-        : this._wifiSsid;
-    const password =
-      this._wifiPassword === this._secretWifiPassword && this._secretWifiPassword
-        ? ""
-        : this._wifiPassword;
-
-    this._finish(ssid, password);
+    // Pass the typed credentials through; the backend writes them to
+    // secrets.yaml and emits !secret rather than inlining bare values.
+    this._finish(this._wifiSsid, this._wifiPassword);
   }
 
   private _finish(wifiSsid: string, wifiPassword: string) {

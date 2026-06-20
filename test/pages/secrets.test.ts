@@ -15,6 +15,21 @@ vi.mock("sonner-js", () => ({
   default: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
+// Capture the save-shortcut callback the page wires so the gating closure
+// can be exercised without mounting (and binding a real window listener).
+const { capturedRef } = vi.hoisted(() => ({
+  capturedRef: { onSave: undefined as (() => void) | undefined },
+}));
+vi.mock("../../src/util/save-shortcut-controller.js", () => ({
+  SaveShortcutController: class {
+    constructor(_host: unknown, onSave: () => void) {
+      capturedRef.onSave = onSave;
+    }
+    hostConnected() {}
+    hostDisconnected() {}
+  },
+}));
+
 /**
  * Pin the secrets-page data-loss guards: don't render an editor
  * with empty content while loading, and keep Save disabled when
@@ -36,6 +51,9 @@ interface PageView {
   _onUnsavedSave(): void;
   _onUnsavedDiscard(): void;
   _onUnsavedCancel(): void;
+  _confirmWipe(): Promise<boolean>;
+  _settlePendingWipe: ((confirmed: boolean) => void) | null;
+  disconnectedCallback(): void;
   _save(): Promise<boolean>;
   render(): unknown;
 }
@@ -99,7 +117,9 @@ describe("esphome-page-secrets save-button disabled state", () => {
     ).toBe(false);
   });
 
-  test("disabled when buffer is empty even though it differs from saved", () => {
+  test("enabled when buffer is empty so clearing all secrets can be confirmed", () => {
+    // Save must stay enabled at zero secrets; _save() routes the empty buffer
+    // through the destructive wipe-confirm dialog (#1568).
     expect(
       saveDisabled(
         makePage({
@@ -108,19 +128,19 @@ describe("esphome-page-secrets save-button disabled state", () => {
           _savedYaml: "wifi_password: hunter2\n",
         })
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  test("disabled when buffer is whitespace-only even though it differs from saved", () => {
+  test("enabled when buffer is whitespace-only and differs from saved", () => {
     expect(
       saveDisabled(
         makePage({
           _loaded: true,
-          _yaml: "   \n\t\n",
+          _yaml: "   \n\n",
           _savedYaml: "wifi_password: hunter2\n",
         })
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test("_save() flips _saving true during the in-flight call and false after", async () => {
@@ -149,6 +169,109 @@ describe("esphome-page-secrets save-button disabled state", () => {
     expect(page._saving).toBe(false);
     // Post-success: dirty-check disables (yaml === savedYaml now).
     expect(saveDisabled(page)).toBe(true);
+  });
+});
+
+describe("esphome-page-secrets clear-all wipe confirm (#1568)", () => {
+  test("_save() clearing every secret confirms, then sends allow_wipe", async () => {
+    const updateConfig = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({
+      _loaded: true,
+      _yaml: "",
+      _savedYaml: "wifi_password: hunter2\n",
+    });
+    page._api = { updateConfig } as unknown as ESPHomeAPI;
+    const confirmWipe = vi.fn().mockResolvedValue(true);
+    page._confirmWipe = confirmWipe;
+
+    const ok = await page._save();
+
+    expect(confirmWipe).toHaveBeenCalledTimes(1);
+    expect(updateConfig).toHaveBeenCalledWith("secrets.yaml", "", { allowWipe: true });
+    expect(ok).toBe(true);
+  });
+
+  test("_save() cancelled wipe writes nothing and keeps the saved buffer", async () => {
+    const updateConfig = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({
+      _loaded: true,
+      _yaml: "",
+      _savedYaml: "wifi_password: hunter2\n",
+    });
+    page._api = { updateConfig } as unknown as ESPHomeAPI;
+    page._confirmWipe = vi.fn().mockResolvedValue(false);
+
+    const ok = await page._save();
+
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(ok).toBe(false);
+    // The optimistic dirty-flip never ran, so the buffer is unchanged.
+    expect(page._savedYaml).toBe("wifi_password: hunter2\n");
+  });
+
+  test("_save() with secrets remaining does not confirm and omits allow_wipe", async () => {
+    const updateConfig = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({
+      _loaded: true,
+      _yaml: "wifi_password: new\n",
+      _savedYaml: "wifi_password: old\n",
+    });
+    page._api = { updateConfig } as unknown as ESPHomeAPI;
+    const confirmWipe = vi.fn().mockResolvedValue(true);
+    page._confirmWipe = confirmWipe;
+
+    await page._save();
+
+    expect(confirmWipe).not.toHaveBeenCalled();
+    expect(updateConfig).toHaveBeenCalledWith("secrets.yaml", "wifi_password: new\n");
+  });
+
+  test("_save() editing an already-entry-less file does not confirm or send allow_wipe", async () => {
+    const updateConfig = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({
+      _loaded: true,
+      _yaml: "# new comment\n",
+      _savedYaml: "# old comment\n",
+    });
+    page._api = { updateConfig } as unknown as ESPHomeAPI;
+    const confirmWipe = vi.fn().mockResolvedValue(true);
+    page._confirmWipe = confirmWipe;
+
+    await page._save();
+
+    // No secrets existed before, so nothing is being cleared — no destructive
+    // prompt, and a comment-only file doesn't need the backend's wipe gate.
+    expect(confirmWipe).not.toHaveBeenCalled();
+    expect(updateConfig).toHaveBeenCalledWith("secrets.yaml", "# new comment\n");
+  });
+
+  test("_save() blanking an already-entry-less file sends allow_wipe without confirming", async () => {
+    const updateConfig = vi.fn().mockResolvedValue(undefined);
+    const page = makePage({
+      _loaded: true,
+      _yaml: "",
+      _savedYaml: "# only a comment\n",
+    });
+    page._api = { updateConfig } as unknown as ESPHomeAPI;
+    const confirmWipe = vi.fn().mockResolvedValue(true);
+    page._confirmWipe = confirmWipe;
+
+    await page._save();
+
+    // Nothing to confirm (no secrets existed), but the buffer is now truly
+    // blank, so the backend gate still needs allow_wipe.
+    expect(confirmWipe).not.toHaveBeenCalled();
+    expect(updateConfig).toHaveBeenCalledWith("secrets.yaml", "", { allowWipe: true });
+  });
+
+  test("disconnect settles an open wipe confirm as cancelled (no dangling promise)", () => {
+    const page = makePage({ _loaded: true });
+    const settle = vi.fn();
+    page._settlePendingWipe = settle;
+
+    page.disconnectedCallback();
+
+    expect(settle).toHaveBeenCalledWith(false);
   });
 });
 
@@ -292,6 +415,64 @@ describe("esphome-page-secrets save toast ordering", () => {
     window.removeEventListener("secrets-saved", onSaved);
 
     expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
+describe("esphome-page-secrets Cmd/Ctrl+S save shortcut wiring", () => {
+  function pageWith(overrides: Partial<PageView>): {
+    updateConfig: ReturnType<typeof vi.fn>;
+    save: () => void;
+  } {
+    // Reset first so the assertion proves THIS construction wired the
+    // shortcut, not a stale callback captured by an earlier test.
+    capturedRef.onSave = undefined;
+    const page = makePage({ _loaded: true, ...overrides });
+    const updateConfig = vi.fn().mockResolvedValue(undefined);
+    page._api = { updateConfig } as unknown as ESPHomeAPI;
+    // The page's field initializer constructed the (mocked) controller and
+    // handed us its callback — that is the gating closure the shortcut runs.
+    expect(capturedRef.onSave).toBeTypeOf("function");
+    return { updateConfig, save: capturedRef.onSave! };
+  }
+
+  test("saves a dirty, non-empty buffer", async () => {
+    const { updateConfig, save } = pageWith({
+      _yaml: "wifi_password: new\n",
+      _savedYaml: "wifi_password: old\n",
+    });
+    save();
+    await Promise.resolve();
+    expect(updateConfig).toHaveBeenCalledWith("secrets.yaml", "wifi_password: new\n");
+  });
+
+  test("no-ops on a clean buffer", () => {
+    const { updateConfig, save } = pageWith({
+      _yaml: "wifi_password: same\n",
+      _savedYaml: "wifi_password: same\n",
+    });
+    save();
+    expect(updateConfig).not.toHaveBeenCalled();
+  });
+
+  test("no-ops while a save is already in flight", () => {
+    const { updateConfig, save } = pageWith({
+      _yaml: "wifi_password: new\n",
+      _savedYaml: "wifi_password: old\n",
+      _saving: true,
+    });
+    save();
+    expect(updateConfig).not.toHaveBeenCalled();
+  });
+
+  test("does not trigger the destructive wipe path on an empty buffer", () => {
+    // The Save button stays enabled at zero secrets to allow a confirmed wipe,
+    // but the keyboard shortcut must not fire that destructive path.
+    const { updateConfig, save } = pageWith({
+      _yaml: "",
+      _savedYaml: "wifi_password: old\n",
+    });
+    save();
+    expect(updateConfig).not.toHaveBeenCalled();
   });
 });
 

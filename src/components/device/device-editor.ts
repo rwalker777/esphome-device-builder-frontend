@@ -19,6 +19,7 @@ import type { LocalizeFunc } from "../../common/localize.js";
 import { expertModeContext, localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
+import { SaveShortcutController } from "../../util/save-shortcut-controller.js";
 import {
   clampSplitRatio,
   loadSplitRatio,
@@ -28,6 +29,7 @@ import {
   saveSplitRatio,
 } from "../../util/split-ratio.js";
 import type { HighlightRange } from "../yaml-editor.js";
+import { renderEditorToolbar } from "./device-editor-toolbar.js";
 import { deviceEditorStyles } from "./device-editor.styles.js";
 import { renderInstallAction } from "./install-action.js";
 
@@ -95,29 +97,22 @@ export class ESPHomeDeviceEditor extends LitElement {
     this._isMobile = e.matches;
   };
 
-  /** Cmd/Ctrl+S → save the YAML if there are unsaved changes.
-   *  Listens at the window level so the shortcut works regardless of
-   *  which child (CodeMirror, navigator, etc.) currently has focus. */
-  private _onGlobalKeyDown = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "s") {
-      e.preventDefault();
-      if (this.hasUnsavedEdits) {
-        this._onSave();
-      }
+  // Cmd/Ctrl+S → save the YAML if there are unsaved changes.
+  private _saveShortcut = new SaveShortcutController(this, () => {
+    if (this.hasUnsavedEdits) {
+      this._onSave();
     }
-  };
+  });
 
   connectedCallback() {
     super.connectedCallback();
     this._isMobile = this._mql.matches;
     this._mql.addEventListener("change", this._onMqlChange);
-    window.addEventListener("keydown", this._onGlobalKeyDown);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this._mql.removeEventListener("change", this._onMqlChange);
-    window.removeEventListener("keydown", this._onGlobalKeyDown);
   }
 
   @property({ attribute: false })
@@ -237,83 +232,18 @@ export class ESPHomeDeviceEditor extends LitElement {
                 : nothing}
             </div>
           </div>
-          <div class="header-actions">
-            ${effectiveLayout !== "left"
-              ? (() => {
-                  const sensitiveLabel = this._localize(
-                    this._revealSensitive
-                      ? "device.yaml_mask_sensitive"
-                      : "device.yaml_reveal_sensitive"
-                  );
-                  return html`<button
-                    type="button"
-                    class="ghost-icon-btn diff-toggle"
-                    aria-pressed=${this._revealSensitive}
-                    aria-label=${sensitiveLabel}
-                    @click=${this._toggleRevealSensitive}
-                    title=${sensitiveLabel}
-                  >
-                    <wa-icon
-                      library="mdi"
-                      name=${this._revealSensitive ? "eye-off" : "eye"}
-                    ></wa-icon>
-                  </button>`;
-                })()
-              : nothing}
-            ${this._showDiffButton
-              ? (() => {
-                  const diffLabel = this._showDiff
-                    ? this._localize("device.diff_view_editor")
-                    : this._localize("device.diff_view_diff");
-                  return html`<button
-                    type="button"
-                    class="ghost-icon-btn diff-toggle"
-                    aria-pressed=${this._showDiff}
-                    ?disabled=${this.yaml === this.savedYaml && !this._showDiff}
-                    aria-label=${diffLabel}
-                    @click=${this._toggleDiff}
-                    title=${diffLabel}
-                  >
-                    <wa-icon library="mdi" name="vector-difference"></wa-icon>
-                  </button>`;
-                })()
-              : nothing}
-            <div
-              class="layout-toggle"
-              aria-label=${this._localize("device.editor_layout_label")}
-            >
-              <button
-                type="button"
-                class="ghost-icon-btn"
-                aria-pressed=${effectiveLayout === "left"}
-                @click=${() => this._setLayout("left")}
-                aria-label=${this._localize("device.layout_components_only")}
-                title=${this._localize("device.layout_components_only")}
-              >
-                <wa-icon library="mdi" name="layout-left"></wa-icon>
-              </button>
-              <button
-                class="ghost-icon-btn split-btn"
-                type="button"
-                aria-pressed=${effectiveLayout === "both"}
-                @click=${() => this._setLayout("both")}
-                aria-label=${this._localize("device.layout_split")}
-                title=${this._localize("device.layout_split")}
-              >
-                <wa-icon library="mdi" name="layout-split"></wa-icon>
-              </button>
-              <button
-                type="button"
-                class="ghost-icon-btn"
-                aria-pressed=${effectiveLayout === "right"}
-                @click=${() => this._setLayout("right")}
-                aria-label=${this._localize("device.layout_yaml_only")}
-                title=${this._localize("device.layout_yaml_only")}
-              >
-                <wa-icon library="mdi" name="layout-right"></wa-icon>
-              </button>
-            </div>
-          </div>
+          ${renderEditorToolbar({
+            localize: this._localize,
+            effectiveLayout,
+            revealSensitive: this._revealSensitive,
+            showDiffButton: this._showDiffButton,
+            showDiff: this._showDiff,
+            yaml: this.yaml,
+            savedYaml: this.savedYaml,
+            onToggleRevealSensitive: () => this._toggleRevealSensitive(),
+            onToggleDiff: () => this._toggleDiff(),
+            onSetLayout: (layout) => this._setLayout(layout),
+          })}
         </header>
         <div class="card-body">
           <div class="editor-floating-actions">
