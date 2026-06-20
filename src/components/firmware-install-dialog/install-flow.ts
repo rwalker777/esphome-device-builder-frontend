@@ -413,10 +413,7 @@ export function compileAndWait(
           };
 
           if (result.status === JobStatus.COMPLETED) {
-            if (
-              host._device?.state === DeviceState.OFFLINE ||
-              (host as any)._device?.state === DeviceState.OFFLINE
-            ) {
+            if (host._device?.state === DeviceState.OFFLINE) {
               host._step = "done";
               host._statusMessage =
                 host._localize("dashboard.queued_successfully") ||
@@ -424,7 +421,6 @@ export function compileAndWait(
             } else {
               host._statusMessage = host._localize("firmware.install_successful");
             }
-
             resolve();
             return;
           }
