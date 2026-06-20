@@ -108,6 +108,9 @@ export function renderCardGrid(
             ?api-enabled=${device.api_enabled === true}
             ?api-encrypted=${device.api_encrypted === true}
             .apiEncryptionActive=${device.api_encryption_active ?? null}
+            ?queued-update=${device.queued_update === true}
+            @clear-queued-update=${() =>
+              host._api.firmwareClearQueuedUpdate(device.configuration)}
             ?busy=${host._activeJobs.has(device.configuration)}
             .activeJob=${host._activeJobs.get(device.configuration) ?? null}
             ?highlight=${host._recentlyAdopted === device.configuration}

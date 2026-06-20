@@ -72,6 +72,17 @@ export function renderStatusBadge(card: ESPHomeDeviceCard): TemplateResult {
       ${card._localize(labelKey)}
     </div>`;
   }
+
+  if (card.queuedUpdate) {
+    return html`<div
+      class="status-badge"
+      style="color: var(--status-queued-color, #ff9800);"
+    >
+      <wa-icon library="mdi" name="clock-outline"></wa-icon>
+      Update Queued
+    </div>`;
+  }
+
   if (card.recentJob) {
     const status = card.recentJob.status;
     const icon = RECENT_JOB_ICON[status];
@@ -84,17 +95,6 @@ export function renderStatusBadge(card: ESPHomeDeviceCard): TemplateResult {
         ${card._localize(RECENT_JOB_LABEL[status])}
       </div>`;
     }
-  }
-
-  // Added logic for queued update state
-  if (card.queuedUpdate) {
-    return html`<div
-      class="status-badge"
-      style="color: var(--status-queued-color, #ff9800);"
-    >
-      <wa-icon library="mdi" name="clock-outline"></wa-icon>
-      Update Queued
-    </div>`;
   }
 
   const stateIcon =
