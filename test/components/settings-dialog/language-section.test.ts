@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import type { LanguageOption, LocalizeFunc } from "../../../src/common/localize.js";
 import { ESPHomeSettingsLanguage } from "../../../src/components/settings-dialog/language-section.js";
-import { visitTemplates } from "../../_lit-template-walker.js";
+import {
+  extractAttributeBindings,
+  findTemplatesByAnchor,
+  visitTemplates,
+} from "../../_lit-template-walker.js";
 
 const localize: LocalizeFunc = ((key: string) => key) as LocalizeFunc;
 
@@ -60,6 +64,21 @@ describe("esphome-settings-language completeness badge", () => {
     expect(text).toContain('slot="end"');
     expect(text).toContain("settings.language_completeness");
     expect(text).toContain("%");
+  });
+
+  it("pins an explicit per-option label that excludes the completeness badge", () => {
+    // Without an explicit label, wa-select derives the collapsed display from
+    // the option's text content, gluing the slot="end" badge onto the name
+    // ("Deutsch99%"). Every wa-option must bind a non-empty .label whose value
+    // carries the name but never the percent badge (issue #1650).
+    const options = findTemplatesByAnchor(render(), "<wa-option");
+    expect(options.length).toBeGreaterThan(0);
+    for (const option of options) {
+      const label = extractAttributeBindings(option)[".label"];
+      expect(typeof label).toBe("string");
+      expect(label as string).not.toContain("%");
+      expect((label as string).length).toBeGreaterThan(0);
+    }
   });
 
   it("omits the badge for a fully translated locale", () => {
