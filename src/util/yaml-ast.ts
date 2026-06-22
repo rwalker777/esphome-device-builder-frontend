@@ -244,6 +244,28 @@ export function resolveBundleContext(
   return { topLevelKey, platformValue: getPlatformValue(state, pos) };
 }
 
+/** Iterate the direct ``Pair`` children of a ``BlockMapping`` node — the
+ *  shared primitive behind the mapping-key collectors below. */
+function* mappingPairs(map: SyntaxNode): Generator<SyntaxNode> {
+  for (let pair = map.firstChild; pair; pair = pair.nextSibling) {
+    if (pair.name === "Pair") yield pair;
+  }
+}
+
+/** Ordered, de-duplicated keys of a ``BlockMapping``'s direct pairs. */
+function uniqueMappingKeys(state: EditorState, map: SyntaxNode): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const pair of mappingPairs(map)) {
+    const k = getPairKey(state, pair);
+    if (k && !seen.has(k)) {
+      seen.add(k);
+      out.push(k);
+    }
+  }
+  return out;
+}
+
 /** Memoise substitution-key collection by Lezer ``Tree`` identity.
  *  Same incremental-tree reuse as ``collectTopLevelKeys`` —
  *  unchanged ``substitutions:`` mapping shouldn't re-walk on every
@@ -261,31 +283,49 @@ export function collectSubstitutionKeys(state: EditorState): string[] {
   const cached = substitutionKeysMemo.get(tree);
   if (cached) return cached;
   const out: string[] = [];
-  const seen = new Set<string>();
-  const doc = tree.topNode.getChild("Document");
-  const map = doc?.getChild("BlockMapping");
-  if (!map) {
-    substitutionKeysMemo.set(tree, out);
-    return out;
-  }
-  for (let pair = map.firstChild; pair; pair = pair.nextSibling) {
-    if (pair.name !== "Pair") continue;
+  const map = tree.topNode.getChild("Document")?.getChild("BlockMapping");
+  for (const pair of map ? mappingPairs(map) : []) {
     if (getPairKey(state, pair) !== "substitutions") continue;
     // ``substitutions:`` value is a BlockMapping of leaf pairs.
     let val: SyntaxNode | null = pair.lastChild;
     while (val && val.name !== "BlockMapping") val = val.prevSibling;
-    if (!val) break;
-    for (let inner = val.firstChild; inner; inner = inner.nextSibling) {
-      if (inner.name !== "Pair") continue;
-      const k = getPairKey(state, inner);
-      if (k && !seen.has(k)) {
-        seen.add(k);
-        out.push(k);
-      }
-    }
+    if (val) out.push(...uniqueMappingKeys(state, val));
     break;
   }
   substitutionKeysMemo.set(tree, out);
+  return out;
+}
+
+/**
+ * Collect the keys of the block mapping the cursor sits in, excluding
+ * the pair the cursor is editing. The new editor's equivalent of the
+ * legacy ``mapHasScalarKey`` filter — drives "don't re-suggest a key
+ * that's already set in this mapping". Returns an empty set when the
+ * cursor isn't inside a mapping (no filtering, matching prior
+ * behaviour).
+ */
+export function collectSiblingKeys(state: EditorState, pos: number): Set<string> {
+  const out = new Set<string>();
+  const inner = syntaxTree(state).resolveInner(pos, -1);
+  let map: SyntaxNode | null = inner;
+  while (map && map.name !== "BlockMapping") map = map.parent;
+  if (!map) return out;
+  // The pair being edited stays out of the set so an in-place key edit
+  // still completes itself — but only when its key sits on the cursor's
+  // line. An empty ``key:`` opener absorbs the line below as its value, so
+  // a new sibling typed beneath one would otherwise wrongly exclude that
+  // key (and re-suggest it).
+  const ownPair = findEnclosingPair(inner);
+  const ownKey = ownPair?.getChild("Key");
+  const ownKeyOnCursorLine =
+    !!ownKey && state.doc.lineAt(ownKey.from).number === state.doc.lineAt(pos).number;
+  for (const pair of mappingPairs(map)) {
+    // Lezer nodes aren't reference-equal across traversals; a Pair is
+    // uniquely identified by its start within one mapping.
+    if (ownKeyOnCursorLine && pair.from === ownPair!.from) continue;
+    const k = getPairKey(state, pair);
+    if (k) out.add(k);
+  }
   return out;
 }
 
@@ -308,27 +348,9 @@ export function collectTopLevelKeys(state: EditorState): string[] {
   const tree = syntaxTree(state);
   const cached = topLevelKeysMemo.get(tree);
   if (cached) return cached;
-  const out: string[] = [];
-  const seen = new Set<string>();
   // Stream → Document → BlockMapping → Pair*
-  const doc = tree.topNode.getChild("Document");
-  if (!doc) {
-    topLevelKeysMemo.set(tree, out);
-    return out;
-  }
-  const map = doc.getChild("BlockMapping");
-  if (!map) {
-    topLevelKeysMemo.set(tree, out);
-    return out;
-  }
-  for (let pair = map.firstChild; pair; pair = pair.nextSibling) {
-    if (pair.name !== "Pair") continue;
-    const k = getPairKey(state, pair);
-    if (k && !seen.has(k)) {
-      seen.add(k);
-      out.push(k);
-    }
-  }
+  const map = tree.topNode.getChild("Document")?.getChild("BlockMapping");
+  const out = map ? uniqueMappingKeys(state, map) : [];
   topLevelKeysMemo.set(tree, out);
   return out;
 }
