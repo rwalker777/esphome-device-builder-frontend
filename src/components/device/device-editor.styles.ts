@@ -247,10 +247,30 @@ export const deviceEditorStyles = css`
     border-color: color-mix(in srgb, var(--wa-color-text-normal), transparent 70%);
   }
 
+  /* Single size for every glyph; the fixed slot below derives its
+     box from this one font-size, so there's nothing to keep in sync. */
   .save-button wa-icon,
+  .save-button wa-spinner,
   .validate-button wa-icon,
   .install-fab wa-icon {
     font-size: 16px;
+  }
+
+  /* Pin both the idle icon and the in-flight spinner to the same 1em
+     square so swapping them can't reflow the button. wa-icon and
+     wa-spinner measure differently on their own, hence both here. */
+  .save-button wa-icon,
+  .save-button wa-spinner {
+    box-sizing: border-box;
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+
+  .save-button wa-spinner {
+    --track-width: 2px;
+    --indicator-color: currentColor;
+    --track-color: color-mix(in srgb, currentColor 30%, transparent);
   }
 
   /* Tooltip carrier so the "why disabled" hint reaches mouse users
