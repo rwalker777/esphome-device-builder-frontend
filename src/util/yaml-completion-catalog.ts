@@ -13,10 +13,15 @@
 import type { EditorState } from "@codemirror/state";
 import type { ESPHomeAPI } from "../api/esphome-api.js";
 import type { ComponentCatalogEntry } from "../api/types/components.js";
-import type { ConfigEntry } from "../api/types/config-entries.js";
+import { ConfigEntryType, type ConfigEntry } from "../api/types/config-entries.js";
 import { fetchComponent } from "./component-name-cache.js";
-import { resolveBundleContext } from "./yaml-ast.js";
-import { findTopLevelBlock, readPlatformSibling } from "./yaml-line-walker.js";
+import { getKeyPath, resolveBundleContext } from "./yaml-ast.js";
+import {
+  blankLineContext,
+  findTopLevelBlock,
+  keyPathByIndent,
+  readPlatformSibling,
+} from "./yaml-line-walker.js";
 
 // ``validFor`` regex constants — consumed by CodeMirror to decide
 // whether cached completion options stay valid as the user types.
@@ -107,6 +112,17 @@ export interface CatalogIndex {
   byCategory: Map<string, ComponentCatalogEntry[]>;
 }
 
+/**
+ * The device's target platform/board (e.g. `esp32` / `esp32-evb`), so body
+ * hydration resolves per-platform value options (`hardware_uart` → the
+ * board's UARTs). Distinct from the `platform:` component selector. Empty
+ * fields fall back to the generic catalog body.
+ */
+export interface CompletionTarget {
+  platform?: string;
+  boardId?: string;
+}
+
 let catalogPromise: Promise<CatalogIndex> | null = null;
 
 /**
@@ -189,7 +205,9 @@ export async function resolveAvailableEntries(
   catalog: CatalogIndex,
   parentKey: string,
   platformValue: string | null,
-  topLevelKey: string | null
+  topLevelKey: string | null,
+  resolveNestedPath: () => string[] = () => [],
+  target?: CompletionTarget
 ): Promise<ConfigEntry[]> {
   // The slim ``getComponents`` index carries no ``config_entries``
   // (those hydrate lazily through ``components/get_component_bodies``),
@@ -204,11 +222,41 @@ export async function resolveAvailableEntries(
   const entriesFor = async (id: string): Promise<ConfigEntry[]> => {
     if (!catalog.byId.has(id)) return [];
     try {
-      const body = await fetchComponent(api, id);
+      // Pass the device target so the backend resolves per-platform value
+      // options (e.g. ``hardware_uart``); buckets the same cache the
+      // structured editor populated.
+      const body = await fetchComponent(api, id, target?.platform, target?.boardId);
       return body?.config_entries ?? [];
     } catch {
       return [];
     }
+  };
+
+  // Resolve a top-level component's fields, merging the platform
+  // implementation's fields when a ``platform:`` value is set (the
+  // catalog keys per-platform entries as ``<domain>.<stem>``). The merge
+  // id is resolved up front so both bodies register before the microtask
+  // flush and batch into a single ``get_component_bodies`` round trip.
+  const componentEntries = async (componentId: string): Promise<ConfigEntry[]> => {
+    let mergeId: string | null = null;
+    if (platformValue) {
+      // Prefer the dotted per-domain impl (``ota.esphome``) over a bare
+      // component that happens to share the platform's name (``esphome``);
+      // otherwise ``ota: - platform: esphome`` merges the core esphome fields.
+      if (catalog.byId.has(`${componentId}.${platformValue}`)) {
+        mergeId = `${componentId}.${platformValue}`;
+      } else if (catalog.byId.has(platformValue)) {
+        mergeId = platformValue;
+      }
+    }
+    if (mergeId) {
+      const [own, extra] = await Promise.all([
+        entriesFor(componentId),
+        entriesFor(mergeId),
+      ]);
+      return [...own, ...extra];
+    }
+    return entriesFor(componentId);
   };
 
   // Cursor nested under a list-item header (``- platform: template``
@@ -218,28 +266,34 @@ export async function resolveAvailableEntries(
     if (!topLevelKey || !platformValue) return [];
     return entriesFor(`${topLevelKey}.${platformValue}`);
   }
-  if (catalog.byId.has(parentKey)) {
-    // Top-level component directly. If a platform value is set, merge
-    // the platform implementation's fields in (the catalog keys
-    // per-platform entries as ``<domain>.<stem>``). Resolve the merge
-    // id up front so both bodies register before the microtask flush
-    // and batch into a single ``get_component_bodies`` round trip.
-    let mergeId: string | null = null;
-    if (platformValue) {
-      if (catalog.byId.has(platformValue)) {
-        mergeId = platformValue;
-      } else if (topLevelKey && catalog.byId.has(`${topLevelKey}.${platformValue}`)) {
-        mergeId = `${topLevelKey}.${platformValue}`;
-      }
-    }
-    if (mergeId) {
-      const [own, extra] = await Promise.all([
-        entriesFor(parentKey),
-        entriesFor(mergeId),
-      ]);
-      return [...own, ...extra];
-    }
-    return entriesFor(parentKey);
+  // Treat the parent as a top-level component only when it actually *is* the
+  // top-level block. A nested group key can collide with a component id
+  // (``web_server``, ``uart``, ``time``, …); preferring the component would
+  // shadow the descent and surface the wrong fields. When the AST is silent
+  // (``topLevelKey`` null) keep the direct lookup — the descent can't run
+  // without it anyway.
+  if (
+    catalog.byId.has(parentKey) &&
+    (topLevelKey === null || parentKey === topLevelKey)
+  ) {
+    return componentEntries(parentKey);
+  }
+  // Nested mapping (``esp32: framework:`` → parentKey="framework", not a
+  // catalog id). Descend the top-level component's nested
+  // ``config_entries`` along the key path; the catalog models nested
+  // groups (``framework`` → ``advanced`` → …) the same way the visual
+  // form renders them. Only reached once the cheaper branches miss, so the
+  // path's AST walk stays off the common (cursor-under-a-component) path.
+  const nestedPath = topLevelKey ? resolveNestedPath() : [];
+  if (nestedPath.length > 0) {
+    // ``null`` means the path didn't resolve (fall through to the alias
+    // fetch); an empty array means a real but childless nested group, which
+    // should surface no suggestions rather than trigger the network fallback.
+    const descended = descendNestedEntries(
+      await componentEntries(topLevelKey!),
+      nestedPath
+    );
+    if (descended !== null) return descended;
   }
   // No direct hit — try fetching the component (handles aliases the
   // catalog list call doesn't return). Routes through the session-
@@ -247,12 +301,67 @@ export async function resolveAvailableEntries(
   // doesn't re-issue the backend round-trip. Tolerate failures
   // silently.
   try {
-    const comp = await fetchComponent(api, parentKey);
+    const comp = await fetchComponent(api, parentKey, target?.platform, target?.boardId);
     if (comp) return comp.config_entries ?? [];
   } catch {
     /* ignore */
   }
   return [];
+}
+
+/**
+ * Compute the nested-group descent path for ``resolveAvailableEntries``:
+ * the key chain from just under the top-level component down to and
+ * including *parentKey*. Returns ``[]`` when *parentKey* is the top-level
+ * key itself or doesn't appear on the cursor's key path (safe no-descent
+ * fallback).
+ */
+export function nestedPathForParent(
+  state: EditorState,
+  pos: number,
+  parentKey: string
+): string[] {
+  // On a genuinely blank line the AST has no Pair to anchor on (``getKeyPath``
+  // returns ``[]``), so build the chain from indentation instead. Elsewhere
+  // stay on the AST: a missing parentKey there means the walkers disagree
+  // (e.g. a list-item context), where the indent walk could synthesise a
+  // sibling-laden path. (The fallback is kept here, not inside ``getKeyPath``,
+  // so hover — which wants the raw AST result — still gets ``[]``. The
+  // cursor-line event applies the same blank-line fallback on its own.)
+  const blank = blankLineContext(state.doc, pos);
+  const path = blank
+    ? keyPathByIndent(state.doc, blank.lineIdx, blank.indent)
+    : getKeyPath(state, pos);
+  const idx = path.lastIndexOf(parentKey);
+  if (idx < 1) return [];
+  return path.slice(1, idx + 1);
+}
+
+/**
+ * Walk *entries* down *path*, descending into each matching entry's
+ * nested ``config_entries``. Returns the deepest level reached (possibly
+ * empty for a childless nested group), or ``null`` when any step has no
+ * nested group for that key — letting the caller tell "resolved but empty"
+ * apart from "path missing".
+ */
+export function descendNestedEntries(
+  entries: ConfigEntry[],
+  path: string[]
+): ConfigEntry[] | null {
+  let cur = entries;
+  for (const key of path) {
+    // Descend into any entry that carries child entries (``nested`` / ``pin``
+    // / ``map``); a ``nested`` group can legitimately have ``null`` children
+    // (treated as empty), so match it by type too rather than only by a
+    // truthy ``config_entries``.
+    const next = cur.find(
+      (e) =>
+        e.key === key && (e.config_entries != null || e.type === ConfigEntryType.NESTED)
+    );
+    if (!next) return null;
+    cur = next.config_entries ?? [];
+  }
+  return cur;
 }
 
 /**

@@ -12,17 +12,8 @@ import type { LocalizeFunc } from "../../common/localize.js";
 import { apiContext, localizeContext } from "../../context/index.js";
 import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
-import { seedBoardPinDefaults } from "../../util/board-pin-defaults.js";
 import { ComponentNameResolverController } from "../../util/component-name-resolver-controller.js";
-import {
-  findReferenceCandidates,
-  resolveSoleCandidate,
-} from "../../util/config-entry-yaml-scan.js";
 import { validateEntries, type ValidationError } from "../../util/config-validation.js";
-import {
-  collectExistingIds,
-  generateDefaultComponentId,
-} from "../../util/default-component-id.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { setIn } from "../../util/nested-values.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
@@ -30,13 +21,17 @@ import {
   parseTopLevelComponents,
   serializeYamlValues,
 } from "../../util/yaml-serialize.js";
-import { findMissingDependencies } from "./add-component-deps.js";
+import {
+  depsSatisfiedByProvides,
+  findMissingDependencies,
+} from "./add-component-deps.js";
 import { coerceFields } from "./add-component-form-coerce.js";
+import { addFormRenderablePaths } from "./add-component-form-filter.js";
 import { overlayOptions, overlayRequired } from "./add-component-form-overlays.js";
+import { buildInitialValues } from "./add-component-form-seed.js";
 import { addComponentFormStyles } from "./add-component-form.styles.js";
 import "./config-entry-form.js";
 import type { ConfigEntryValueChange } from "./config-entry-form.js";
-import { collectRenderablePaths } from "./config-entry-render-filter.js";
 import { resolveEntryLabel } from "./config-entry-renderers-shared.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
@@ -113,6 +108,15 @@ export class ESPHomeAddComponentForm extends LitElement {
   @state()
   private _showYaml = false;
 
+  /** Missing deps a present component already provides; resolved async,
+   *  subtracted from the banner. See `depsSatisfiedByProvides`. */
+  @state()
+  private _providedDeps: ReadonlySet<string> = new Set();
+
+  /** Bumps per resolution so a superseded `(component, yaml)` result can't
+   *  overwrite a newer one. */
+  private _providesSeq = 0;
+
   /** Resolves dep ids (``i2c``) to their catalog name (``I²C Bus``)
    * for the missing-deps banner. Owns the cache subscription so a
    * fresh entry triggers a re-render without bookkeeping here. */
@@ -159,169 +163,78 @@ export class ESPHomeAddComponentForm extends LitElement {
         this._depResolver.kickoff(this.component.dependencies ?? []);
       }
     }
+    // Re-resolve when the present components shift (YAML) or the query scope
+    // shifts (component deps, or a late/changed board platform/id).
+    if (
+      changedProperties.has("component") ||
+      changedProperties.has("yaml") ||
+      changedProperties.has("board")
+    ) {
+      void this._resolveProvidedDeps();
+    }
+  }
+
+  /** Net-missing deps driving the banner and submit gate: the literal-name
+   *  scan minus those a present component provides (`_providedDeps`). */
+  private _missingDeps(present: ReadonlySet<string>): string[] {
+    return findMissingDependencies(
+      this.component.dependencies ?? [],
+      this.yaml,
+      present
+    ).filter((d) => !this._providedDeps.has(d));
+  }
+
+  /** Refresh `_providedDeps` for the current `(component, yaml)`, dropping
+   *  superseded async results via `_providesSeq`. */
+  private async _resolveProvidedDeps(): Promise<void> {
+    // Bump first so every re-entry — even one that early-returns below —
+    // invalidates an older in-flight lookup that would otherwise pass the
+    // `seq === this._providesSeq` guard and write a stale result.
+    const seq = ++this._providesSeq;
+    // Drop the prior result up front so the submit gate fails closed while a
+    // fresh lookup is in flight. Empty stays empty (no needless re-render).
+    if (this._providedDeps.size) this._providedDeps = new Set();
+    const api = this._api;
+    const deps = this.component?.dependencies ?? [];
+    // Common dep-free case: nothing to resolve, so skip the YAML parse too.
+    if (!api || deps.length === 0) return;
+    const present = parseTopLevelComponents(this.yaml);
+    const missing = findMissingDependencies(deps, this.yaml, present);
+    if (missing.length === 0) return;
+    try {
+      const satisfied = await depsSatisfiedByProvides(api, missing, present, {
+        platform: this.board?.esphome.platform ?? null,
+        boardId: this.board?.id ?? null,
+      });
+      // Skip an empty-over-empty assignment: on the common "nothing provides"
+      // path it would only flip Set identity and force an identical re-render.
+      if (seq === this._providesSeq && (satisfied.size || this._providedDeps.size)) {
+        this._providedDeps = satisfied;
+      }
+    } catch (err) {
+      // Fail closed: the up-front clear already left the deps flagged, so the
+      // banner still guides the user. Warn (not swallow) so a provides-lookup
+      // failure is observable rather than silently re-showing the original
+      // false banner — mirrors config-entry-form's provider fetch.
+      console.warn("[add-component-form] provides lookup failed", err);
+    }
   }
 
   /**
-   * Build the initial `_values` for the current component:
-   *  1. Seed required entries' default values (recursively).
-   *  2. Auto-generate a unique `id` for the top-level id field.
-   *  3. If we were just brought back from a "+ Add <domain>" detour,
-   *     prefill the field that points at that domain with the new id.
+   * Seed `_values` for the current component. The seeding pipeline
+   * itself is a pure function of the host's inputs — see
+   * `add-component-form-seed.ts`.
    */
   private _initValues() {
-    // Featured-component entries (ids prefixed with `featured.`) carry
-    // backend-baked presets in `default_value` for arbitrary fields,
-    // not just required ones. Seed every entry with a non-null default
-    // when filling a featured entry so a board-pinned (locked) optional
-    // field actually emits its preset on submit — otherwise the
-    // backend's locked-validation would reject the empty payload.
-    const seedAll = this.component.id.startsWith("featured.");
-    let next = this._seedDefaults(this._entries, seedAll);
-
-    const idEntry = this._entries.find(
-      (e) => e.key === "id" && e.type === ConfigEntryType.ID
-    );
-    if (idEntry && next["id"] === undefined) {
-      const seeded = this._generateDefaultId();
-      if (seeded !== null) next = { ...next, id: seeded };
-    }
-
-    // Seed pin entries from the board's manifest when the board has
-    // a pin tagged with the matching peripheral feature. Without this,
-    // ESPHome falls back to its compile-time defaults — which on the
-    // ESP32-C3 (and other variants without an SCL/SDA alias) are
-    // either invalid or wrong-numbered: i2c on C3 emits an
-    // "Invalid pin number: 22" squiggle because the bus block
-    // falls back to ESP32 GPIO22/21.
-    next = seedBoardPinDefaults(this.component.id, this._entries, this.board, next);
-
-    if (this.prefillReference) {
-      const targetPath = this._findReferencePath(
-        this._entries,
-        this.prefillReference.domain,
-        []
-      );
-      if (targetPath) {
-        next = setIn(next, targetPath, this.prefillReference.id);
-      }
-    }
-
-    // Last so a constraint-derived value beats the bare catalog default.
-    if (this.prefillFields) {
-      next = { ...next, ...this.prefillFields };
-    }
-
-    this._values = next;
-  }
-
-  /**
-   * Walk the schema recursively to find the path of the first entry
-   * with `references_component === domain`. Returns null if the
-   * schema doesn't reference the domain — defensive against the
-   * dialog passing a prefill that doesn't apply to this form.
-   */
-  private _findReferencePath(
-    entries: ConfigEntry[],
-    domain: string,
-    prefix: string[]
-  ): string[] | null {
-    for (const entry of entries) {
-      if (entry.type === ConfigEntryType.NESTED) {
-        const found = this._findReferencePath(entry.config_entries ?? [], domain, [
-          ...prefix,
-          entry.key,
-        ]);
-        if (found) return found;
-        continue;
-      }
-      if (entry.references_component === domain) {
-        return [...prefix, entry.key];
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Seed initial form values. By default only required fields' defaults
-   * are pre-filled — pre-filling optional fields the user can't see
-   * would just bloat the payload with values they never explicitly
-   * chose. NESTED entries recurse regardless of whether the parent is
-   * required, since a non-required group can still contain required
-   * descendants we want to seed.
-   *
-   * When `seedAll` is true, every entry with a non-null `default_value`
-   * is seeded — used for featured components so backend-baked presets
-   * land in the payload even on optional fields.
-   */
-  private _seedDefaults(
-    entries: ConfigEntry[],
-    seedAll: boolean = false
-  ): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    for (const entry of entries) {
-      if (entry.type === ConfigEntryType.NESTED) {
-        const sub = this._seedDefaults(entry.config_entries ?? [], seedAll);
-        // A required entity sub-reading (ags10's tvoc) serializes only
-        // once it holds a value; seed its name (the label) so an
-        // untouched Add still produces a valid sensor, matching the
-        // optional-entity enable toggle.
-        if (
-          entry.required &&
-          entry.platform_type != null &&
-          sub.name === undefined &&
-          sub.id === undefined
-        ) {
-          sub.name = resolveEntryLabel(entry, this._localize);
-        }
-        if (Object.keys(sub).length > 0) out[entry.key] = sub;
-        continue;
-      }
-      if (!seedAll && !entry.required) continue;
-      // Resolve an id reference against the live YAML so a stale featured
-      // preset (`i2c_bus`) can't outlive the bus it names. Locked refs are
-      // deliberate pins — keep their literal.
-      if (entry.references_component && !entry.locked) {
-        const ref = this._seedReference(entry.references_component);
-        if (ref !== undefined) {
-          out[entry.key] = entry.multi_value ? [ref] : ref;
-        } else if (entry.multi_value && entry.required) {
-          out[entry.key] = [];
-        }
-        continue;
-      }
-      if (entry.default_value != null) {
-        out[entry.key] = entry.multi_value
-          ? [String(entry.default_value)]
-          : entry.default_value;
-      } else if (entry.multi_value && entry.required) {
-        out[entry.key] = [];
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Seed an unlocked id-reference field with the matching component already in
-   * the config, so a stale featured preset can't write an id that doesn't
-   * exist. Ambiguous cases — none, several, or a `packages:`/`<<:` merge that
-   * could hide one — stay unset, deferring to the dep detour or the picker.
-   */
-  private _seedReference(domain: string): string | undefined {
-    // Resolve against same-domain candidates only (i2c/spi/uart buses); the
-    // picker also folds in async interface providers. A cross-domain ref finds
-    // nothing here and defers to the picker; for a domain that is both a block
-    // and a provided interface, seeding may fill a value the picker would call
-    // ambiguous — harmless, since it's a real id the user can still change.
-    const candidates = findReferenceCandidates(this.yaml, domain, []);
-    return resolveSoleCandidate(candidates, this.yaml)?.id;
-  }
-
-  private _generateDefaultId(): string | null {
-    return generateDefaultComponentId(
-      this.component.id,
-      this.component.multi_conf,
-      collectExistingIds(this.yaml)
-    );
+    this._values = buildInitialValues({
+      entries: this._entries,
+      component: this.component,
+      board: this.board,
+      yaml: this.yaml,
+      prefillReference: this.prefillReference,
+      prefillFields: this.prefillFields,
+      localize: this._localize,
+    });
   }
 
   protected render() {
@@ -332,11 +245,7 @@ export class ESPHomeAddComponentForm extends LitElement {
     // configured platform for hub-style deps (`atm90e32` under
     // `sensor:`). Surface these instead of letting the user submit a
     // config that won't validate.
-    const missingDeps = findMissingDependencies(
-      this.component.dependencies ?? [],
-      this.yaml,
-      presentComponents
-    );
+    const missingDeps = this._missingDeps(presentComponents);
 
     // The shared form filters its own visibility — but we still need
     // to know whether everything required is filled in to enable the
@@ -499,13 +408,9 @@ export class ESPHomeAddComponentForm extends LitElement {
   /**
    * True when at least one error in the map lands on an entry the
    * shared ``esphome-config-entry-form`` actually renders. Built on
-   * ``collectRenderablePaths`` so the visibility check stays in
-   * lockstep with the form's render filter — without that lockstep
+   * ``addFormRenderablePaths`` so the visibility check stays in
+   * lockstep with the add-form's render filter — without that lockstep
    * an error on a hidden field would bail the submit silently.
-   *
-   * The add-component form passes ``required-only`` and never
-   * exposes a show-advanced toggle, so we always pass
-   * ``showAdvanced: false`` here.
    */
   private _anyErrorIsVisible(
     errors: Map<string, ValidationError>,
@@ -515,12 +420,12 @@ export class ESPHomeAddComponentForm extends LitElement {
     // ``errors.size > 0``, but we keep the guard so the helper is
     // safe to call from anywhere.
     if (errors.size === 0) return false;
-    const renderedPaths = collectRenderablePaths(this._entries, this._values, {
-      requiredOnly: true,
-      showAdvanced: false,
-      presentComponents,
-      targetPlatform: this.board?.esphome.platform ?? null,
-    });
+    const renderedPaths = addFormRenderablePaths(
+      this._entries,
+      this._values,
+      this.board,
+      presentComponents
+    );
     for (const key of errors.keys()) {
       if (renderedPaths.has(key)) return true;
     }
@@ -564,11 +469,7 @@ export class ESPHomeAddComponentForm extends LitElement {
     // Block submit when a declared dependency isn't satisfied. The
     // button should already be disabled in that case, but defend here
     // too in case the YAML changed under us between renders.
-    const missingDeps = findMissingDependencies(
-      this.component.dependencies ?? [],
-      this.yaml,
-      presentComponents
-    );
+    const missingDeps = this._missingDeps(presentComponents);
     if (missingDeps.length > 0) {
       // Should be unreachable — the button-disabled predicate uses the
       // same check. If we get here, the YAML changed under us between

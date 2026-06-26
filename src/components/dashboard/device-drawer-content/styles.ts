@@ -208,7 +208,9 @@ export const deviceDrawerContentStyles = css`
   }
 
   .auto-loaded-details > summary,
-  .mdns-txt-details > summary {
+  .mdns-txt-details > summary,
+  .mdns-expiry-details > summary,
+  .reachability-warning > summary {
     cursor: pointer;
     font-size: var(--wa-font-size-2xs);
     color: var(--wa-color-text-quiet);
@@ -217,8 +219,20 @@ export const deviceDrawerContentStyles = css`
   }
 
   .auto-loaded-details > summary:hover,
-  .mdns-txt-details > summary:hover {
+  .mdns-txt-details > summary:hover,
+  .mdns-expiry-details > summary:hover {
     color: var(--wa-color-text-normal);
+  }
+
+  .mdns-expiry-details {
+    margin-top: var(--wa-space-2xs);
+  }
+
+  .mdns-expiry-body {
+    margin-top: var(--wa-space-2xs);
+    font-size: var(--wa-font-size-2xs);
+    line-height: 1.45;
+    color: var(--wa-color-text-quiet);
   }
 
   .auto-loaded-details {
@@ -349,6 +363,31 @@ export const deviceDrawerContentStyles = css`
   }
 
   .reachability-rtt {
+    color: var(--wa-color-text-quiet);
+  }
+
+  .reachability-warning {
+    margin-top: var(--wa-space-s);
+  }
+
+  /* Shares cursor / padding / sizing with the other drawer disclosures
+     above; only the warning emphasis + icon layout are specific here. */
+  .reachability-warning > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    font-weight: var(--wa-font-weight-bold);
+    color: var(--esphome-warning, #d97706);
+  }
+
+  .reachability-warning > summary wa-icon {
+    font-size: 14px;
+  }
+
+  .reachability-warning-body {
+    margin-top: var(--wa-space-2xs);
+    font-size: var(--wa-font-size-2xs);
+    line-height: 1.45;
     color: var(--wa-color-text-quiet);
   }
 `;

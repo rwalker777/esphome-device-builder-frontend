@@ -83,7 +83,7 @@ jobs:
     permissions:
       contents: read    # actions/checkout uses the implicit GITHUB_TOKEN
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -136,7 +136,7 @@ jobs:
     permissions:
       contents: read    # actions/checkout uses the implicit GITHUB_TOKEN
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Tag doesn't exist yet — it's created when the draft release
           # is published. Build from the SHA the workflow ran on, which
@@ -144,7 +144,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -218,14 +218,14 @@ jobs:
           client-id: ${{ vars.ESPHOME_GITHUB_APP_CLIENT_ID }}
           private-key: ${{ secrets.ESPHOME_GITHUB_APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Generate release notes (draft)
-        uses: release-drafter/release-drafter@ed4bc48ec97379be2258e7b7ac2624a3e26ab809 # v7.4.0
+        uses: release-drafter/release-drafter@73b95fa1c286dfd6802a4f949b07dad6149f2b0f # v7.5.0
         with:
           config-name: release-drafter.yml
           version: ${{ inputs.version }}
@@ -362,7 +362,7 @@ jobs:
           permission-issues: write
 
       - name: Checkout backend
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ env.BACKEND_REPO }}
           token: ${{ steps.app-token.outputs.token }}

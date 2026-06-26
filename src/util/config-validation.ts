@@ -1,11 +1,35 @@
-import type { ConfigEntry, ConfigPrimitive } from "../api/types/config-entries.js";
+import type {
+  ConfigEntry,
+  ConfigPrimitive,
+  ConfigValueOption,
+} from "../api/types/config-entries.js";
 import { ConfigEntryType } from "../api/types/config-entries.js";
+import {
+  isApiEncryptionKeyField,
+  isValidApiEncryptionKey,
+} from "./api-encryption-key.js";
 import { parseFloatWithUnit } from "./float-with-unit.js";
 import { parseHexInt } from "./hex-int.js";
 import { parseIntInput } from "./int-input.js";
 import { asMappingList, asRecord } from "./nested-values.js";
+import { isSecretRef } from "./secret-ref.js";
 import { looksLikeSubstitution } from "./substitutions.js";
 import { YamlRawValue } from "./yaml-serialize.js";
+
+/**
+ * Whether an entry restricted to ``supportedPlatforms`` is allowed on the
+ * device's ``targetPlatform``. Empty / missing list is "no constraint";
+ * a falsy target (``""`` / null / undefined — platform not yet resolved)
+ * allows everything.
+ */
+export function platformSupported(
+  supportedPlatforms: string[] | undefined,
+  targetPlatform?: string | null
+): boolean {
+  if (!targetPlatform) return true;
+  if (!supportedPlatforms || supportedPlatforms.length === 0) return true;
+  return supportedPlatforms.includes(targetPlatform);
+}
 
 /**
  * Determine if a config entry is currently visible.
@@ -31,7 +55,7 @@ import { YamlRawValue } from "./yaml-serialize.js";
 export function isEntryVisible(
   entry: ConfigEntry,
   values: Record<string, unknown>,
-  presentComponents?: Set<string>,
+  presentComponents?: ReadonlySet<string>,
   targetPlatform?: string | null
 ): boolean {
   if (entry.hidden) return false;
@@ -42,14 +66,7 @@ export function isEntryVisible(
   }
 
   // Platform gate: only check when caller provided the target platform.
-  // Empty / missing ``supported_platforms`` is "no constraint" (the
-  // common case) and the field stays visible.
-  if (
-    targetPlatform &&
-    entry.supported_platforms &&
-    entry.supported_platforms.length > 0 &&
-    !entry.supported_platforms.includes(targetPlatform)
-  ) {
+  if (!platformSupported(entry.supported_platforms, targetPlatform)) {
     return false;
   }
 
@@ -120,6 +137,25 @@ export function getDeviceNameWarning(name: string): ValidationError | null {
     return { key: "name", code: "validation.device_name_edge_hyphen" };
   }
   return null;
+}
+
+/** The canonical option whose value matches `value` case-insensitively but not
+ *  exactly, else null. Drives a soft "did you mean" hint for custom-value
+ *  comboboxes — a user who typed `l` where the catalog only offers `L`. Matches
+ *  on option value only (never label), and yields nothing when an exact-case
+ *  option exists, so a deliberately case-distinct custom value never nags. */
+export function nearCanonicalOption(
+  value: string,
+  options: readonly ConfigValueOption[] | null
+): string | null {
+  if (!value || !options || options.length === 0) return null;
+  const lower = value.toLowerCase();
+  let near: string | null = null;
+  for (const opt of options) {
+    if (opt.value === value) return null;
+    if (near === null && opt.value.toLowerCase() === lower) near = opt.value;
+  }
+  return near;
 }
 
 /**
@@ -259,8 +295,9 @@ export function validateEntry(entry: ConfigEntry, raw: unknown): ValidationError
 export function validateEntries(
   entries: ConfigEntry[],
   values: Record<string, unknown>,
-  presentComponents?: Set<string>,
-  targetPlatform?: string | null
+  presentComponents?: ReadonlySet<string>,
+  targetPlatform?: string | null,
+  sectionKey?: string
 ): Map<string, ValidationError> {
   const errors = new Map<string, ValidationError>();
   _validateEntriesRecursive(
@@ -269,7 +306,8 @@ export function validateEntries(
     presentComponents,
     targetPlatform,
     [],
-    errors
+    errors,
+    sectionKey
   );
   return errors;
 }
@@ -283,10 +321,11 @@ export function validateEntries(
 function _validateEntriesRecursive(
   entries: ConfigEntry[],
   values: Record<string, unknown>,
-  presentComponents: Set<string> | undefined,
+  presentComponents: ReadonlySet<string> | undefined,
   targetPlatform: string | null | undefined,
   pathPrefix: string[],
-  errors: Map<string, ValidationError>
+  errors: Map<string, ValidationError>,
+  sectionKey: string | undefined
 ): void {
   for (const entry of entries) {
     // Skip hidden entries and those whose visibility predicates fail —
@@ -329,7 +368,8 @@ function _validateEntriesRecursive(
             presentComponents,
             targetPlatform,
             [...pathPrefix, entry.key, String(idx)],
-            errors
+            errors,
+            sectionKey
           );
         });
         continue;
@@ -352,7 +392,8 @@ function _validateEntriesRecursive(
         presentComponents,
         targetPlatform,
         [...pathPrefix, entry.key],
-        errors
+        errors,
+        sectionKey
       );
       continue;
     }
@@ -393,6 +434,20 @@ function _validateEntriesRecursive(
     if (err) {
       const fullPath = [...pathPrefix, entry.key].join(".");
       errors.set(fullPath, { ...err, key: fullPath });
+    } else if (
+      // Cheap section gate first so non-api leaves never build the path array.
+      sectionKey === "api" &&
+      typeof raw === "string" &&
+      isApiEncryptionKeyField(sectionKey, [...pathPrefix, entry.key]) &&
+      isValuePresent(raw) &&
+      !looksLikeSubstitution(raw) &&
+      !isSecretRef(raw) &&
+      !isValidApiEncryptionKey(raw)
+    ) {
+      // Format-check only the api.encryption.key Noise PSK; a `!secret` ref or
+      // a `${substitution}` resolves elsewhere, so neither is base64-checkable.
+      const fullPath = [...pathPrefix, entry.key].join(".");
+      errors.set(fullPath, { key: fullPath, code: "validation.invalid_encryption_key" });
     }
   }
 }

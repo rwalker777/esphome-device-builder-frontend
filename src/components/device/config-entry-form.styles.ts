@@ -40,6 +40,12 @@ export const configEntryFormStyles = css`
     margin-top: var(--wa-space-2xs);
   }
 
+  .field-warning {
+    color: var(--esphome-warning, #d97706);
+    font-size: var(--wa-font-size-2xs);
+    margin-top: var(--wa-space-2xs);
+  }
+
   .field-description {
     font-size: var(--wa-font-size-2xs);
     color: var(--wa-color-text-quiet);
@@ -133,6 +139,30 @@ export const configEntryFormStyles = css`
 
   .help-button:hover {
     color: var(--esphome-primary);
+  }
+
+  /* Inline "generate a key" action stacked under the API encryption-key
+     input — a quiet link-style button, not a heavy form control. */
+  .generate-key {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--esphome-primary);
+    font-size: var(--wa-font-size-2xs);
+    transition: color 0.12s;
+  }
+
+  .generate-key:hover {
+    text-decoration: underline;
+  }
+
+  .generate-key wa-icon {
+    font-size: 14px;
   }
 
   /* ─── Nested group ──────────────────────────────────────── */
@@ -361,14 +391,35 @@ export const configEntryFormStyles = css`
 
   /* Inside a map row the value's label and description are
      redundant (the map itself has those at the top) — suppress
-     them so each row stays compact. */
+     them so each row stays compact. A templatable value (Value / λ
+     Lambda toggle) nests its field one level deeper under
+     .templatable-field, so match that too or the label re-appears
+     and offsets the input. */
   .map-row .map-value > .field > label,
-  .map-row .map-value > .field > p.field-description {
+  .map-row .map-value > .field > p.field-description,
+  .map-row .map-value > .templatable-field > .field > label,
+  .map-row .map-value > .templatable-field > .field > p.field-description {
     display: none;
   }
 
-  .map-row .map-value > .field {
+  .map-row .map-value > .field,
+  .map-row .map-value > .templatable-field > .field {
     gap: 0;
+  }
+
+  /* A templatable value stacks its Value / λ Lambda toggle above the input
+     (a full-width field column). In a compact map row that drops the input
+     below the toggle and out of line with the key; lay the toggle and input
+     on one row instead so the value aligns with the key input. */
+  .map-row .map-value > .templatable-field {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+  }
+
+  .map-row .map-value > .templatable-field > .field {
+    flex: 1;
+    min-width: 0;
   }
 
   /* "Complex value — edit in YAML" placeholder for map rows whose

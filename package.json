@@ -4,10 +4,12 @@
   "description": "Frontend for ESPHome Dashboard",
   "private": true,
   "type": "module",
+  "packageManager": "npm@11.13.0",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
+    "preinstall": "node build-scripts/only-npm.cjs",
     "dev": "node build-scripts/dev-server.cjs",
     "build": "node build-scripts/build.cjs",
     "gen:languages": "node build-scripts/gen-language-manifest.cjs",
@@ -41,9 +43,9 @@
   },
   "devDependencies": {
     "@rspack/core": "2.0.8",
-    "@rspack/dev-server": "2.0.3",
+    "@rspack/dev-server": "2.1.0",
     "@swc/helpers": "0.5.23",
-    "@types/node": "25.9.3",
+    "@types/node": "26.0.1",
     "@types/w3c-web-serial": "^1.0.8",
     "fflate": "^0.8.3",
     "happy-dom": "^20.10.6",

@@ -20,6 +20,7 @@
  *      block (e.g. inside `sensor:` we suggest sensor platforms).
  */
 import { type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import type { EditorState } from "@codemirror/state";
 import type { ESPHomeAPI } from "../api/esphome-api.js";
 import { ConfigEntryType } from "../api/types/config-entries.js";
 import {
@@ -27,11 +28,18 @@ import {
   findReferenceCandidates,
 } from "./config-entry-yaml-scan.js";
 import { getConfigVarValueOptions } from "./esphome-schema.js";
-import { collectSubstitutionKeys, isUnderAutomationItem } from "./yaml-ast.js";
+import {
+  collectSiblingKeys,
+  collectSubstitutionKeys,
+  isAutomationKey,
+  isUnderAutomationItem,
+} from "./yaml-ast.js";
 import {
   bundleFor,
+  type CompletionTarget,
   loadCatalog,
   matchKeyPosition,
+  nestedPathForParent,
   RE_BOOLEAN_VALUE,
   RE_ENUM_VALUE,
   RE_KEY,
@@ -50,10 +58,21 @@ import {
   type KeyPositionCtx,
 } from "./yaml-completion-providers.js";
 import {
+  blankLineContext,
+  collectSiblingKeysByIndent,
   findParentKey,
   findTopLevelBlock,
   RE_INLINE_COMMENT_BOUNDARY,
 } from "./yaml-line-walker.js";
+
+/** Keys already set in the cursor's mapping, for the already-set filter.
+ *  On a blank line the AST has no Pair to anchor on, so scan by indent. */
+function siblingKeysAt(state: EditorState, pos: number): Set<string> {
+  const blank = blankLineContext(state.doc, pos);
+  return blank
+    ? collectSiblingKeysByIndent(state.doc, blank.lineIdx, blank.indent)
+    : collectSiblingKeys(state, pos);
+}
 
 // ── Public surface preserved across the catalog / provider split ──
 // Consumers (``yaml-hover``, ``yaml-completion-items``, the
@@ -74,11 +93,18 @@ export {
 
 /**
  * Build the autocompletion source. Returned closure captures `api` so the
- * editor can wire it up once.
+ * editor can wire it up once. ``getTarget`` is read per invocation (not
+ * captured) so it tracks the device's platform/board as they load and
+ * change; passing the same target the structured editor uses reuses its
+ * already-hydrated component bodies (the body cache buckets by target).
  */
-export function createYamlCompletionSource(api: ESPHomeAPI) {
+export function createYamlCompletionSource(
+  api: ESPHomeAPI,
+  getTarget?: () => CompletionTarget
+) {
   return async (ctx: CompletionContext): Promise<CompletionResult | null> => {
     const { state, pos } = ctx;
+    const deviceTarget = getTarget?.();
     const lineInfo = state.doc.lineAt(pos);
     const lineText = lineInfo.text;
     const colInLine = pos - lineInfo.from;
@@ -170,7 +196,9 @@ export function createYamlCompletionSource(api: ESPHomeAPI) {
         catalog,
         parent.key,
         completionCtx.platformValue,
-        completionCtx.topLevelKey
+        completionCtx.topLevelKey,
+        () => nestedPathForParent(state, pos, parent.key),
+        deviceTarget
       );
       const entry = entries.find((e) => e.key === key);
 
@@ -271,7 +299,11 @@ export function createYamlCompletionSource(api: ESPHomeAPI) {
     const indent = leading.length;
     const keyFrom = pos - partial.length;
 
-    if (!ctx.explicit && partial.length === 0) return null;
+    // A fresh ``- `` is itself the signal to offer list-item keys
+    // (``platform:``, the action registry), the same way ``key:`` auto-fires
+    // value completion. A plain blank key line still waits for a partial or
+    // an explicit/idle trigger.
+    if (!ctx.explicit && partial.length === 0 && !isListItem) return null;
 
     const catalog = await loadCatalog(api);
 
@@ -280,9 +312,10 @@ export function createYamlCompletionSource(api: ESPHomeAPI) {
     // components (catalog entries whose id has no dot). See
     // ``buildTopLevelCompletions`` for the rationale.
     if (indent === 0) {
+      const present = siblingKeysAt(state, pos);
       return {
         from: keyFrom,
-        options: buildTopLevelCompletions(catalog),
+        options: buildTopLevelCompletions(catalog).filter((c) => !present.has(c.label)),
         validFor: RE_KEY,
       };
     }
@@ -306,6 +339,7 @@ export function createYamlCompletionSource(api: ESPHomeAPI) {
       partial,
       parent,
       isListItem,
+      deviceTarget,
       bundleCtx: completionCtx.bundleCtx,
       platformValue: completionCtx.platformValue,
       topLevelKey: completionCtx.topLevelKey,
@@ -313,7 +347,11 @@ export function createYamlCompletionSource(api: ESPHomeAPI) {
       // and ``*_action:`` (cover ``open_action`` / ``close_action`` /
       // ``stop_action``, lock ``unlock_action``, etc.) all surface
       // the action registry at list-item position.
-      inAutomation: isListItem && isUnderAutomationItem(state, pos),
+      // ``isUnderAutomationItem`` reads the Lezer tree, which mis-nests an
+      // empty trailing ``- `` so the enclosing ``then:``/``on_*:`` is lost;
+      // the indent-derived ``parent`` survives that, so OR it in.
+      inAutomation:
+        isListItem && (isUnderAutomationItem(state, pos) || isAutomationKey(parent.key)),
       // Triggers all start with ``on_``; gate the schema fetch on
       // the partial's prefix so non-trigger keystrokes don't burn
       // a round-trip.
@@ -322,7 +360,13 @@ export function createYamlCompletionSource(api: ESPHomeAPI) {
     };
 
     const buckets = await Promise.all(KEY_POSITION_PROVIDERS.map((p) => p.fetch(keyCtx)));
-    const options = buckets.flat();
+    let options = buckets.flat();
+    // Drop keys already set in this mapping (plain key position only —
+    // list items like automation actions / filters are repeatable).
+    if (!isListItem) {
+      const present = siblingKeysAt(state, pos);
+      if (present.size > 0) options = options.filter((o) => !present.has(o.label));
+    }
     if (options.length === 0) return null;
 
     // ``RE_KEY_OR_ACTION`` allows ``.`` because dotted action

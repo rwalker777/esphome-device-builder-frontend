@@ -17,18 +17,12 @@ import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { actionFieldLabel } from "../../util/action-field-label.js";
 import { defaultBoardImageUrl, onBoardImageError } from "../../util/board-image.js";
-import { anyAdvancedEntry } from "../../util/config-entry-tree.js";
+import { anyAdvancedEntry, pathIsAdvanced } from "../../util/config-entry-tree.js";
 import type { ValidationError } from "../../util/config-validation.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
 import { resolveSectionEntries } from "../../util/section-entry-overrides.js";
-import {
-  instanceComponentId,
-  parseYamlAutomations,
-  parseYamlTopLevelSections,
-  sectionKeyOf,
-  type YamlSection,
-} from "../../util/yaml-sections.js";
+import { parseYamlAutomations, type YamlSection } from "../../util/yaml-sections.js";
 import { renderAdvancedToggle } from "./advanced-toggle.js";
 import {
   applyYamlDiff,
@@ -51,6 +45,10 @@ import type { ConfigEntryValueChange } from "./config-entry-form.js";
 import "./device-section-automation-list.js";
 import { deviceSectionConfigStyles } from "./device-section-config.styles.js";
 import {
+  selectActionFieldRows,
+  selectTriggerRows,
+} from "./device-section-config/automation-rows.js";
+import {
   applySecuritySecrets,
   flushDraft,
   onDeleteConfirmed,
@@ -60,6 +58,11 @@ import {
   loadConfig,
   type SectionConfigResponse,
 } from "./device-section-config/loading.js";
+import {
+  resolveComponentId,
+  resolveShortcutTarget,
+  type ShortcutTarget,
+} from "./device-section-config/shortcut-target.js";
 // The value import (isSecuritySection) already executes the module, registering
 // the <esphome-security-notice> element — no separate side-effect import needed.
 import { isSecuritySection, type ApplySecuritySecretsDetail } from "./security-notice.js";
@@ -136,6 +139,10 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   @state() _advancedShownSections = new Set<string>();
   @state() _presentComponents: Set<string> = new Set();
 
+  // Sections whose advanced fields we've auto-revealed for caret-follow once.
+  // Not reactive — bookkeeping so a later deliberate collapse isn't reopened.
+  private readonly _autoRevealedSections = new Set<string>();
+
   // Section's resolved fromLine against the *current* yaml. Forwarded to the
   // form so its conflict-detection stays aligned with read/write paths.
   // undefined when not found — form treats that as "no exclusion".
@@ -194,6 +201,29 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
     ) {
       void loadConfig(this);
     }
+    this._revealAdvancedForFocus(changedProperties);
+  }
+
+  /**
+   * When the caret follows to an advanced field that's currently hidden (Show
+   * advanced off and the field has no value yet, so it isn't rendered), reveal
+   * the section's advanced fields here in willUpdate so the field renders this
+   * pass and the form's scroll-to-field can reach it. Revealed at most once per
+   * section so a later deliberate collapse sticks (mirrors config-entry-form's
+   * seed-once nested-disclosure behaviour — caret-follow shouldn't fight the
+   * user's choice).
+   */
+  private _revealAdvancedForFocus(changedProperties: Map<string, unknown>): void {
+    if (!changedProperties.has("focusFieldPath") && !changedProperties.has("_config")) {
+      return;
+    }
+    const path = this.focusFieldPath;
+    if (!path?.length || this._showAdvanced || !this._config) return;
+    if (this._autoRevealedSections.has(this.sectionKey)) return;
+    const entries = resolveSectionEntries(this.sectionKey, this._config.entries);
+    if (!pathIsAdvanced(entries, path)) return;
+    this._autoRevealedSections.add(this.sectionKey);
+    this._setShowAdvanced(true);
   }
 
   updated() {
@@ -552,57 +582,21 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
 
   /**
    * Target for the per-section "+ Add automation" / triggers-list
-   * shortcut: ``null`` for ``SHORTCUT_HIDE_KEYS`` and domains with no
-   * catalog triggers (so trigger-less components like ``web_server:`` show
-   * no panel); ``device_on`` for ``esphome:``; else ``component_on`` keyed
-   * by the instance's addressable id (list item or flat singleton).
+   * shortcut. Thin wrapper over the pure ``resolveShortcutTarget``,
+   * injecting this section's catalog gate.
    */
-  private _shortcutTarget():
-    | null
-    | { kind: "device_on" }
-    | { kind: "component_on"; componentId: string } {
-    if (SHORTCUT_HIDE_KEYS.has(this.sectionKey)) return null;
-    if (this.sectionKey === "esphome") return { kind: "device_on" };
-    const matched = this._resolveComponentMatch();
-    if (matched === null) return null;
-    // Only host automations where the section actually has triggers
-    // (mirrors the backend's ``_component_trigger_domains`` gate), so a
-    // trigger-less component like ``web_server:`` shows no panel. Check the
-    // bare domain and the qualified ``<domain>.<platform>``, since a
-    // trigger may be scoped to either (``switch`` vs ``output.slow_pwm``).
-    const scopes = [matched.match.parentKey ?? matched.match.key, this.sectionKey];
-    if (!this._triggerCatalog.hasTriggersFor(scopes)) return null;
-    return {
-      kind: "component_on",
-      componentId: instanceComponentId(matched.sections, matched.match),
-    };
-  }
-
-  /**
-   * The configured component instance this section edits, matched by
-   * section key and biased to the resolved fromLine for multi-instance
-   * domains. ``null`` for non-component sections. Shared by the
-   * triggers shortcut, the action-fields list, and the in-form
-   * "Edit actions" routing so all three attribute the same id.
-   */
-  private _resolveComponentMatch(): {
-    sections: YamlSection[];
-    match: YamlSection;
-  } | null {
-    const sections = parseYamlTopLevelSections(this.yaml);
-    const candidates = sections.filter((s) => sectionKeyOf(s) === this.sectionKey);
-    if (candidates.length === 0) return null;
-    const match =
-      this._resolvedFromLine !== undefined
-        ? (candidates.find((s) => s.fromLine === this._resolvedFromLine) ?? candidates[0])
-        : candidates[0];
-    return { sections, match };
+  private _shortcutTarget(): ShortcutTarget {
+    return resolveShortcutTarget(
+      this.yaml,
+      this.sectionKey,
+      this._resolvedFromLine,
+      (scopes) => this._triggerCatalog.hasTriggersFor(scopes)
+    );
   }
 
   /** Addressable id of the component instance this section edits, or null. */
   private _resolveComponentId(): string | null {
-    const matched = this._resolveComponentMatch();
-    return matched === null ? null : instanceComponentId(matched.sections, matched.match);
+    return resolveComponentId(this.yaml, this.sectionKey, this._resolvedFromLine);
   }
 
   /**
@@ -614,23 +608,9 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   private _renderTriggersTable() {
     const target = this._shortcutTarget();
     if (target === null) return nothing;
-    const rows = parseYamlAutomations(this.yaml)
-      .filter((s) => {
-        if (!s.eventKey) return false;
-        if (target.kind === "device_on") return s.parentKey === "esphome";
-        // Include the component's own triggers and those on its sub-entities.
-        return s.id === target.componentId || s.parentComponentId === target.componentId;
-      })
-      .map((s) => ({
-        key: s.key,
-        // A sub-entity row is prefixed with its name so two readings'
-        // identically-named triggers (Temperature/Humidity → On Value) read
-        // distinctly within the parent component's section.
-        label:
-          s.parentComponentId !== undefined
-            ? `${s.name ?? s.id} → ${this._triggerLabel(s)}`
-            : this._triggerLabel(s),
-      }));
+    const rows = selectTriggerRows(parseYamlAutomations(this.yaml), target, (s) =>
+      this._triggerLabel(s)
+    );
     const heading =
       target.kind === "device_on"
         ? this._localize("device.automations_list_title_device")
@@ -658,12 +638,11 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
   private _renderActionFieldsTable() {
     const componentId = this._resolveComponentId();
     if (componentId === null) return nothing;
-    const rows = parseYamlAutomations(this.yaml)
-      .filter((s) => s.actionField !== undefined && s.id === componentId)
-      .map((s) => ({
-        key: s.key,
-        label: actionFieldLabel(s.actionField ?? "", this._localize),
-      }));
+    const rows = selectActionFieldRows(
+      parseYamlAutomations(this.yaml),
+      componentId,
+      (field) => actionFieldLabel(field, this._localize)
+    );
     return html`<esphome-section-automation-list
       .heading=${this._localize("device.action_fields_list_title")}
       .rows=${rows}
@@ -749,24 +728,6 @@ export class ESPHomeDeviceSectionConfig extends LitElement {
     );
   };
 }
-
-/**
- * Sections that don't host inline ``on_*:`` automations. The
- * shortcut is hidden on these. ``api`` has its own ``+ Add API
- * action`` flow (PR #360); ``script`` / ``interval`` get their
- * dedicated navigator CTAs; the rest are data-only blocks where a
- * trigger handler doesn't make sense.
- */
-const SHORTCUT_HIDE_KEYS = new Set([
-  "api",
-  "script",
-  "interval",
-  "external_components",
-  "packages",
-  "substitutions",
-  "globals",
-  "dashboard_import",
-]);
 
 declare global {
   interface HTMLElementTagNameMap {

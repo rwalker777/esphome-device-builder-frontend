@@ -8,9 +8,9 @@ import {
   mdiDockRight,
   mdiEye,
   mdiEyeOff,
+  mdiFileCompare,
   mdiUpload,
-  mdiVectorDifference,
-  mdiViewSplitHorizontal,
+  mdiViewSplitVertical,
 } from "@mdi/js";
 import { html, LitElement, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
@@ -18,6 +18,7 @@ import type { BoardCatalogEntry } from "../../api/types/boards.js";
 import type { LocalizeFunc } from "../../common/localize.js";
 import { expertModeContext, localizeContext } from "../../context/index.js";
 import { espHomeStyles } from "../../styles/shared.js";
+import { renderTextLinks } from "../../util/markdown.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
 import { SaveShortcutController } from "../../util/save-shortcut-controller.js";
 import {
@@ -35,6 +36,7 @@ import { renderInstallAction } from "./install-action.js";
 
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
+import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 import "../yaml-diff.js";
 import "../yaml-editor.js";
 import "./device-board-info.js";
@@ -46,11 +48,11 @@ registerMdiIcons({
   "content-save": mdiContentSave,
   eye: mdiEye,
   "eye-off": mdiEyeOff,
-  "layout-left": mdiDockLeft,
-  "layout-right": mdiDockRight,
-  "layout-split": mdiViewSplitHorizontal,
+  "dock-left": mdiDockLeft,
+  "dock-right": mdiDockRight,
+  "view-split-vertical": mdiViewSplitVertical,
   upload: mdiUpload,
-  "vector-difference": mdiVectorDifference,
+  "file-compare": mdiFileCompare,
 });
 
 export type DeviceLayoutMode = "both" | "left" | "right";
@@ -148,6 +150,11 @@ export class ESPHomeDeviceEditor extends LitElement {
    *  resulting commit is correct. */
   @property({ type: Boolean })
   hasUnsavedEdits = false;
+
+  /** A save round-trip (validate + write) is in flight; the Save
+   *  button shows a spinner and stays disabled until it settles. */
+  @property({ type: Boolean })
+  saving = false;
 
   @property({ type: Boolean })
   hasPendingChanges = false;
@@ -273,11 +280,14 @@ export class ESPHomeDeviceEditor extends LitElement {
             <button
               type="button"
               class="save-button"
-              ?disabled=${!this.hasUnsavedEdits}
+              ?disabled=${!this.hasUnsavedEdits || this.saving}
+              aria-busy=${this.saving}
               @click=${this._onSave}
               title=${this._localize("device.save_yaml")}
             >
-              <wa-icon library="mdi" name="content-save"></wa-icon>
+              ${this.saving
+                ? html`<wa-spinner></wa-spinner>`
+                : html`<wa-icon library="mdi" name="content-save"></wa-icon>`}
               ${this._localize("device.save")}
             </button>
           </div>
@@ -329,7 +339,10 @@ export class ESPHomeDeviceEditor extends LitElement {
                       ${this._liveErrors
                         .slice(0, MAX_BANNER_ERRORS)
                         .map(
-                          (msg) => html`<span class="invalid-banner-error">${msg}</span>`
+                          (msg) =>
+                            html`<span class="invalid-banner-error"
+                              >${renderTextLinks(msg)}</span
+                            >`
                         )}
                       ${this._liveErrors.length > MAX_BANNER_ERRORS
                         ? html`<span class="invalid-banner-more"
@@ -350,6 +363,7 @@ export class ESPHomeDeviceEditor extends LitElement {
                   : html`<esphome-yaml-editor
                       .value=${this.yaml}
                       .configuration=${this.configuration}
+                      .board=${this.board}
                       .highlightRange=${this.highlightRange}
                       .scrollToHighlight=${this.scrollToHighlight}
                       .revealSensitive=${this._revealSensitive}

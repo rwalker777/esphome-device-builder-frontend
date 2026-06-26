@@ -48,7 +48,7 @@ import type { LocalizeFunc } from "../../../common/localize.js";
 import { apiContext, localizeContext } from "../../../context/index.js";
 import { inputStyles } from "../../../styles/inputs.js";
 import { espHomeStyles } from "../../../styles/shared.js";
-import { actionFieldLabel } from "../../../util/action-field-label.js";
+import { automationHeaderTitle } from "../../../util/automation-header-title.js";
 import {
   fetchComponent,
   getCachedComponent,
@@ -56,6 +56,7 @@ import {
 import { anyAdvancedEntry } from "../../../util/config-entry-tree.js";
 import { renderMarkdown } from "../../../util/markdown.js";
 import { registerMdiIcons } from "../../../util/register-icons.js";
+import { triggerParamFormEntries } from "../../../util/trigger-param-form-entries.js";
 import { renderAdvancedToggle } from "../advanced-toggle.js";
 import "../config-entry-form.js";
 import "./automation-action-list.js";
@@ -67,6 +68,7 @@ import { CatalogLoadController } from "./catalog-load-controller.js";
 import { componentDomain, instanceName } from "./component-targets.js";
 import { ParseErrorController } from "./parse-error-controller.js";
 import {
+  applyParamChange,
   applyYamlDiff,
   emptyAutomationTree,
   sectionKeyFromLocation,
@@ -584,14 +586,7 @@ export class ESPHomeAutomationEditor extends LitElement {
    *  ``interval.then``'s own config_entries is empty); everything
    *  else stays on the trigger's own config_entries. */
   private _paramFormEntries(activeTrigger: AutomationTrigger | null): ConfigEntry[] {
-    if (this.location?.kind === "interval") {
-      const comp = this._intervalComponent;
-      if (!comp) return [];
-      // ``then:`` is the actions block — we render it via the
-      // action-list, not the form.
-      return comp.config_entries.filter((e) => e.key !== "then");
-    }
-    return activeTrigger?.config_entries ?? [];
+    return triggerParamFormEntries(this.location, this._intervalComponent, activeTrigger);
   }
 
   /**
@@ -641,40 +636,9 @@ export class ESPHomeAutomationEditor extends LitElement {
     // into the trigger_params dict.
     const { path, value } = e.detail;
     const automation = this.value ?? emptyAutomationTree();
-    const next = this._applyParamPatch(automation.trigger_params, path, value);
+    const next = applyParamChange(automation.trigger_params, path, value);
     this._withValue({ trigger_params: next });
   };
-
-  /** Apply a single value-change patch into a params dict. */
-  private _applyParamPatch(
-    params: Record<string, unknown>,
-    path: string[],
-    value: unknown
-  ): Record<string, unknown> {
-    if (path.length === 0) {
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        return { ...(value as Record<string, unknown>) };
-      }
-      return {};
-    }
-    const [head, ...rest] = path;
-    if (rest.length === 0) {
-      if (value === undefined || value === "") {
-        const next = { ...params };
-        delete next[head];
-        return next;
-      }
-      return { ...params, [head]: value };
-    }
-    const child =
-      params[head] && typeof params[head] === "object" && !Array.isArray(params[head])
-        ? (params[head] as Record<string, unknown>)
-        : {};
-    return {
-      ...params,
-      [head]: this._applyParamPatch(child, rest, value),
-    };
-  }
 
   /**
    * Component-style header card. Title is the catalog-resolved
@@ -737,17 +701,7 @@ export class ESPHomeAutomationEditor extends LitElement {
    *   anything else / fallback                   → static "Automation"
    */
   private _headerTitle(trigger: AutomationTrigger | null): string {
-    const loc = this.location;
-    if (loc?.kind === "interval") {
-      return this._localize("device.automation_interval_label");
-    }
-    if (trigger && (loc?.kind === "device_on" || loc?.kind === "component_on")) {
-      return trigger.name;
-    }
-    if (loc?.kind === "component_action") {
-      return actionFieldLabel(loc.field, this._localize);
-    }
-    return this._localize("device.automation_header_title_static");
+    return automationHeaderTitle(this.location, trigger, this._localize);
   }
 
   /**

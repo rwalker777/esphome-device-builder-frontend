@@ -42,12 +42,22 @@ import { getLastValidatedResult } from "../util/yaml-lint-backend.js";
 import {
   findFieldLine,
   parseYamlTopLevelSections,
-  sectionAtLine,
+  sectionForCursor,
   sectionKeyOf,
   type YamlSection,
 } from "../util/yaml-sections.js";
-import { summarizeValidation } from "../util/yaml-validation-summary.js";
+import {
+  basename,
+  isOpenConfigFile,
+  summarizeValidation,
+} from "../util/yaml-validation-summary.js";
 import { devicePageStyles } from "./device-styles.js";
+import {
+  buildDeviceUrl,
+  readUrlLine,
+  readUrlParam,
+  readUrlSections,
+} from "./device-url-state.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "../components/command-dialog.js";
@@ -216,6 +226,9 @@ export class ESPHomePageDevice extends LitElement {
   @state()
   private _savedYaml = "";
 
+  @state()
+  private _saving = false;
+
   @query("esphome-unsaved-changes-dialog")
   private _unsavedDialog!: ESPHomeUnsavedChangesDialog;
 
@@ -257,6 +270,9 @@ export class ESPHomePageDevice extends LitElement {
 
   @state()
   private _validationFirstMessage = "";
+
+  @state()
+  private _validationFirstFile = "";
 
   private _onPostInstallShowLogs = postInstallShowLogsHandler(
     () => this._logsDialog,
@@ -674,70 +690,106 @@ export class ESPHomePageDevice extends LitElement {
    * the return value.
    */
   private _saveYaml = async (): Promise<boolean> => {
-    // Promote any in-flight form keystroke (still inside its 200ms
-    // debounce window) into ``_yaml`` so the save commits exactly
-    // what the user typed — not what was last flushed. The
-    // component editor's flushPending is sync (local YAML splice
-    // only); the automation/script editors return a Promise
-    // because their pending change is a backend upsert call.
-    // ``await`` handles both shapes — awaiting ``undefined``
-    // resolves immediately.
-    await this._activeSection?.flushPending();
-    // The Save button activates on ``_isDirty`` (yaml diff OR the
-    // section editor's transient pre-flush dirty flag), so a click
-    // inside the debounce window can land here with the form
-    // marked dirty but the post-flush yaml unchanged from the
-    // saved buffer (e.g. user typed and undid a character, or the
-    // splice normalised to the same serialisation). Bail before
-    // toasting / hitting the backend — neither has anything to do.
-    if (!this._isYamlDirty) return true;
+    // Refuse to start a second save while one is already in progress.
+    // The Save button's disabled attribute blocks the mouse, but
+    // Cmd/Ctrl+S (SaveShortcutController, bound on window) only checks
+    // dirtiness — and ``_savedYaml`` stays stale both through the
+    // multi-second validate phase and while the validation-error
+    // dialog awaits the user, so the buffer keeps reading dirty.
+    // ``_pendingValidationResolve`` is non-null exactly while that
+    // dialog is open; guarding on it too stops a keystroke from
+    // double-validating, double-writing, or resolving the open
+    // prompt's pending promise out from under it.
+    if (this._saving || this._pendingValidationResolve !== null) return false;
+    // Mark the Save button busy up front so it acknowledges the
+    // click immediately. The slow phases that follow are the
+    // section-editor flushPending (a backend upsert for the
+    // automation/script editors) and the validate round-trip on a
+    // large config; both deserve the spinner.
+    this._saving = true;
+    // Everything from here runs inside try/finally so any throw — most
+    // notably a flushPending backend upsert that rejects — clears the
+    // busy flag instead of stranding ``_saving=true``, which the guard
+    // above would then read as a permanent in-progress save and brick
+    // every later attempt. The not-dirty bail and the validation-dialog
+    // branch return through this finally too, stopping the spinner while
+    // the prompt waits on the user. The commit path uses ``return
+    // await`` so the finally fires only after _doSaveYaml settles, not
+    // the moment it's called — _doSaveYaml owns ``_saving`` across the
+    // write (and on the standalone "Save anyway" path), so the flag
+    // stays true with no await between, and the button never flickers.
+    try {
+      // Promote any in-flight form keystroke (still inside its 200ms
+      // debounce window) into ``_yaml`` so the save commits exactly
+      // what the user typed — not what was last flushed. The
+      // component editor's flushPending is sync (local YAML splice
+      // only); the automation/script editors return a Promise
+      // because their pending change is a backend upsert call.
+      // ``await`` handles both shapes — awaiting ``undefined``
+      // resolves immediately.
+      await this._activeSection?.flushPending();
+      // The Save button activates on ``_isDirty`` (yaml diff OR the
+      // section editor's transient pre-flush dirty flag), so a click
+      // inside the debounce window can land here with the form
+      // marked dirty but the post-flush yaml unchanged from the
+      // saved buffer (e.g. user typed and undid a character, or the
+      // splice normalised to the same serialisation). Bail before
+      // toasting / hitting the backend — neither has anything to do.
+      if (!this._isYamlDirty) return true;
 
-    // Re-validate against the backend before committing. The
-    // editor's inline linter runs the same call on a 600ms
-    // debounce, but a save click inside that window would
-    // otherwise commit invalid YAML against a stale "no
-    // diagnostics" snapshot. Authoritative re-check here, then
-    // the prompt only opens when the freshly-saved buffer really
-    // is invalid.
-    //
-    // Network / backend failures fall through to the save —
-    // we'd rather risk an unvalidated commit than block the user
-    // on a backend hiccup. The fall-through stays silent (no
-    // ``toast.error`` here): the actual ``updateConfig`` call
-    // below is the authority on whether the save worked, and a
-    // toast at this layer would shout-down its result.
-    if (this.id) {
-      try {
-        // Reuse the linter's last result when it matches the
-        // current buffer exactly — saves a WS round-trip and an
-        // ESPHome validate pass that just ran in the background.
-        const res =
-          getLastValidatedResult(this.id, this._yaml) ??
-          (await this._api.validateYaml(this.id, this._yaml));
-        const summary = summarizeValidation(res);
-        if (summary.count > 0) {
-          this._validationErrorCount = summary.count;
-          this._validationFirstLine = summary.first?.line ?? 0;
-          this._validationFirstCol = summary.first?.col ?? 0;
-          this._validationFirstMessage = summary.first?.message ?? "";
-          // A previous prompt that's somehow still pending (the
-          // unsaved-guard already prevents overlapping page-leave
-          // dialogs, but a manual Save click reaches this branch
-          // unguarded) gets resolved as "not saved" before we
-          // reset the resolver — without this the prior caller
-          // would dangle forever.
-          this._pendingValidationResolve?.(false);
-          return new Promise<boolean>((resolve) => {
-            this._pendingValidationResolve = resolve;
-            this._yamlValidationDialog.open();
-          });
+      // Re-validate against the backend before committing. The
+      // editor's inline linter runs the same call on a 600ms
+      // debounce, but a save click inside that window would
+      // otherwise commit invalid YAML against a stale "no
+      // diagnostics" snapshot. Authoritative re-check here, then
+      // the prompt only opens when the freshly-saved buffer really
+      // is invalid.
+      //
+      // Network / backend failures fall through to the save —
+      // we'd rather risk an unvalidated commit than block the user
+      // on a backend hiccup. The fall-through stays silent (no
+      // ``toast.error`` here): the actual ``updateConfig`` call
+      // below is the authority on whether the save worked, and a
+      // toast at this layer would shout-down its result.
+      if (this.id) {
+        try {
+          // Reuse the linter's last result when it matches the
+          // current buffer exactly — saves a WS round-trip and an
+          // ESPHome validate pass that just ran in the background.
+          const res =
+            getLastValidatedResult(this.id, this._yaml) ??
+            (await this._api.validateYaml(this.id, this._yaml));
+          const summary = summarizeValidation(res);
+          if (summary.count > 0) {
+            this._validationErrorCount = summary.count;
+            this._validationFirstLine = summary.first?.line ?? 0;
+            this._validationFirstCol = summary.first?.col ?? 0;
+            this._validationFirstMessage = summary.first?.message ?? "";
+            // The reported line is meaningless against the open buffer when
+            // the error is inside an `!include`d file; name that file instead
+            // of leaving the editor to navigate nowhere.
+            const errorFile = summary.first?.file ?? null;
+            this._validationFirstFile =
+              errorFile && this.id && !isOpenConfigFile(errorFile, this.id)
+                ? basename(errorFile)
+                : "";
+            // The re-entrancy guard at the top of _saveYaml bails while a
+            // prompt is already pending, so the resolver is null here and
+            // can be assigned fresh without dangling a prior caller.
+            return new Promise<boolean>((resolve) => {
+              this._pendingValidationResolve = resolve;
+              this._yamlValidationDialog.open();
+            });
+          }
+        } catch (e) {
+          console.debug("[save-yaml] validate_yaml failed, saving anyway:", e);
         }
-      } catch (e) {
-        console.debug("[save-yaml] validate_yaml failed, saving anyway:", e);
       }
-    }
 
-    return this._doSaveYaml();
+      return await this._doSaveYaml();
+    } finally {
+      this._saving = false;
+    }
   };
 
   /** Commit the current ``_yaml`` to the backend.
@@ -763,6 +815,7 @@ export class ESPHomePageDevice extends LitElement {
     // claim "saved" against a buffer the backend rejected.
     const prevSavedYaml = this._savedYaml;
     this._savedYaml = this._yaml;
+    this._saving = true;
     let saved = true;
     try {
       await this._api.updateConfig(this.id, this._yaml);
@@ -779,6 +832,8 @@ export class ESPHomePageDevice extends LitElement {
         this._savedYaml = prevSavedYaml;
         console.error("Failed to save YAML:", e);
       }
+    } finally {
+      this._saving = false;
     }
     // A committed save ends the fix-the-error errand the error-jump
     // highlight was guiding (validation passed, or the user chose
@@ -950,6 +1005,7 @@ export class ESPHomePageDevice extends LitElement {
             @just-created-dismiss=${this._dismissJustCreated}
             @change-board=${this._onChangeBoard}
             ?hasUnsavedEdits=${this._isDirty}
+            ?saving=${this._saving}
             ?hasPendingChanges=${this._device?.has_pending_changes === true}
             ?hasUpdateAvailable=${this._device?.update_available === true}
             ?busy=${this._activeJobs.has(this.id)}
@@ -1009,6 +1065,7 @@ export class ESPHomePageDevice extends LitElement {
           .firstErrorLine=${this._validationFirstLine}
           .firstErrorCol=${this._validationFirstCol}
           .firstErrorMessage=${this._validationFirstMessage}
+          .firstErrorFile=${this._validationFirstFile}
           @save-anyway=${this._onValidationSaveAnyway}
           @goto=${this._onValidationGoTo}
           @cancel=${this._onValidationCancel}
@@ -1218,16 +1275,18 @@ export class ESPHomePageDevice extends LitElement {
     // The user is driving from the YAML pane now — drop any pending
     // form-field retry so it can't re-highlight after they've moved on.
     this._clearPendingFieldLine();
-    const match = sectionAtLine(this._yaml, e.detail.line);
+    const full = e.detail.path ?? [];
+    // `sectionForCursor` falls back to the caret's key path when no section
+    // range covers the line, so the panel follows the caret into a blank,
+    // indented child line under a just-typed top-level block.
+    const match = sectionForCursor(this._yaml, e.detail.line, full);
     if (!match) return;
     // Drop the top-level key to get the form-relative path. LIST_SECTIONS
-    // (globals) are the exception: their form keys fields under the
-    // section key, so keep it. (MAP sections like substitutions render at
-    // an empty path, so their fields are section-relative — slice as usual.)
-    const full = e.detail.path ?? [];
-    // LIST_SECTIONS (globals) key fields under the section key, so keep it —
-    // but only with a child segment; a bare ``["globals"]`` header reduces
-    // to [] (a non-field line), not a whole-section field highlight.
+    // (globals) are the exception: their form keys fields under the section
+    // key, so keep it — but only with a child segment; a bare
+    // ``["globals"]`` header reduces to [] (a non-field line), not a
+    // whole-section field highlight. MAP sections like substitutions render
+    // at an empty path, so their fields are section-relative — slice as usual.
     const rel = full.length > 1 && LIST_SECTIONS.has(full[0]) ? full : full.slice(1);
     const sectionKey = sectionKeyOf(match);
     if (
@@ -1430,55 +1489,23 @@ export class ESPHomePageDevice extends LitElement {
   private _readUrlParam(key: string, fallback: string): string;
   private _readUrlParam(key: string, fallback: null): string | null;
   private _readUrlParam(key: string, fallback: string | null): string | null {
-    const params = new URLSearchParams(window.location.search);
-    return params.get(key) ?? fallback;
+    return readUrlParam(window.location.search, key, fallback);
   }
 
   private _readUrlLine(): number | undefined {
-    const raw = new URLSearchParams(window.location.search).get("line");
-    if (!raw) return undefined;
-    const n = Number(raw);
-    return Number.isNaN(n) ? undefined : n;
+    return readUrlLine(window.location.search);
   }
 
   private _readUrlSections(): number[] {
-    const raw = new URLSearchParams(window.location.search).get("open");
-    if (!raw) return [];
-    // Section indices are numeric, so a value can never contain a comma —
-    // ``split(",")`` is safe. ``map(Number)`` then ``filter(!isNaN)``
-    // discards non-numeric fragments; an empty fragment coerces to ``0``
-    // (a valid index), not ``NaN`` (#650).
-    return raw
-      .split(",")
-      .map(Number)
-      .filter((n) => !Number.isNaN(n));
+    return readUrlSections(window.location.search);
   }
 
   private _updateUrl() {
-    const params = new URLSearchParams(window.location.search);
-
-    // Selected section + line
-    if (this._selectedSection) {
-      params.set("section", this._selectedSection);
-      if (this._selectedFromLine !== undefined) {
-        params.set("line", String(this._selectedFromLine));
-      } else {
-        params.delete("line");
-      }
-    } else {
-      params.delete("section");
-      params.delete("line");
-    }
-
-    // Open navigator sections
-    if (this._openSections.size > 0) {
-      params.set("open", [...this._openSections].join(","));
-    } else {
-      params.delete("open");
-    }
-
-    const qs = params.toString();
-    const newUrl = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
+    const newUrl = buildDeviceUrl(window.location.search, window.location.pathname, {
+      selectedSection: this._selectedSection,
+      selectedFromLine: this._selectedFromLine,
+      openSections: this._openSections,
+    });
     // Preserve the existing state object rather than nulling it: the
     // header back button's _goHome() reads history.state to tell an
     // in-app arrival ({} -> pop back to the filtered dashboard) from a

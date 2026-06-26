@@ -16,11 +16,9 @@ import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import memoizeOne from "memoize-one";
 import toast from "sonner-js";
-import { APIError } from "../api/api-error.js";
 import type { ESPHomeAPI } from "../api/index.js";
 import type { AdoptableDevice, ConfiguredDevice, Label } from "../api/types/devices.js";
 import type { FirmwareJob } from "../api/types/firmware-jobs.js";
-import { ErrorCode } from "../api/types/protocol.js";
 import type { PairingSummary } from "../api/types/remote-build.js";
 import type { ArchivedDevice } from "../api/types/system.js";
 import { DashboardView } from "../api/types/system.js";
@@ -100,17 +98,24 @@ import {
 } from "../context/index.js";
 import { inputStyles } from "../styles/inputs.js";
 import { espHomeStyles } from "../styles/shared.js";
+import { runBulkUpdate } from "../util/bulk-update.js";
 import { readDashboardUrl, writeDashboardUrl } from "../util/dashboard-url.js";
-import { matchesDeviceName, matchesMacAddress } from "../util/device-search.js";
+import {
+  activeFacetCount,
+  applyFacetFilters,
+  hasActiveFilters,
+  matchesDeviceSearch,
+  type FacetSelection,
+} from "../util/device-filter.js";
+import { matchesDeviceName } from "../util/device-search.js";
 import { DEVICE_SORT_COLLATOR, deviceSortKey } from "../util/device-sort.js";
-import { UPDATE_FACET_BUCKETS, UPDATE_FACET_PREDICATES } from "../util/facets.js";
+import { UPDATE_FACET_BUCKETS } from "../util/facets.js";
 import { computeLabelUsage } from "../util/label-usage.js";
 import { navigate } from "../util/navigation.js";
 import { consumePendingHighlight } from "../util/pending-highlight.js";
 import { consumePendingSerialSetup } from "../util/pending-serial-setup.js";
 import { postInstallShowLogsHandler } from "../util/post-install-logs.js";
 import { registerMdiIcons } from "../util/register-icons.js";
-import { classifyNoCompatiblePeerReason } from "../util/version-mismatch.js";
 
 import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "../components/adopt-dialog.js";
@@ -207,9 +212,9 @@ export class ESPHomePageDashboard extends LitElement {
     return this._remoteComputeOnly || !this._prefsLoaded;
   }
 
-  // Used by the NO_COMPATIBLE_PEER toast classifier — see
-  // classifyNoCompatiblePeerReason. Same context the settings
-  // dialog reads; null until the subscribe_events seed lands.
+  // Passed to runBulkUpdate for the NO_COMPATIBLE_PEER toast
+  // classifier. Same context the settings dialog reads; null until
+  // the subscribe_events seed lands.
   @consume({ context: buildOffloadPairingsContext, subscribe: true })
   @state()
   _pairings: Map<string, PairingSummary> | null = null;
@@ -632,26 +637,25 @@ export class ESPHomePageDashboard extends LitElement {
    *  render the "no devices match" pivot, and by the toolbar to
    *  pick the right messaging for the clear button. */
   get _hasActiveFilters(): boolean {
-    return (
-      this._search.trim().length > 0 ||
-      this._selectedLabels.length > 0 ||
-      this._selectedAreas.length > 0 ||
-      this._selectedPlatforms.length > 0 ||
-      this._selectedStates.length > 0 ||
-      this._selectedUpdateStatus.length > 0
-    );
+    return hasActiveFilters(this._search, this._facetSelection);
   }
 
   /** Drives the Filters-button badge — facets only. A lone search isn't
    *  a menu pill, so it clears from the search box's own × instead. */
   get _activeFacetCount(): number {
-    return (
-      this._selectedLabels.length +
-      this._selectedAreas.length +
-      this._selectedPlatforms.length +
-      this._selectedStates.length +
-      this._selectedUpdateStatus.length
-    );
+    return activeFacetCount(this._facetSelection);
+  }
+
+  /** The five facet selections bundled for the pure ``device-filter``
+   *  helpers. */
+  private get _facetSelection(): FacetSelection {
+    return {
+      selectedLabels: this._selectedLabels,
+      selectedAreas: this._selectedAreas,
+      selectedPlatforms: this._selectedPlatforms,
+      selectedStates: this._selectedStates,
+      selectedUpdateStatus: this._selectedUpdateStatus,
+    };
   }
 
   /** Clear just the search box (facets untouched) and refocus it so the
@@ -698,40 +702,14 @@ export class ESPHomePageDashboard extends LitElement {
       selectedPlatforms: string[],
       selectedStates: string[],
       selectedUpdateStatus: string[]
-    ): ConfiguredDevice[] => {
-      let out = devices;
-      if (selectedLabels.length > 0) {
-        out = out.filter((d) => {
-          const ids = d.labels;
-          if (!ids || ids.length === 0) return false;
-          const set = new Set(ids);
-          return selectedLabels.every((id) => set.has(id));
-        });
-      }
-      if (selectedAreas.length > 0) {
-        const set = new Set(selectedAreas);
-        out = out.filter((d) => !!d.area && set.has(d.area));
-      }
-      if (selectedPlatforms.length > 0) {
-        const set = new Set(selectedPlatforms);
-        out = out.filter((d) => set.has(d.target_platform));
-      }
-      if (selectedStates.length > 0) {
-        const set = new Set(selectedStates);
-        out = out.filter((d) => set.has(d.state));
-      }
-      if (selectedUpdateStatus.length > 0) {
-        // AND / narrowing: a device must satisfy every selected
-        // bucket (mirrors the labels facet, not the OR facets above).
-        const set = new Set(selectedUpdateStatus);
-        out = out.filter((d) =>
-          UPDATE_FACET_BUCKETS.every(
-            (id) => !set.has(id) || UPDATE_FACET_PREDICATES[id](d)
-          )
-        );
-      }
-      return out;
-    }
+    ): ConfiguredDevice[] =>
+      applyFacetFilters(devices, {
+        selectedLabels,
+        selectedAreas,
+        selectedPlatforms,
+        selectedStates,
+        selectedUpdateStatus,
+      })
   );
 
   _applyFacetFilters(devices: ConfiguredDevice[]): ConfiguredDevice[] {
@@ -754,16 +732,7 @@ export class ESPHomePageDashboard extends LitElement {
     if (!q) return sorted.map((d) => d.configuration);
     const isTable = this._view === DashboardView.TABLE;
     return sorted
-      .filter((d) => {
-        if (matchesDeviceName(d, q)) return true;
-        if (!isTable) return false;
-        return (
-          d.address.toLowerCase().includes(q) ||
-          d.ip_addresses.some((ip) => ip.toLowerCase().includes(q)) ||
-          d.target_platform.toLowerCase().includes(q) ||
-          matchesMacAddress(d.mac_address, q)
-        );
-      })
+      .filter((d) => matchesDeviceSearch(d, q, isTable))
       .map((d) => d.configuration);
   }
 
@@ -912,38 +881,12 @@ export class ESPHomePageDashboard extends LitElement {
     const selected = [...this._selectedDevices];
     this._selectMode = false;
     this._selectedDevices = new Set();
-    if (selected.length === 0) {
-      toast.info(this._localize("layout.update_all_none"), { richColors: true });
-      return;
-    }
-    toast.info(this._localize("layout.update_all_started", { count: selected.length }), {
-      richColors: true,
+    await runBulkUpdate(selected, {
+      api: this._api,
+      localize: this._localize,
+      appVersion: this._appVersion,
+      pairings: this._pairings?.values() ?? [],
     });
-    try {
-      await this._api.firmwareInstallBulk(selected);
-    } catch (err) {
-      if (
-        err instanceof APIError &&
-        err.errorCode === ErrorCode.NO_COMPATIBLE_PEER &&
-        this._appVersion
-      ) {
-        // ``_appVersion`` empty during a reconnect race would leak
-        // into the ``{local}`` placeholder and misattribute the
-        // bucket; fall through to the generic toast.
-        const reason = classifyNoCompatiblePeerReason(
-          this._pairings?.values() ?? [],
-          this._appVersion
-        );
-        toast.error(
-          this._localize(`layout.update_all_no_compatible_peer_${reason}`, {
-            local: this._appVersion,
-          }),
-          { richColors: true }
-        );
-      } else {
-        toast.error(this._localize("layout.update_all_error"), { richColors: true });
-      }
-    }
   };
 
   _openConfirm(pending: PendingConfirm) {

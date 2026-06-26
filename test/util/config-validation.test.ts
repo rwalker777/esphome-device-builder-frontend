@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { ConfigValueOption } from "../../src/api/types/config-entries.js";
 import { ConfigEntryType } from "../../src/api/types/config-entries.js";
 import {
   getDeviceNameWarning,
+  nearCanonicalOption,
+  platformSupported,
   validateDeviceName,
   validateEntries,
   validateEntry,
@@ -58,6 +61,39 @@ describe("getDeviceNameWarning", () => {
   it("returns null for clean hyphenated names", () => {
     expect(getDeviceNameWarning("my-device")).toBeNull();
     expect(getDeviceNameWarning("device42")).toBeNull();
+  });
+});
+
+describe("nearCanonicalOption", () => {
+  const opt = (value: string, label = value): ConfigValueOption => ({ label, value });
+  const units = [opt("L"), opt("L/s"), opt("m³")];
+
+  it("suggests the canonical value for a case-only mismatch", () => {
+    expect(nearCanonicalOption("l", units)).toBe("L");
+    expect(nearCanonicalOption("l/S", units)).toBe("L/s");
+  });
+
+  it("returns null when the value exactly matches an option", () => {
+    expect(nearCanonicalOption("L", units)).toBeNull();
+    expect(nearCanonicalOption("L/s", units)).toBeNull();
+  });
+
+  it("returns null for a genuinely custom value", () => {
+    expect(nearCanonicalOption("L/min", units)).toBeNull();
+  });
+
+  it("matches the first case-insensitive option when several collide", () => {
+    expect(nearCanonicalOption("foo", [opt("FOO"), opt("Foo")])).toBe("FOO");
+  });
+
+  it("never matches on the label alone", () => {
+    expect(nearCanonicalOption("litre", [opt("L", "litre")])).toBeNull();
+  });
+
+  it("returns null for empty value or empty/null options", () => {
+    expect(nearCanonicalOption("", units)).toBeNull();
+    expect(nearCanonicalOption("l", [])).toBeNull();
+    expect(nearCanonicalOption("l", null)).toBeNull();
   });
 });
 
@@ -600,5 +636,62 @@ describe("validateEntries", () => {
     expect(
       validateEntries(entries, values, undefined, "esp32").get("diagnostics.psram")?.code
     ).toBe("validation.required");
+  });
+});
+
+describe("validateEntries — api encryption key format", () => {
+  // `api:` → `encryption:` → `key:`, the shape the structured editor passes.
+  const entries = [
+    makeEntry({
+      key: "encryption",
+      type: ConfigEntryType.NESTED,
+      config_entries: [makeEntry({ key: "key", type: ConfigEntryType.SECURE_STRING })],
+    }),
+  ];
+  const validate = (key: unknown) =>
+    validateEntries(entries, { encryption: { key } }, undefined, null, "api");
+
+  it("flags a malformed key", () => {
+    expect(validate("not-a-real-key").get("encryption.key")?.code).toBe(
+      "validation.invalid_encryption_key"
+    );
+  });
+
+  it("accepts a well-formed 32-byte base64 key", () => {
+    expect(validate("a".repeat(43) + "=").size).toBe(0);
+  });
+
+  it("skips empty, substitution, and !secret values", () => {
+    expect(validate("").size).toBe(0);
+    expect(validate("${api_key}").size).toBe(0);
+    expect(validate("!secret api_encryption_key").size).toBe(0);
+  });
+
+  it("does not format-check when the section isn't api", () => {
+    expect(
+      validateEntries(entries, { encryption: { key: "bad" } }, undefined, null).size
+    ).toBe(0);
+  });
+});
+
+describe("platformSupported", () => {
+  it("allows when the entry has no platform constraint", () => {
+    expect(platformSupported([], "esp32")).toBe(true);
+    expect(platformSupported(undefined, "esp32")).toBe(true);
+  });
+
+  it("allows when the target platform is unknown", () => {
+    expect(platformSupported(["bk72xx"], "")).toBe(true);
+    expect(platformSupported(["bk72xx"], null)).toBe(true);
+    expect(platformSupported(["bk72xx"], undefined)).toBe(true);
+  });
+
+  it("drops a component restricted to other platforms", () => {
+    expect(platformSupported(["bk72xx"], "esp32")).toBe(false);
+  });
+
+  it("keeps a component that lists the target platform", () => {
+    expect(platformSupported(["esp32"], "esp32")).toBe(true);
+    expect(platformSupported(["esp32", "esp8266"], "esp8266")).toBe(true);
   });
 });

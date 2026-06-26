@@ -10,6 +10,7 @@ import { basicSetup, EditorView } from "codemirror";
 import { css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ESPHomeAPI } from "../api/esphome-api.js";
+import type { BoardCatalogEntry } from "../api/types/boards.js";
 import type { LocalizeFunc } from "../common/localize.js";
 import { apiContext, darkModeContext, localizeContext } from "../context/index.js";
 import {
@@ -25,9 +26,15 @@ import {
 } from "../util/codemirror-theme.js";
 import { editorSearchPhrases } from "../util/editor-search-phrases.js";
 import { ESPHOME_YAML_INDENT, esphomeYaml } from "../util/esphome-yaml-lang.js";
-import { getKeyPath } from "../util/yaml-ast.js";
+import { idleCompletion } from "../util/idle-completion.js";
+import { getKeyPath, isInsideBlockScalar } from "../util/yaml-ast.js";
 import { createYamlCompletionSource } from "../util/yaml-completion.js";
 import { createYamlHoverTooltip } from "../util/yaml-hover.js";
+import {
+  blankLineContext,
+  fieldPathByIndent,
+  keyPathByIndent,
+} from "../util/yaml-line-walker.js";
 import {
   createBackendYamlLinter,
   lintErrorLineGutter,
@@ -42,6 +49,9 @@ import { yamlStickyScroll } from "../util/yaml-sticky-scroll.js";
 import { CodeMirrorEditorElement } from "./codemirror-editor-element.js";
 
 export type HighlightRange = Pick<YamlSection, "fromLine" | "toLine">;
+
+// Delay before an at-rest caret opens the completion popup for discovery.
+const IDLE_COMPLETION_DELAY_MS = 1500;
 
 // `#` must be percent-encoded (`%23`) inside a data-URI background-image.
 const errorDot = (fill: string, stroke: string): string =>
@@ -109,6 +119,13 @@ export class ESPHomeYamlEditor extends CodeMirrorEditorElement {
    */
   @property() configuration = "";
 
+  /**
+   * The device's resolved board catalog entry. Supplies the target
+   * platform/board so completion hydrates per-platform value options (e.g.
+   * `hardware_uart`) the same way the structured editor does.
+   */
+  @property({ attribute: false }) board: BoardCatalogEntry | null = null;
+
   @property({ attribute: false }) highlightRange: HighlightRange | null = null;
 
   @property({ type: Boolean }) scrollToHighlight = false;
@@ -132,6 +149,14 @@ export class ESPHomeYamlEditor extends CodeMirrorEditorElement {
    *  We only emit on line transitions so a horizontal mouse / arrow
    *  movement inside the same line doesn't churn the page state. */
   private _lastReportedCursorLine = 0;
+
+  /** Joined key path last emitted with `yaml-cursor-line`. We re-emit when the
+   *  resolved path changes — a different section OR a different field on the
+   *  same line (typing/completing a new block, or moving between fields of a
+   *  list item, where the line and top-level key stay put). Throttling on the
+   *  whole path keeps both section- and field-following in sync without
+   *  churning on plain column moves. */
+  private _lastReportedPathKey = "";
 
   static styles = css`
     :host {
@@ -226,6 +251,10 @@ export class ESPHomeYamlEditor extends CodeMirrorEditorElement {
         },
         ".cm-diagnostic + .cm-diagnostic": {
           borderTop: this._darkMode ? "1px solid #2a2a32" : "1px solid #f0f1f3",
+        },
+        ".cm-diagnostic a.cm-diagnostic-link": {
+          color: this._darkMode ? "#8cc2ff" : "#0b5cad",
+          textDecoration: "underline",
         },
         ".cm-diagnostic-error": {
           borderLeftColor: this._darkMode ? "#ff6b6b" : "#d92d20",
@@ -396,20 +425,57 @@ export class ESPHomeYamlEditor extends CodeMirrorEditorElement {
             })
           );
         }
-        // Cursor moved (click, arrow keys, find-jump). Emit the
-        // 1-indexed line so the page can switch the visual
-        // section editor to match. Throttle to line transitions:
-        // moving within the same line is irrelevant for section
-        // attribution, and emitting on every column change would
-        // churn page state.
+        // Cursor moved (click, arrow keys, find-jump) or a user edit
+        // moved it. Emit the 1-indexed line + key path so the page can
+        // switch the visual section editor to match. Gate on
+        // `selectionSet` only: every user edit (typing, completion
+        // accept) also moves the caret, so this still catches them, but
+        // a programmatic host doc patch (the `value` prop sync) carries
+        // no selection and must not switch sections on an unfocused
+        // editor. Throttle so a mere column move within the same line and
+        // field is ignored, but emit whenever the resolved path changes —
+        // a new section OR a new field on the same line (typing a block or
+        // moving between a list item's fields).
         if (update.selectionSet) {
           const head = update.state.selection.main.head;
           const line = update.state.doc.lineAt(head).number;
-          if (line !== this._lastReportedCursorLine) {
+          // A pure horizontal move within an unchanged line can't change the
+          // path (only a doc edit can), so skip the walk on same-line cursor
+          // moves with no edit.
+          if (line === this._lastReportedCursorLine && !update.docChanged) return;
+          // Resolve the caret's key path field-first (the page derives the
+          // form-relative path from it). The AST can't anchor an empty-value
+          // `key:` (Lezer leaves the Pair open) and yields nothing on a blank
+          // line, so prefer the indent walkers there: fieldPathByIndent gives
+          // the field path including the leaf key for an empty-value pair, else
+          // fall back to the AST, else the ancestor chain from a blank line.
+          // `skipListItems` keeps an anonymous `- ` dash from masquerading as a
+          // container key.
+          let path = fieldPathByIndent(update.state.doc, line - 1);
+          // Inside a block scalar (a `lambda: |-` body) a `key:`-looking
+          // content line is literal text, not a field; the regex can't tell,
+          // so defer to the AST there.
+          if (path && isInsideBlockScalar(update.state, head)) path = null;
+          if (!path) {
+            path = getKeyPath(update.state, head);
+            if (path.length === 0) {
+              const blank = blankLineContext(update.state.doc, head);
+              if (blank)
+                path = keyPathByIndent(
+                  update.state.doc,
+                  blank.lineIdx,
+                  blank.indent,
+                  true
+                );
+            }
+          }
+          const pathKey = JSON.stringify(path);
+          if (
+            line !== this._lastReportedCursorLine ||
+            pathKey !== this._lastReportedPathKey
+          ) {
             this._lastReportedCursorLine = line;
-            // Full key path; the page derives the form-relative path
-            // (it knows whether the section keys fields under its key).
-            const path = getKeyPath(update.state, head);
+            this._lastReportedPathKey = pathKey;
             this.dispatchEvent(
               new CustomEvent("yaml-cursor-line", {
                 detail: { line, path },
@@ -444,12 +510,20 @@ export class ESPHomeYamlEditor extends CodeMirrorEditorElement {
       // Schema-driven completion off the components catalog.
       extensions.push(
         autocompletion({
-          override: [createYamlCompletionSource(this._api)],
+          override: [
+            createYamlCompletionSource(this._api, () => ({
+              platform: this.board?.esphome.platform,
+              boardId: this.board?.id,
+            })),
+          ],
           activateOnTyping: true,
           icons: true,
           closeOnBlur: true,
           maxRenderedOptions: 60,
-        })
+        }),
+        // Open the popup when the caret idles on a blank/empty line, so
+        // keys/values are discoverable without typing a partial first.
+        idleCompletion(IDLE_COMPLETION_DELAY_MS)
       );
       // Catalog-backed hover docs (description + "See also" link).
       extensions.push(
@@ -500,6 +574,7 @@ export class ESPHomeYamlEditor extends CodeMirrorEditorElement {
     this._destroyView();
     this._container.innerHTML = "";
     this._lastReportedCursorLine = 0;
+    this._lastReportedPathKey = "";
     this._mountEditor();
   }
 

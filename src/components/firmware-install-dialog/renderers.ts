@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { type FirmwareBinary, JobSource } from "../../api/types/firmware-jobs.js";
+import { FLASHER_HOST } from "../../common/docs.js";
 import { configurationStem, downloadAnsiText } from "../../util/download-text.js";
 import type { ESPHomeFirmwareInstallDialog } from "../firmware-install-dialog.js";
 import type { ProcessTerminalState } from "../process-terminal/process-terminal.js";
@@ -99,25 +100,30 @@ export function cardState(host: ESPHomeFirmwareInstallDialog): ProcessTerminalSt
 }
 
 function downloadReadyTitle(host: ESPHomeFirmwareInstallDialog): string {
-  if (host._installer === "binary-download") {
-    const isElf = host._downloadedFilename.endsWith(".elf");
-    return host._localize(
-      isElf ? "firmware.elf_download_done_title" : "firmware.binary_download_done_title"
-    );
+  if (host._installer === "web-flash") {
+    return host._localize("firmware.usb_built_title");
   }
-  return host._localize("firmware.web_download_done_title");
+  // binary-download
+  const isElf = host._downloadedFilename.endsWith(".elf");
+  return host._localize(
+    isElf ? "firmware.elf_download_done_title" : "firmware.binary_download_done_title"
+  );
 }
 
 function downloadReadyDetail(host: ESPHomeFirmwareInstallDialog): string {
-  const filename = host._downloadedFilename;
-  if (host._installer === "binary-download") {
-    const isElf = filename.endsWith(".elf");
-    return host._localize(
-      isElf ? "firmware.elf_download_done_body" : "firmware.binary_download_done_body",
-      { filename }
-    );
+  if (host._installer === "web-flash") {
+    // A blocked pop-up parks here with the firmware still built; show why so the
+    // user can allow pop-ups and click Open again (handOffToFlasher clears it).
+    if (host._errorMessage) return host._errorMessage;
+    return host._localize("firmware.usb_built_body", { host: FLASHER_HOST });
   }
-  return host._localize("firmware.web_download_done_body", { filename });
+  // binary-download
+  const filename = host._downloadedFilename;
+  const isElf = filename.endsWith(".elf");
+  return host._localize(
+    isElf ? "firmware.elf_download_done_body" : "firmware.binary_download_done_body",
+    { filename }
+  );
 }
 
 export function cardStatusMessage(host: ESPHomeFirmwareInstallDialog): string {
@@ -136,14 +142,20 @@ export function cardStatusDetail(host: ESPHomeFirmwareInstallDialog): string {
   if (host._step === "error") return host._errorMessage;
   // Hidden tabs throttle timers, which can stall the Web Serial write and fail
   // the flash; there's no API to opt out, so warn the user to stay on the page.
-  if (host._step === "flashing") return host._localize("firmware.flashing_keep_visible");
+  if (host._step === "flashing") {
+    return host._localize(
+      host._installer === "web-flash"
+        ? "firmware.usb_flashing_detail"
+        : "firmware.flashing_keep_visible"
+    );
+  }
   return "";
 }
 
 // ── status-extra slot ────────────────────────────────────────────────
 // Bespoke bodies that don't fit the standard status block: the binary-format
-// picker (choose-binary), the web-flasher instructions / "choose another
-// format" link (download-ready), and the collapsible compile / esptool log.
+// picker (choose-binary), the "choose another format" link (download-ready),
+// and the collapsible compile / esptool log.
 
 function renderBinaryList(host: ESPHomeFirmwareInstallDialog): TemplateResult {
   return html`
@@ -168,31 +180,19 @@ function renderBinaryList(host: ESPHomeFirmwareInstallDialog): TemplateResult {
 function renderDownloadReadyExtra(
   host: ESPHomeFirmwareInstallDialog
 ): TemplateResult | typeof nothing {
+  // web-flash: the action is the "Open USB flasher" footer button; no extra body.
+  if (host._installer === "web-flash") return nothing;
   // Manual binary download: offer to pick a different format when more than
-  // one was produced. The ELF is debug symbols, not a flashable image, so no
-  // web.esphome.io checklist here.
-  if (host._installer === "binary-download") {
-    return host._binaries.length > 1
-      ? html`<button
-          type="button"
-          class="reset-suggestion-link"
-          @click=${() => (host._step = "choose-binary")}
-        >
-          ${host._localize("firmware.choose_binary_again")}
-        </button>`
-      : nothing;
-  }
-  const filename = host._downloadedFilename;
-  return html`
-    <ol class="instructions">
-      <li>${host._localize("firmware.web_download_step_open")}</li>
-      <li>${host._localize("firmware.web_download_step_connect")}</li>
-      <li>${host._localize("firmware.web_download_step_install", { filename })}</li>
-    </ol>
-    <p class="instructions-note">
-      ${host._localize("dashboard.install_method_web_download_desc")}
-    </p>
-  `;
+  // one was produced.
+  return host._binaries.length > 1
+    ? html`<button
+        type="button"
+        class="reset-suggestion-link"
+        @click=${() => (host._step = "choose-binary")}
+      >
+        ${host._localize("firmware.choose_binary_again")}
+      </button>`
+    : nothing;
 }
 
 export function renderStatusExtra(
@@ -266,7 +266,7 @@ export function renderFooter(host: ESPHomeFirmwareInstallDialog): TemplateResult
   const isRunning =
     host._step !== "done" && host._step !== "error" && host._step !== "download-ready";
   if (isRunning) {
-    // Web Serial only — installWebDownload doesn't connect to a device.
+    // Web Serial only — the download / web-flash installers don't connect.
     const showToggle = host._installer === "web-serial";
     return html`
       <div class="footer">
@@ -288,37 +288,35 @@ export function renderFooter(host: ESPHomeFirmwareInstallDialog): TemplateResult
     `;
   }
   if (host._step === "download-ready") {
-    if (host._installer === "binary-download") {
+    if (host._installer === "web-flash") {
       return html`
         <div class="footer">
-          <button class="btn btn--primary" @click=${host._close}>
+          <button class="btn btn--ghost" @click=${host._close}>
             ${host._localize("command.close")}
+          </button>
+          <button class="btn btn--primary" @click=${host._openUsbFlasher}>
+            ${host._localize("firmware.usb_open_button")}
+            <wa-icon library="mdi" name="open-in-new"></wa-icon>
           </button>
         </div>
       `;
     }
+    // binary-download
     return html`
       <div class="footer">
-        <button class="btn btn--ghost" @click=${host._close}>
+        <button class="btn btn--primary" @click=${host._close}>
           ${host._localize("command.close")}
         </button>
-        <a
-          class="btn btn--primary"
-          href="https://web.esphome.io"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          ${host._localize("firmware.web_download_open_button")}
-        </a>
       </div>
     `;
   }
-  // A failed Web Serial flash can be retried in place — re-run the install.
-  // Excludes compile / validate failures, which surface the reset-build hint
-  // (renderResetSuggestion) instead; re-flashing wouldn't address those.
+  // A failed Web Serial or USB (web-flash) flash can be retried in place: re-run
+  // the install (web-flash re-opens the external flasher). Excludes compile /
+  // validate failures, which surface the reset-build hint (renderResetSuggestion)
+  // instead; re-flashing wouldn't address those.
   const canRetry =
     host._step === "error" &&
-    host._installer === "web-serial" &&
+    (host._installer === "web-serial" || host._installer === "web-flash") &&
     !host._failedDuringCompile &&
     !host._failedDuringValidate;
   if (canRetry) {
@@ -329,6 +327,21 @@ export function renderFooter(host: ESPHomeFirmwareInstallDialog): TemplateResult
         </button>
         <button class="btn btn--primary" @click=${host._retry}>
           ${host._localize("command.retry")}
+        </button>
+      </div>
+    `;
+  }
+  // Web-flash success: the device flashed in the external tab and is rebooting;
+  // offer its logs over OTA/native-API (the dashboard has no serial port).
+  if (host._installer === "web-flash" && host._step === "done") {
+    return html`
+      <div class="footer">
+        <button class="btn btn--ghost" @click=${host._close}>
+          ${host._localize("command.close")}
+        </button>
+        <button class="btn btn--primary" @click=${host._showUsbLogs}>
+          <wa-icon library="mdi" name="text-box-outline"></wa-icon>
+          ${host._localize("command.show_logs")}
         </button>
       </div>
     `;
