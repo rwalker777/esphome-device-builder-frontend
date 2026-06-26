@@ -20,7 +20,7 @@ import {
   mdiUpload,
 } from "@mdi/js";
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import type { Label } from "../api/types/devices.js";
 import { DeviceState } from "../api/types/devices.js";
 import type { FirmwareJob } from "../api/types/firmware-jobs.js";
@@ -30,6 +30,8 @@ import { espHomeStyles } from "../styles/shared.js";
 import { labelChipStyles } from "../util/label-chip-template.js";
 import { registerMdiIcons } from "../util/register-icons.js";
 import { renderVisitWebUiLink } from "../util/visit-web-ui-link.js";
+import "./confirm-queued-update-dialog.js";
+import type { ConfirmQueuedUpdateDialog } from "./confirm-queued-update-dialog.js";
 import { navigateCards, onHostContextMenu } from "./device-card/keyboard-nav.js";
 import {
   renderEncryptionIcon,
@@ -81,9 +83,13 @@ export class ESPHomeDeviceCard extends LitElement {
     false;
   @property({ type: Boolean, attribute: "has-update-available" }) hasUpdateAvailable =
     false;
-  @property({ type: Boolean, attribute: "queued-update" }) queuedUpdate = false;
+  @property({ type: Boolean, attribute: "queued-update" }) public queuedUpdate = false;
   @property({ type: Boolean, attribute: "api-enabled" }) apiEnabled = false;
   @property({ type: Boolean, attribute: "api-encrypted" }) apiEncrypted = false;
+
+  // Dialog reference for queued update confirmation
+  @query("esphome-confirm-queued-update-dialog")
+  _queuedUpdateConfirmDialog!: ConfirmQueuedUpdateDialog;
 
   // api_encryption TXT observed via mDNS. Combined with apiEncrypted and
   // hasPendingChanges to drive the 4-state lock indicator.
@@ -236,14 +242,26 @@ export class ESPHomeDeviceCard extends LitElement {
 
   private _onClearQueue(e: Event) {
     e.stopPropagation(); // Prevent the card from being clicked
-    this._emit("clear-queued-update");
+    this.dispatchEvent(
+      new CustomEvent("show-queued-update-confirm", {
+        detail: { configuration: this.configuration },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
+
+  _onShowQueuedUpdateConfirm = (e: CustomEvent<{ configuration: string }>) => {
+    if (e.detail.configuration === this.configuration) {
+      this._queuedUpdateConfirmDialog.open = true;
+    }
+  };
 
   // Update / Install accent: icon-only so only Edit keeps a label.
   // Long-language locales (French / Dutch) overflow a 300px-min card if
   // every action is labelled; upload icon reads clearly without one.
   private _renderAccentAction() {
-    if (this.queuedUpdate) {
+    if (this.state === DeviceState.OFFLINE && this.queuedUpdate) {
       return html`<button
         class="action-btn action-btn--ghost action-btn--tile"
         title=${this._localize("dashboard.clear_queued") || "Clear Queue"}

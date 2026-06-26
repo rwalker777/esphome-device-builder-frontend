@@ -25,6 +25,7 @@ import type { PairingSummary } from "../api/types/remote-build.js";
 import type { ArchivedDevice } from "../api/types/system.js";
 import { DashboardView } from "../api/types/system.js";
 import type { LocalizeFunc } from "../common/localize.js";
+import type { ConfirmQueuedUpdateDialog } from "../components/confirm-queued-update-dialog.js";
 import {
   deleteLabel,
   executeClone,
@@ -296,6 +297,8 @@ export class ESPHomePageDashboard extends LitElement {
   @query("esphome-bulk-labels-dialog") _bulkLabelsDialog!: ESPHomeBulkLabelsDialog;
   @query("esphome-rename-device-dialog") _renameDialog!: ESPHomeRenameDeviceDialog;
   @query("esphome-adopt-dialog") _adoptDialog!: ESPHomeAdoptDialog;
+  @query("esphome-confirm-queued-update-dialog")
+  _queuedUpdateConfirmDialog!: ConfirmQueuedUpdateDialog;
   @query("esphome-command-dialog") _commandDialog!: ESPHomeCommandDialog;
   @query("esphome-firmware-install-dialog")
   _firmwareDialog!: ESPHomeFirmwareInstallDialog;
@@ -851,6 +854,13 @@ export class ESPHomePageDashboard extends LitElement {
   _openFriendlyName = (device: ConfiguredDevice) => {
     this._actionDevice = device;
     this._friendlyNameDialog.open(device.name, device.friendly_name || device.name);
+  };
+  _onQueuedUpdateConfirmed = (e: CustomEvent<{ configuration: string }>) => {
+    this._api.firmwareClearQueuedUpdate(e.detail.configuration).catch((err) => {
+      toast.error(this._localize("queued_update_clear_failed"), {
+        description: this._localize("queued_update_clear_failed_desc"),
+      });
+    });
   };
 
   _executeRename = (e: CustomEvent<string>) => void executeRename(this, e);

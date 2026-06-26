@@ -33,6 +33,7 @@ export interface DeviceRow {
   build_size_bytes: number;
   hasPendingChanges: boolean;
   hasUpdateAvailable: boolean;
+  hasQueuedUpdate: boolean;
   api_enabled: boolean;
   api_encrypted: boolean;
   api_encryption_active: string | null;
@@ -139,6 +140,25 @@ export function createDeviceColumns(localize: LocalizeFunc): ColumnDef<DeviceRow
         ></span>`;
       },
       size: 80,
+      enableHiding: true,
+    },
+    {
+      accessorKey: "hasQueuedUpdate",
+      header: localize("dashboard.table_col_queued_update"),
+      cell: (info) => {
+        const row = info.row.original;
+        if (row._device.queued_update) {
+          return html`<span
+            class="cell-status cell-status-queued"
+            style="color: var(--status-queued-color, #ff9800);"
+            title=${localize("dashboard.status_queued_update")}
+          >
+            <wa-icon library="mdi" name="clock-outline"></wa-icon>
+          </span>`;
+        }
+        return EMPTY_CELL;
+      },
+      size: 100,
       enableHiding: true,
     },
     {

@@ -294,6 +294,7 @@ export class ESPHomeDeviceTable extends LitElement {
         config: d.configuration,
         hasPendingChanges: d.has_pending_changes === true,
         hasUpdateAvailable: d.update_available,
+        hasQueuedUpdate: d.queued_update === true,
         api_enabled: d.api_enabled === true,
         api_encrypted: d.api_encrypted === true,
         api_encryption_active: d.api_encryption_active ?? null,

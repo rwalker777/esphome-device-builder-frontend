@@ -74,13 +74,12 @@ export function renderStatusBadge(card: ESPHomeDeviceCard): TemplateResult {
   }
 
   if (card.queuedUpdate) {
-    return html`<div
-      class="status-badge"
-      style="color: var(--status-queued-color, #ff9800);"
-    >
-      <wa-icon library="mdi" name="clock-outline"></wa-icon>
-      Update Queued
-    </div>`;
+    return html`
+      <div class="device-status" style="color: var(--status-queued-color, #ff9800);">
+        <wa-icon library="mdi" name="clock-outline"></wa-icon>
+        Update Queued
+      </div>
+    `;
   }
 
   if (card.recentJob) {

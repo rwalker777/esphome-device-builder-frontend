@@ -1,4 +1,3 @@
-import { DeviceState } from "../../api/types/devices.js";
 import {
   JobSource,
   JobStatus,
@@ -387,13 +386,18 @@ export function compileAndWait(
   configuration: string
 ): Promise<void> {
   return new Promise(async (resolve, reject) => {
+    // Capture reject on the dialog so a mid-flight detach (header-X / Escape /
+    // reopen) can settle this promise. followJob callbacks clear the hook to
+    // null on fire so a normal completion doesn't double-reject on teardown.
     host._compileReject = reject;
     try {
       const job = await host._api.firmwareCompile(configuration);
       host._jobId = job.job_id;
+      // Capture so a compile failure can pick the right hint variant:
+      // local jobs get the link-to-reset, remote jobs get the plain-text
+      // "ask the operator of <receiver>" instruction.
       host._jobSource = job.source;
       host._jobSourceLabel = job.source_label;
-
       host._streamId = host._api.firmwareFollowJob(job.job_id, {
         onOutput: (line) => {
           if (host._step === "queued") {
@@ -411,20 +415,13 @@ export function compileAndWait(
             status: string;
             error?: string | null;
           };
-
           if (result.status === JobStatus.COMPLETED) {
-            if (host._device?.state === DeviceState.OFFLINE) {
-              host._step = "done";
-              host._statusMessage =
-                host._localize("dashboard.queued_successfully") ||
-                "Update Queued Successfully!";
-            } else {
-              host._statusMessage = host._localize("firmware.install_successful");
-            }
             resolve();
             return;
           }
-
+          // Prefer backend's specific error text so the banner names the cause
+          // ("remote build: peer-link session lost (transport_error: …)")
+          // instead of a generic "Install failed.".
           reject(new Error(result.error || ""));
         },
         onError: (error) => {

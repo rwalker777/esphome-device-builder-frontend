@@ -1,4 +1,5 @@
 import { APIError } from "../../api/api-error.js";
+import { DeviceState } from "../../api/types/devices.js";
 import { type FirmwareJob, JobStatus, JobType } from "../../api/types/firmware-jobs.js";
 import { ErrorCode } from "../../api/types/protocol.js";
 import { isTerminalJobStatus } from "../../util/firmware-job-status.js";
@@ -197,12 +198,24 @@ export function followJob(host: ESPHomeCommandDialog, jobId: string): void {
           primeAndFollow(host, upload);
           return;
         }
-        // No upload step — the device was never flashed, so don't report success.
+        // A network OTA install with the device offline never gets an UPLOAD job —
+        // the backend queues against the device's queued_update flag instead of
+        // pushing now. Server-serial has no such queuing path, so a missing upload
+        // there is still a real backend gap and falls through to the warning below.
+        const device = (host._devices || []).find(
+          (d) => d.configuration === host.configuration
+        );
+        if (host._port === "OTA" && device?.state === DeviceState.OFFLINE) {
+          host._state = "success";
+          host._statusMessage =
+            host._localize("dashboard.queued_successfully") ||
+            "Update Queued Successfully!";
+          host._jobId = "";
+          return;
+        }
         console.warn("install compile succeeded but no dependent upload for job", jobId);
         host._state = "error";
         host._statusMessage = host._localize("command.install_failed");
-        // The compile succeeded, so the clean/reset build-failure hint is
-        // misleading here — suppress it.
         host._installMissingUpload = true;
         host._jobId = "";
         return;

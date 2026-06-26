@@ -208,6 +208,9 @@ export function renderDialogs(host: ESPHomePageDashboard): TemplateResult {
       }}
     ></esphome-label-dialog>
     <esphome-adopt-dialog @adopted=${host._onAdopted}></esphome-adopt-dialog>
+    <esphome-confirm-queued-update-dialog
+      @confirm=${host._onQueuedUpdateConfirmed}
+    ></esphome-confirm-queued-update-dialog>
     <esphome-api-key-dialog></esphome-api-key-dialog>
     <esphome-create-config-dialog></esphome-create-config-dialog>
     <esphome-command-dialog
