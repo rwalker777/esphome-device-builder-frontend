@@ -36,6 +36,7 @@ import "@home-assistant/webawesome/dist/components/icon/icon.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 import "../base-dialog.js";
 import "./add-component-form.js";
+import type { ESPHomeAddComponentForm } from "./add-component-form.js";
 import "./component-catalog.js";
 import type { ESPHomeComponentCatalog } from "./component-catalog.js";
 
@@ -93,6 +94,23 @@ export class ESPHomeAddComponentDialog extends LitElement {
 
   @query("esphome-component-catalog")
   private _catalog!: ESPHomeComponentCatalog;
+
+  @query("esphome-add-component-form")
+  private _form?: ESPHomeAddComponentForm;
+
+  /** Snapshot of the form's in-progress values, captured when a "+ Add <dep>"
+   *  detour starts and restored when the original form re-mounts, so a field
+   *  the user already filled survives the round-trip. */
+  @state()
+  private _returnValues: Record<string, unknown> | null = null;
+
+  /** Restored values for the mounted form: only the *original* component on
+   *  return (`_returnTo` cleared) gets them; the dep's own form during the
+   *  detour (`_returnTo` set) must not, or the dep would inherit the original's
+   *  id and collide. */
+  private get _restoredValuesForMount(): Record<string, unknown> | null {
+    return this._returnTo ? null : this._returnValues;
+  }
 
   @state()
   private _selected: ComponentCatalogEntry | null = null;
@@ -198,11 +216,19 @@ export class ESPHomeAddComponentDialog extends LitElement {
   /** See ``navigateToDep`` for the seq-counter contract. */
   private _depNavSeq = 0;
 
-  private _resetDetourState() {
+  /** Null every in-flight dep-detour field. Shared with `_onBundleSelected`,
+   *  which abandons the detour but must NOT bump the selection seqs (its
+   *  hydrate already validated against the current token). */
+  private _clearDetourFields() {
     this._returnTo = null;
     this._depDomain = null;
     this._prefillReference = null;
     this._depPrefill = null;
+    this._returnValues = null;
+  }
+
+  private _resetDetourState() {
+    this._clearDetourFields();
     this._bundleQueue = [];
     this._bundleProgress = null;
     this._depNavSeq++;
@@ -302,6 +328,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
               .yaml=${this.yaml}
               .prefillReference=${this._prefillReference}
               .prefillFields=${this._depPrefill?.fields ?? null}
+              .restoredValues=${this._restoredValuesForMount}
               .extraRequired=${this._depPrefill?.required ?? null}
               .optionOverrides=${this._depPrefill?.optionOverrides ?? null}
               .submitting=${this._submitting}
@@ -374,6 +401,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
       yaml: this.yaml,
       prefillReference: null,
       prefillFields: null,
+      restoredValues: null,
       localize: this._localize,
     });
     if (
@@ -427,10 +455,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
     // the `_returnTo` branch in `_onFormSubmit`, restoring the unrelated
     // component while the bundle queue + banner stayed live, and the
     // next submit would jump into bundle step 2 from there.
-    this._returnTo = null;
-    this._depDomain = null;
-    this._prefillReference = null;
-    this._depPrefill = null;
+    this._clearDetourFields();
     this._bundleQueue = rest;
     this._bundleProgress = {
       current: 1,
@@ -449,7 +474,12 @@ export class ESPHomeAddComponentDialog extends LitElement {
     // sending them to the catalog and losing context.
     if (this._returnTo) {
       const restore = this._returnTo;
+      // Back out of the detour like a submit-return: keep the snapshot across
+      // the reset so the user's in-progress values survive on the original
+      // form (the binding reads `_returnValues` with `_returnTo` now null).
+      const snapshot = this._returnValues;
       this._resetDetourState();
+      this._returnValues = snapshot;
       this._selected = restore;
       this._submitError = "";
       return;
@@ -467,6 +497,9 @@ export class ESPHomeAddComponentDialog extends LitElement {
 
   private _onNavigateToDep(e: CustomEvent<{ domain: string }>) {
     e.stopPropagation();
+    // Snapshot what the user has filled before `navigateToDep` swaps
+    // `_selected` and unmounts the form, so it's restored on return.
+    this._returnValues = this._form?.currentValues ?? null;
     return navigateToDep(this as unknown as DepNavHost, e.detail.domain);
   }
 
@@ -597,6 +630,9 @@ export class ESPHomeAddComponentDialog extends LitElement {
           ...this._bundleProgress,
           current: this._bundleProgress.current + 1,
         };
+        // The next bundle step is a fresh component; drop the snapshot from a
+        // detour the prior step took so it can't bleed onto this one.
+        this._returnValues = null;
         this._selected = nextComponent;
       } else {
         // Auto-select the just-added component so the navigator
