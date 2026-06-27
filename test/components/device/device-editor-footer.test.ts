@@ -53,6 +53,20 @@ describe("device-editor footer install action", () => {
     expect(install).toHaveBeenCalledTimes(1);
   });
 
+  it("wires the installed + target versions into the Update button title", async () => {
+    // Identity localize keeps the key; asserting the version key proves both
+    // versions threaded through to the title (the helper's branch logic and
+    // fallback are unit-tested in update-tooltip.test.ts).
+    const el = await mount({
+      hasUpdateAvailable: true,
+      installedVersion: "2024.6.0",
+      availableVersion: "2024.12.0",
+    });
+    expect(q(el, ".install-split__main")!.title).toBe(
+      "dashboard.update_available_version"
+    );
+  });
+
   it("renders a highlighted plain Install (-> picker) when there are pending changes", async () => {
     const el = await mount({ hasPendingChanges: true });
     const install = vi.fn();
