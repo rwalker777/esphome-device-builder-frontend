@@ -1,3 +1,4 @@
+import memoizeOne from "memoize-one";
 import type { FeaturedBundle, FeaturedComponent } from "../../../api/types/boards.js";
 import {
   type ComponentCatalogEntry,
@@ -6,6 +7,7 @@ import {
 import type { LocalizeFunc } from "../../../common/localize.js";
 import { isComponentPresent } from "../../../util/component-presence.js";
 import { platformSupported } from "../../../util/config-validation.js";
+import { collectExistingIds } from "../../../util/default-component-id.js";
 import { buildFeaturedId } from "../../../util/featured-id.js";
 import {
   parseConfiguredPlatforms,
@@ -13,6 +15,14 @@ import {
 } from "../../../util/yaml-serialize.js";
 import { categoryChipLabel } from "../component-card-category-label.js";
 import type { ESPHomeComponentCatalog } from "../component-catalog.js";
+
+// The catalog re-renders on every search keystroke, and visibleComponents +
+// availableFeaturedCount each scan the YAML, so the same string is parsed
+// several times per render. memoize-one caches the last result per scan; its
+// single slot fits one open catalog at a time (the catalog is a dialog).
+const memoPresent = memoizeOne(parseTopLevelComponents);
+const memoPlatforms = memoizeOne(parseConfiguredPlatforms);
+const memoIds = memoizeOne(collectExistingIds);
 
 // Three filters applied client-side:
 //  1. Platform gate: drop components incompatible with the device's
@@ -32,11 +42,23 @@ import type { ESPHomeComponentCatalog } from "../component-catalog.js";
 //     satisfied from this dialog. A dep counts as satisfied when it's
 //     already in the user's YAML OR one of the platform-compatible IDs in
 //     this response.
+// A featured card pins a specific board peripheral via a preset `id`
+// (apollo `rgb_leds`). Once that id is in the YAML the peripheral is
+// configured, so the card is effectively single-instance even when its
+// underlying type is multi_conf (many LED strips exist, but only one exists on the board).
+function featuredIdPresent(
+  fc: FeaturedComponent,
+  existingIds: ReadonlySet<string>
+): boolean {
+  const presetId = fc.fields?.["id"]?.value;
+  return typeof presetId === "string" && existingIds.has(presetId);
+}
+
 export function visibleComponents(
   host: ESPHomeComponentCatalog
 ): ComponentCatalogEntry[] {
-  const present = parseTopLevelComponents(host.yaml);
-  const presentPlatforms = parseConfiguredPlatforms(host.yaml);
+  const present = memoPresent(host.yaml);
+  const presentPlatforms = memoPlatforms(host.yaml);
   const lockedToCore = host.lockedCategories.length > 0;
   const platformCompatible = host._components.filter((c) =>
     platformSupported(c.supported_platforms, host.platform)
@@ -45,18 +67,24 @@ export function visibleComponents(
     ? new Set(platformCompatible.map((c) => c.id))
     : null;
 
-  // Map a featured card's synthetic id back to the component it actually adds.
-  const featuredRefId = new Map<string, string>();
+  // Map a featured card's synthetic id back to its FeaturedComponent.
+  const featuredById = new Map<string, FeaturedComponent>();
   const board = host.board;
   if (board) {
     // Slim board entries omit featured_components; guard like the catalog's load().
     for (const fc of board.featured_components ?? []) {
-      featuredRefId.set(buildFeaturedId(board.id, fc.id), fc.component_id);
+      featuredById.set(buildFeaturedId(board.id, fc.id), fc);
     }
   }
+  // Only scan the YAML for ids when there are featured cards to match against.
+  const existingIds = featuredById.size ? memoIds(host.yaml) : new Set<string>();
 
   return platformCompatible.filter((c) => {
-    const refId = featuredRefId.get(c.id) ?? c.id;
+    const fc = featuredById.get(c.id);
+    if (fc && featuredIdPresent(fc, existingIds)) {
+      return false;
+    }
+    const refId = fc?.component_id ?? c.id;
     if (!c.multi_conf && isComponentPresent(refId, present, presentPlatforms)) {
       return false;
     }
@@ -90,10 +118,34 @@ export function ambiguousNameIds(components: ComponentCatalogEntry[]): Set<strin
   return ids;
 }
 
+// A bundle drops a fixed set of featured peripherals (each with a preset id)
+// into the config at once. It's fully configured when every component's preset
+// id is in the YAML, so hide it then — a second add would duplicate all of them.
+function presentBundleIds(host: ESPHomeComponentCatalog): Set<string> {
+  const board = host.board;
+  const bundles = board?.featured_bundles ?? [];
+  if (!board || bundles.length === 0) return new Set();
+  const presetIdByLocal = new Map<string, string>();
+  for (const fc of board.featured_components ?? []) {
+    const presetId = fc.fields?.["id"]?.value;
+    if (typeof presetId === "string") presetIdByLocal.set(fc.id, presetId);
+  }
+  const existingIds = memoIds(host.yaml);
+  const out = new Set<string>();
+  for (const bundle of bundles) {
+    const ids = bundle.component_ids
+      .map((cid) => presetIdByLocal.get(cid))
+      .filter((id): id is string => id !== undefined);
+    if (ids.length > 0 && ids.every((id) => existingIds.has(id))) out.add(bundle.id);
+  }
+  return out;
+}
+
 // Bundles live on boards/get_board (not components/*) — filter client-side
 // so a search behaves consistently across featured + bundles + components.
 export function filteredBundles(host: ESPHomeComponentCatalog): FeaturedBundle[] {
-  const bundles = host.board?.featured_bundles ?? [];
+  const present = presentBundleIds(host);
+  const bundles = (host.board?.featured_bundles ?? []).filter((b) => !present.has(b.id));
   const q = host._search.trim().toLowerCase();
   if (!q) return bundles;
   return bundles.filter(
@@ -105,8 +157,8 @@ export function filteredBundles(host: ESPHomeComponentCatalog): FeaturedBundle[]
 }
 
 // Recommendations shown for this board: a featured component counts when it's
-// multi-conf or not yet configured; bundles are counted as-is, matching the
-// grid (`filteredBundles`) which doesn't present-filter them. Drives the
+// multi-conf or not yet configured; a bundle counts until it's fully
+// configured, matching the grid (`filteredBundles`). Drives the
 // Recommended badge and the auto-select so an all-configured board collapses
 // the category instead of showing an empty "0 of N" list. No platform gate
 // here (unlike `visibleComponents`): a board only recommends its own
@@ -115,15 +167,23 @@ export function filteredBundles(host: ESPHomeComponentCatalog): FeaturedBundle[]
 export function availableFeaturedCount(host: ESPHomeComponentCatalog): number {
   const board = host.board;
   if (!board) return 0;
-  const present = parseTopLevelComponents(host.yaml);
-  const presentPlatforms = parseConfiguredPlatforms(host.yaml);
+  const featured = board.featured_components ?? [];
+  const present = memoPresent(host.yaml);
+  const presentPlatforms = memoPlatforms(host.yaml);
+  const existingIds = featured.length ? memoIds(host.yaml) : new Set<string>();
   // `!== false`, not truthy: the backend omits the `true` default, so an
-  // absent multi_conf means multi-conf (still addable).
+  // absent multi_conf means multi-conf (still addable). A featured peripheral
+  // whose preset id is already configured is never addable, regardless.
   const addable = (fc: FeaturedComponent) =>
-    fc.multi_conf !== false ||
-    !isComponentPresent(fc.component_id, present, presentPlatforms);
-  const components = (board.featured_components ?? []).filter(addable).length;
-  return components + (board.featured_bundles?.length ?? 0);
+    !featuredIdPresent(fc, existingIds) &&
+    (fc.multi_conf !== false ||
+      !isComponentPresent(fc.component_id, present, presentPlatforms));
+  const components = featured.filter(addable).length;
+  const presentBundles = presentBundleIds(host);
+  const bundles = (board.featured_bundles ?? []).filter(
+    (b) => !presentBundles.has(b.id)
+  ).length;
+  return components + bundles;
 }
 
 interface CategoryEntry {
