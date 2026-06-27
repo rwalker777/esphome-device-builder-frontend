@@ -76,6 +76,54 @@ describe("findUsedPins", () => {
     expect(map.get(5)).toBe("binary_sensor");
   });
 
+  it("namespaces an I/O-expander pin so its channel doesn't alias a board GPIO", () => {
+    const config = [
+      "binary_sensor:",
+      "  - platform: gpio",
+      "    pin:",
+      "      pcf8574: hub_in_1",
+      "      number: 0",
+      "      mode: INPUT",
+      "switch:",
+      "  - platform: gpio",
+      "    pin: GPIO0",
+      "",
+    ].join("\n");
+    const map = findUsedPins(config);
+    // Board GPIO 0 (the switch) and the pcf8574 channel 0 are distinct keys.
+    expect(map.get(0)).toBe("switch");
+    expect(map.get("pcf8574:hub_in_1:0")).toBe("binary_sensor");
+  });
+
+  it("reads expander pin keys even when a comment leads the long-form block", () => {
+    const config = [
+      "binary_sensor:",
+      "  - platform: gpio",
+      "    pin:",
+      "        # wired to hub input channel 0", // deeper-indented comment first
+      "      pcf8574: hub_in_1",
+      "      number: 0",
+      "",
+    ].join("\n");
+    const map = findUsedPins(config);
+    // The leading comment must not anchor the child indent and hide the keys.
+    expect(map.get("pcf8574:hub_in_1:0")).toBe("binary_sensor");
+    expect(map.has(0)).toBe(false);
+  });
+
+  it("does not alias a mid-edit expander pin (empty hub id) to a board GPIO", () => {
+    const config = [
+      "binary_sensor:",
+      "  - platform: gpio",
+      "    pin:",
+      "      pcf8574:", // hub id not filled in yet
+      "      number: 0",
+      "",
+    ].join("\n");
+    // The incomplete expander block must not register board GPIO 0 as used.
+    expect(findUsedPins(config).has(0)).toBe(false);
+  });
+
   it("excludes lines in the inclusive range", () => {
     // Skip lines 4-6 (the binary_sensor block) — pin 5 should
     // not appear.
@@ -288,6 +336,23 @@ describe("domainOccupiesPins", () => {
   it("matches the expanded pin-block (number: sub-key) form", () => {
     const yaml = "i2c:\n  - scl:\n      number: GPIO0\n    sda: 1\n    id: i2c_1\n";
     expect(domainOccupiesPins(yaml, "i2c", { scl: 0, sda: 1 })).toBe(true);
+  });
+
+  it("matches an expander channel by its namespaced token, not a board GPIO", () => {
+    const yaml = [
+      "binary_sensor:",
+      "  - platform: gpio",
+      "    pin:",
+      "      pcf8574: hub_in_1",
+      "      number: 0",
+      "      mode: INPUT",
+      "",
+    ].join("\n");
+    expect(domainOccupiesPins(yaml, "binary_sensor", { pin: "pcf8574:hub_in_1:0" })).toBe(
+      true
+    );
+    // A board-GPIO-0 lock must NOT match the expander channel 0.
+    expect(domainOccupiesPins(yaml, "binary_sensor", { pin: 0 })).toBe(false);
   });
 
   it("is false when the pins are split across two instances", () => {

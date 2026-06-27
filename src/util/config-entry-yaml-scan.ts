@@ -106,7 +106,7 @@ const pinKeyEquals = (a: PinKey, b: PinKey) =>
   a.yaml === b.yaml &&
   a.excludeFromLine === b.excludeFromLine &&
   a.excludeToLine === b.excludeToLine;
-const pinMemo = createScanMemo<PinKey, Map<number, string>>(pinKeyEquals);
+const pinMemo = createScanMemo<PinKey, Map<number | string, string>>(pinKeyEquals);
 
 // Keys whose values are free-form human text. `scanPinGpios` is
 // deliberately value-context-agnostic (it's shared with the pin picker,
@@ -150,6 +150,44 @@ function stripInlineComment(line: string): string {
 }
 
 /**
+ * Read a long-form pin block opened at `openerIdx` (a `pin:` / `*_pin:` key
+ * with no inline value) into its canonical identity via {@link parsePinGpio} — a
+ * board GPIO `number`, or the `provider:hub_id:channel` token when the block
+ * sits on an I/O expander. Reconstructs the block's direct-child scalars into a
+ * mapping and defers the identity decision to `parsePinGpio`; only the direct
+ * children are collected so a nested `mode:` map's flags can't masquerade as a
+ * provider key. Returns the identity plus the 0-indexed last line the block
+ * spans so the caller can skip past it.
+ */
+function readLongFormPin(
+  lines: string[],
+  openerIdx: number
+): { pin: number | string | null; end: number } {
+  const openIndent = indentWidth(lines[openerIdx]);
+  let childIndent = -1;
+  const block: Record<string, string> = {};
+  let end = openerIdx;
+  for (let j = openerIdx + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.trim() === "") {
+      end = j;
+      continue;
+    }
+    if (indentWidth(line) <= openIndent) break;
+    end = j;
+    const m = line.match(LINE_KEY_RE);
+    if (m === null) continue; // comment / non-key line — don't anchor childIndent on it
+    if (childIndent === -1) childIndent = indentWidth(line);
+    if (indentWidth(line) !== childIndent) continue; // skip grandchildren (mode flags)
+    // Record the key even when it has no inline scalar (an empty, mid-edit
+    // `pcf8574:`), so parsePinGpio sees the provider and returns null rather
+    // than letting the bare `number:` alias a board GPIO.
+    block[m[2]] = readInstanceScalar(stripInlineComment(line), m[2]) ?? "";
+  }
+  return { pin: parsePinGpio(block), end };
+}
+
+/**
  * Map every pin reference in the YAML to the top-level domain that
  * owns it (e.g. `{ 4: "switch", 5: "binary_sensor" }`). Pin tokens are
  * matched across every platform form (`GPIOn`, bk72xx `P{n}`, rtl87xx
@@ -169,11 +207,11 @@ export function findUsedPins(
   yaml: string,
   excludeFromLine?: number,
   excludeToLine?: number
-): Map<number, string> {
+): Map<number | string, string> {
   const probe: PinKey = { yaml, excludeFromLine, excludeToLine };
   const cached = pinMemo.get(probe);
   if (cached) return cached;
-  const used = new Map<number, string>();
+  const used = new Map<number | string, string>();
   if (!yaml) {
     // Don't cache the empty-yaml early return: a future
     // regression that needs to do exclude-range work even on
@@ -221,7 +259,17 @@ export function findUsedPins(
     // A bare-integer pin value (`tx_pin: 1`) carries no prefix for the token
     // scan to anchor on; parse it from a pin-field key's value instead.
     if (keyMatch && isPinFieldKey(keyMatch[2])) {
-      const gpio = parsePinGpio(stripped.slice(keyMatch[0].length).trim());
+      const inline = stripped.slice(keyMatch[0].length).trim();
+      if (inline === "") {
+        // Long-form pin block: read it as a unit so an expander channel is
+        // namespaced (never aliasing a board GPIO) and a nested `mode:` map
+        // isn't mis-scanned, then skip the lines it spans.
+        const { pin, end } = readLongFormPin(lines, i);
+        if (pin !== null && !used.has(pin)) used.set(pin, currentDomain);
+        i = end;
+        continue;
+      }
+      const gpio = parsePinGpio(inline);
       if (gpio !== null && !used.has(gpio)) used.set(gpio, currentDomain);
     }
     for (const num of scanPinGpios(stripped)) {
@@ -365,16 +413,14 @@ function readInstancePinGpio(
   lines: string[],
   section: YamlSection,
   key: string
-): number | null {
+): number | string | null {
   const lineNo = findFieldLine(yaml, section, [key]);
   if (lineNo === null) return null;
   const scalar = parsePinGpio(readInstanceScalar(lines[lineNo - 1], key));
   if (scalar !== null) return scalar;
-  // Expanded form: descend into the `number:` sub-key.
-  const numLine = findFieldLine(yaml, section, [key, "number"]);
-  return numLine === null
-    ? null
-    : parsePinGpio(readInstanceScalar(lines[numLine - 1], "number"));
+  // Expanded form: read the long-form block (board GPIO, or the
+  // `provider:hub_id:channel` token when the pin sits on an I/O expander).
+  return readLongFormPin(lines, lineNo - 1).pin;
 }
 
 /**
@@ -389,7 +435,7 @@ function readInstancePinGpio(
 export function domainOccupiesPins(
   yaml: string,
   domain: string,
-  lockedPins: Readonly<Record<string, number>>
+  lockedPins: Readonly<Record<string, number | string>>
 ): boolean {
   const keys = Object.keys(lockedPins);
   if (keys.length === 0) return false;

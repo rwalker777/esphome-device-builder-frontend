@@ -723,3 +723,49 @@ describe("renderPinField long-form Advanced disclosure", () => {
     expect(findTemplatesByAnchor(result, "<button").length).toBe(0);
   });
 });
+
+describe("renderPinField on an I/O-expander pin", () => {
+  it("shows the locked channel read-only instead of an empty board-GPIO picker", () => {
+    const ctx = makeRenderCtx(
+      { pin: { pcf8574: "pcf8574_hub_in_1", number: 9, mode: "INPUT" } },
+      {
+        overrides: {
+          localize: (k, params) =>
+            k === "device.pin_on_expander"
+              ? `${params?.provider} ${params?.hub} · channel ${params?.channel}`
+              : k,
+        },
+      }
+    );
+    const result = renderPinField(
+      makeEntry(ConfigEntryType.PIN, {
+        key: "pin",
+        required: true,
+        locked: true,
+        pin_features: [],
+      }),
+      ["pin"],
+      ctx
+    );
+    // An expander channel isn't a board GPIO, so no picker is rendered.
+    expect(findTemplatesByAnchor(result, "<wa-select").length).toBe(0);
+    // The channel is surfaced read-only so the field isn't blank.
+    const input = findElementBindings(result, "input")[0];
+    expect(input[".value"]).toBe("pcf8574 pcf8574_hub_in_1 · channel 9");
+  });
+
+  it("renders no board-GPIO picker for an editable expander pin (no channel clobber)", () => {
+    // Not locked: without the unconditional expander guard this would fall
+    // through to the board <wa-select>, where picking a GPIO writes pin.number
+    // and clobbers the channel. The read-only channel display prevents that.
+    const ctx = makeRenderCtx({
+      pin: { pcf8574: "pcf8574_hub_in_1", number: 9, mode: "INPUT" },
+    });
+    const result = renderPinField(
+      makeEntry(ConfigEntryType.PIN, { key: "pin", pin_features: [] }),
+      ["pin"],
+      ctx
+    );
+    expect(findTemplatesByAnchor(result, "<wa-select").length).toBe(0);
+  });
+});

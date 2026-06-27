@@ -12,7 +12,8 @@ import { primaryHeaderDialogStyles } from "../../styles/dialog-chrome.js";
 import { fullscreenMobileDialog } from "../../styles/dialog-mobile.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import type { BusPrefill } from "../../util/bus-constraint-prefill.js";
-import { buildFeaturedId } from "../../util/featured-id.js";
+import { collectExistingIds } from "../../util/default-component-id.js";
+import { buildFeaturedId, isFeaturedId } from "../../util/featured-id.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
 import { findAddedSection } from "../../util/yaml-sections.js";
 import { parseTopLevelComponents } from "../../util/yaml-serialize.js";
@@ -365,10 +366,111 @@ export class ESPHomeAddComponentDialog extends LitElement {
       this._submitError = result.message;
       return;
     }
+    // A featured component can require hub(s)/a bus to exist first (a gpio pin
+    // on a pcf8574 needs the pcf8574 + i2c). Add the missing prerequisites
+    // ahead of it through the same sequential queue bundles use.
+    const prereqs = this._missingRequiredPrereqs(result.entry);
+    if (prereqs && prereqs.unresolved.length > 0) {
+      // A declared prerequisite isn't in the catalog (a same-release catalog
+      // bug). Refuse rather than add the component without its hub/bus and ship
+      // the broken config this flow exists to prevent.
+      this._submitError = this._localize("device.prereq_unresolved", {
+        name: result.entry.name,
+        ids: prereqs.unresolved.join(", "),
+      });
+      return;
+    }
+    if (prereqs && prereqs.missing.length > 0) {
+      // The intermediate steps are the prerequisites (bus, hub), not the picked
+      // component, so frame the banner as "Adding prerequisites for <name>".
+      await this._startFeaturedSequence(
+        [...prereqs.missing, result.entry.id],
+        prereqs.boardId,
+        this._localize("device.adding_prerequisites_for", { name: result.entry.name })
+      );
+      return;
+    }
     this._selected = result.entry;
     this._submitError = "";
     const fields = this._fastPathFields(result.entry);
     if (fields) await this._submitComponent(fields, /* notify */ true);
+  }
+
+  /**
+   * The featured prerequisites a just-selected featured component still needs:
+   * its `requires` local ids (bus then hub), resolved to full featured ids,
+   * keeping only those whose locked id isn't already in the YAML. Returns null
+   * for a non-featured entry or one with no requires.
+   *
+   * Invariant: `requires` must be the fully-flattened, ordered prerequisite set
+   * — only the selected component's direct `requires` is resolved here, and the
+   * queued items (added via `_startFeaturedSequence`) do NOT re-resolve their
+   * own `requires`. The backend (esphome/device-builder#1717) emits the complete
+   * chain (e.g. a gpio lists `[bus, hub]`, not just the hub).
+   */
+  private _missingRequiredPrereqs(
+    entry: ComponentCatalogEntry
+  ): { boardId: string; missing: string[]; unresolved: string[] } | null {
+    const board = this.board;
+    if (!board || !isFeaturedId(entry.id)) return null;
+    const featured = board.featured_components ?? [];
+    const fc = featured.find((c) => buildFeaturedId(board.id, c.id) === entry.id);
+    if (!fc?.requires?.length) return null;
+    const existingIds = collectExistingIds(this.yaml);
+    const missing: string[] = [];
+    const unresolved: string[] = [];
+    for (const reqLocal of fc.requires) {
+      const prereq = featured.find((c) => c.id === reqLocal);
+      if (!prereq) {
+        // A requires id with no matching featured component is a catalog bug in
+        // this same (lockstep) release, not version drift: adding the component
+        // without its prereq ships the broken hub-referencing config this flow
+        // exists to prevent. Record it so the caller refuses the add (and warn
+        // with the precise id for a developer).
+        console.warn(
+          `Featured component '${entry.id}' requires '${reqLocal}', which is not in the board catalog.`
+        );
+        unresolved.push(reqLocal);
+        continue;
+      }
+      const presetId = prereq.fields.id?.value;
+      if (typeof presetId === "string" && existingIds.has(presetId)) continue;
+      missing.push(buildFeaturedId(board.id, reqLocal));
+    }
+    return { boardId: board.id, missing, unresolved };
+  }
+
+  /**
+   * Open the form on the first of *fullIds* and queue the rest, so the
+   * dashboard adds a sequence of featured components one by one. Shared by the
+   * bundle picker and the `requires` prerequisite flow.
+   */
+  private async _startFeaturedSequence(
+    fullIds: string[],
+    boardId: string,
+    progressName: string
+  ) {
+    const [first, ...rest] = fullIds;
+    const result = await hydrateForSelection(
+      this as unknown as SelectionHost,
+      first,
+      boardId
+    );
+    if (result.kind === "stale") return;
+    if (result.kind === "error") {
+      this._submitError = result.message;
+      return;
+    }
+    // Fresh sequence — abandon any in-flight dep-detour state.
+    this._clearDetourFields();
+    this._bundleQueue = rest;
+    this._bundleProgress = {
+      current: 1,
+      total: fullIds.length,
+      bundleName: progressName,
+    };
+    this._selected = result.entry;
+    this._submitError = "";
   }
 
   /**
@@ -435,36 +537,7 @@ export class ESPHomeAddComponentDialog extends LitElement {
     const fullIds = bundle.component_ids.map((localId) =>
       buildFeaturedId(boardId, localId)
     );
-    const [first, ...rest] = fullIds;
-    // Same selection guard as `_onComponentSelected`; a quick
-    // re-pick or a card click landing between this bundle's flush
-    // and response must not let the bundle resurrect itself.
-    const result = await hydrateForSelection(
-      this as unknown as SelectionHost,
-      first,
-      boardId
-    );
-    if (result.kind === "stale") return;
-    if (result.kind === "error") {
-      this._submitError = result.message;
-      return;
-    }
-    const component = result.entry;
-    // Picking a bundle is a fresh sequence — abandon any in-flight
-    // dep-detour state from the previous component the user was filling.
-    // Without this clear, the bundle's first submit would route through
-    // the `_returnTo` branch in `_onFormSubmit`, restoring the unrelated
-    // component while the bundle queue + banner stayed live, and the
-    // next submit would jump into bundle step 2 from there.
-    this._clearDetourFields();
-    this._bundleQueue = rest;
-    this._bundleProgress = {
-      current: 1,
-      total: fullIds.length,
-      bundleName: bundle.name,
-    };
-    this._selected = component;
-    this._submitError = "";
+    await this._startFeaturedSequence(fullIds, boardId, bundle.name);
   }
 
   private _onBack() {

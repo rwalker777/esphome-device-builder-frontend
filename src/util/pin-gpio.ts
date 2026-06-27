@@ -31,6 +31,19 @@
  * is invalid) doesn't need to be threaded in here.
  */
 
+// Long-form pin sub-keys that describe a board GPIO. Any other key in a pin
+// object names an I/O-expander provider (`pcf8574`, `mcp23xxx`, ...): its value
+// is the hub id and its `number` is an expander channel, not a board GPIO. The
+// backend mirrors this set (BOARD_PIN_KEYS) when it generates the catalog.
+export const LONG_FORM_PIN_KEYS = new Set([
+  "number",
+  "mode",
+  "inverted",
+  "ignore_strapping_warning",
+  "allow_other_uses",
+  "drive_strength",
+]);
+
 // ln882x splits its GPIOs into two ports of 16: port A is GPIO 0-15, port B is
 // GPIO 16-31, so "PB{n}" resolves to 16 + n (verified constant across every
 // ln882x board's pin map; no other platform uses a "PB" form).
@@ -49,8 +62,9 @@ const PORT_A_PIN_RE = /^\s*PA(\d+)\s*$/i;
 const PORT_B_PIN_RE = /^\s*PB(\d+)\s*$/i;
 
 /**
- * Parse a pin reference into a GPIO number. Used both for the field's
- * current value and for individual `suggestions` entries. Featured
+ * Parse a pin reference into a board GPIO number, or an I/O-expander
+ * channel's namespaced `provider:hub_id:channel` token. Used both for the
+ * field's current value and for individual `suggestions` entries. Featured
  * manifests write pins as bare ints (`12`), string forms (`"GPIO12"`,
  * `"gpio12"`), nRF52 port.pin notation (`"P0.27"`, `"P1.1"`), LibreTiny
  * forms (`"P23"` bk72xx, `"PA02"` rtl87xx), or — for fields whose locked
@@ -58,10 +72,13 @@ const PORT_B_PIN_RE = /^\s*PB(\d+)\s*$/i;
  * `{ number: 0, mode: { input: true, pullup: true }, inverted: true }`
  * (Sonoff Basic's front-panel button is the canonical example: the pin
  * is occupied + inverted + needs the internal pull-up, all baked into
- * the preset). Returns `null` for anything we can't parse — the caller
- * drops those entries rather than letting a typo blank the dropdown.
+ * the preset). A pin on an I/O expander
+ * (`{ pcf8574: 'hub_id', number: 0, ... }`) returns the namespaced token
+ * `'pcf8574:hub_id:0'` so its channel never aliases board GPIO 0. Returns
+ * `null` for anything we can't parse — the caller drops those entries rather
+ * than letting a typo blank the dropdown.
  */
-export function parsePinGpio(s: unknown): number | null {
+export function parsePinGpio(s: unknown): number | string | null {
   if (typeof s === "number" && Number.isFinite(s)) return s;
   if (typeof s === "string") {
     const m = s.match(GPIO_PIN_RE);
@@ -85,9 +102,42 @@ export function parsePinGpio(s: unknown): number | null {
     if (bk) return Number(bk[1]);
   }
   if (s !== null && typeof s === "object" && !Array.isArray(s)) {
-    return parsePinGpio((s as Record<string, unknown>).number);
+    const obj = s as Record<string, unknown>;
+    const provider = Object.keys(obj).find((k) => !LONG_FORM_PIN_KEYS.has(k));
+    // The ``number`` is parsed the same way whichever branch we take, so an
+    // expander channel written ``GPIO0`` resolves like a bare ``0``.
+    const channel = parsePinGpio(obj.number);
+    if (provider !== undefined) {
+      // I/O-expander channel: namespace it so it never aliases a board GPIO.
+      // A provider key with no resolved hub id (mid-edit) is null, NOT the bare
+      // channel — falling back would alias the channel to a board GPIO.
+      const hub = obj[provider];
+      return typeof hub === "string" && hub !== "" && typeof channel === "number"
+        ? pinIdentityToken(provider, hub, channel)
+        : null;
+    }
+    return channel;
   }
   return null;
+}
+
+/**
+ * The namespaced identity for a pin on an I/O expander
+ * (`pcf8574:hub_id:0`). Single source of the token shape so the YAML scanner
+ * and the value parser can't drift on what "the same expander channel" means.
+ */
+export function pinIdentityToken(provider: string, hub: string, channel: number): string {
+  return `${provider}:${hub}:${channel}`;
+}
+
+/**
+ * Like {@link parsePinGpio} but for callers that only deal in board GPIOs (the
+ * pin picker, alias resolution): an I/O-expander token resolves to `null` since
+ * an expander channel is not a board pin.
+ */
+export function parseBoardGpio(s: unknown): number | null {
+  const parsed = parsePinGpio(s);
+  return typeof parsed === "number" ? parsed : null;
 }
 
 /**
