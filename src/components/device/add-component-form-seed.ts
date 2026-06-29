@@ -25,6 +25,11 @@ export interface SeedContext {
   yaml: string;
   prefillReference: { domain: string; id: string } | null;
   prefillFields: Record<string, unknown> | null;
+  /** Values the user had entered before a "+ Add <dep>" detour, restored on
+   *  return so a field they already filled (e.g. an SPI device's `cs_pin`)
+   *  isn't lost. Overlaid before `prefillReference` so the just-added dep's id
+   *  still wins for the reference field. */
+  restoredValues: Record<string, unknown> | null;
   localize: LocalizeFunc;
 }
 
@@ -79,20 +84,22 @@ export function seedReference(yaml: string, domain: string): string | undefined 
  * required, since a non-required group can still contain required
  * descendants we want to seed.
  *
- * When `seedAll` is true, every entry with a non-null `default_value`
- * is seeded — used for featured components so backend-baked presets
- * land in the payload even on optional fields.
+ * When `seedPresets` is true (featured components), optional entries
+ * flagged `from_preset` are seeded too, so backend-baked presets land in
+ * the payload. Plain catalog defaults stay unseeded so a featured add
+ * emits only the preset fields — matching the create-time auto-add and
+ * avoiding phantom-touched optional groups (e.g. `manual_ip`).
  */
 export function seedDefaults(
   entries: ConfigEntry[],
   yaml: string,
   localize: LocalizeFunc,
-  seedAll: boolean = false
+  seedPresets: boolean = false
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const entry of entries) {
     if (entry.type === ConfigEntryType.NESTED) {
-      const sub = seedDefaults(entry.config_entries ?? [], yaml, localize, seedAll);
+      const sub = seedDefaults(entry.config_entries ?? [], yaml, localize, seedPresets);
       // A required entity sub-reading (ags10's tvoc) serializes only
       // once it holds a value; seed its name (the label) so an
       // untouched Add still produces a valid sensor, matching the
@@ -108,7 +115,7 @@ export function seedDefaults(
       if (Object.keys(sub).length > 0) out[entry.key] = sub;
       continue;
     }
-    if (!seedAll && !entry.required) continue;
+    if (!entry.required && !(seedPresets && entry.from_preset)) continue;
     // Resolve an id reference against the live YAML so a stale featured
     // preset (`i2c_bus`) can't outlive the bus it names. Locked refs are
     // deliberate pins — keep their literal.
@@ -137,22 +144,32 @@ export function seedDefaults(
  *  1. Seed required entries' default values (recursively).
  *  2. Auto-generate a unique `id` for the top-level id field.
  *  3. Seed pin entries from the board manifest.
- *  4. If we were just brought back from a "+ Add <domain>" detour,
+ *  4. Restore the values the user typed before a "+ Add <dep>" detour
+ *     (over the seeded defaults, under the prefills below).
+ *  5. If we were just brought back from a "+ Add <domain>" detour,
  *     prefill the field that points at that domain with the new id.
- *  5. Overlay constraint-derived prefill fields last.
+ *  6. Overlay constraint-derived prefill fields last.
  */
 export function buildInitialValues(ctx: SeedContext): Record<string, unknown> {
-  const { entries, component, board, yaml, prefillReference, prefillFields, localize } =
-    ctx;
+  const {
+    entries,
+    component,
+    board,
+    yaml,
+    prefillReference,
+    prefillFields,
+    restoredValues,
+    localize,
+  } = ctx;
 
   // Featured-component entries (ids prefixed with `featured.`) carry
-  // backend-baked presets in `default_value` for arbitrary fields,
-  // not just required ones. Seed every entry with a non-null default
-  // when filling a featured entry so a board-pinned (locked) optional
-  // field actually emits its preset on submit — otherwise the
-  // backend's locked-validation would reject the empty payload.
-  const seedAll = isFeaturedId(component.id);
-  let next = seedDefaults(entries, yaml, localize, seedAll);
+  // backend-baked presets on arbitrary fields, not just required ones.
+  // Seed those `from_preset` fields so a board-pinned (locked) optional
+  // field still emits its preset on submit — otherwise the backend's
+  // locked-validation would reject the empty payload. Plain catalog
+  // defaults stay unseeded so the add matches the create-time auto-add.
+  const seedPresets = isFeaturedId(component.id);
+  let next = seedDefaults(entries, yaml, localize, seedPresets);
 
   const idEntry = entries.find((e) => e.key === "id" && e.type === ConfigEntryType.ID);
   if (idEntry && next["id"] === undefined) {
@@ -172,6 +189,13 @@ export function buildInitialValues(ctx: SeedContext): Record<string, unknown> {
   // "Invalid pin number: 22" squiggle because the bus block
   // falls back to ESP32 GPIO22/21.
   next = seedBoardPinDefaults(component.id, entries, board, next);
+
+  // Restore what the user typed before a "+ Add <dep>" detour, over the freshly
+  // seeded defaults, but before `prefillReference` so the just-added dep's id
+  // still wins for the reference field.
+  if (restoredValues) {
+    next = { ...next, ...restoredValues };
+  }
 
   if (prefillReference) {
     const targetPath = findReferencePath(entries, prefillReference.domain, []);

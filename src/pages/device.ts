@@ -902,6 +902,24 @@ export class ESPHomePageDevice extends LitElement {
     this._commandDialog.open("validate");
   };
 
+  // Persist the editor buffer before building — install/compile build the
+  // on-disk file, so an unsaved edit would flash the previous version.
+  private _installAfterSave = async (run: () => void): Promise<void> => {
+    let saved: boolean;
+    try {
+      saved = await this._saveYaml();
+    } catch (e) {
+      // _saveYaml rejects when a section editor's flushPending upsert fails;
+      // surface it and abort rather than leak an unhandled rejection.
+      console.error("Failed to save before install:", e);
+      toast.error(this._localize("device.yaml_save_error"), { richColors: true });
+      return;
+    }
+    if (saved) run();
+  };
+  private _saveThenInstall = () => this._installAfterSave(this._installCtrl.onInstall);
+  private _saveThenUpdate = () => this._installAfterSave(this._installCtrl.onUpdate);
+
   /** Catch ``clean-build`` from the install dialog's post-failure
    *  hint and route it through this page's command-dialog —
    *  mirrors dashboard's page-level handler so the "clean the
@@ -984,8 +1002,8 @@ export class ESPHomePageDevice extends LitElement {
           @nav-collapse=${this._onNavCollapse}
           @save-yaml=${this._saveYaml}
           @validate-device=${this._onValidateClick}
-          @install-device=${this._installCtrl.onInstall}
-          @update-device=${this._installCtrl.onUpdate}
+          @install-device=${this._saveThenInstall}
+          @update-device=${this._saveThenUpdate}
         >
           ${this._renderNavigator("desktop-nav")}
           <esphome-device-editor
@@ -1008,6 +1026,8 @@ export class ESPHomePageDevice extends LitElement {
             ?saving=${this._saving}
             ?hasPendingChanges=${this._device?.has_pending_changes === true}
             ?hasUpdateAvailable=${this._device?.update_available === true}
+            .installedVersion=${this._device?.deployed_version ?? ""}
+            .availableVersion=${this._device?.current_version ?? ""}
             ?busy=${this._activeJobs.has(this.id)}
           >
             ${showEdgeTab || this._selectedSection

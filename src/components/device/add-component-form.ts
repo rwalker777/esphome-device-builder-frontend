@@ -14,6 +14,7 @@ import { inputStyles } from "../../styles/inputs.js";
 import { espHomeStyles } from "../../styles/shared.js";
 import { ComponentNameResolverController } from "../../util/component-name-resolver-controller.js";
 import { validateEntries, type ValidationError } from "../../util/config-validation.js";
+import { resolveFeaturedComponentId } from "../../util/featured-id.js";
 import { renderMarkdown } from "../../util/markdown.js";
 import { setIn } from "../../util/nested-values.js";
 import { registerMdiIcons } from "../../util/register-icons.js";
@@ -79,6 +80,12 @@ export class ESPHomeAddComponentForm extends LitElement {
   @property({ attribute: false })
   extraRequired: string[] | null = null;
 
+  /** Values the user had entered before a "+ Add <dep>" detour; the dialog
+   *  snapshots them at detour start and hands them back on return so a field
+   *  they already filled (an SPI device's `cs_pin`) survives the round-trip. */
+  @property({ attribute: false })
+  restoredValues: Record<string, unknown> | null = null;
+
   /** Per-field dropdown narrowing the requester imposes via a list
    *  `bus_constraints` value (CN105 -> baud_rate [2400, 9600]); the
    *  matching entry's `options` are limited to these, defaulting first. */
@@ -93,6 +100,13 @@ export class ESPHomeAddComponentForm extends LitElement {
 
   @state()
   private _values: Record<string, unknown> = {};
+
+  /** The in-progress form values, so the dialog can snapshot them before a
+   *  "+ Add <dep>" detour unmounts this form. A shallow copy so the snapshot
+   *  stays stable if the form keeps editing `_values`. */
+  get currentValues(): Record<string, unknown> {
+    return { ...this._values };
+  }
 
   @state()
   private _errors: Map<string, ValidationError> = new Map();
@@ -233,6 +247,7 @@ export class ESPHomeAddComponentForm extends LitElement {
       yaml: this.yaml,
       prefillReference: this.prefillReference,
       prefillFields: this.prefillFields,
+      restoredValues: this.restoredValues,
       localize: this._localize,
     });
   }
@@ -450,7 +465,10 @@ export class ESPHomeAddComponentForm extends LitElement {
   }
 
   private _generateYamlPreview(): string {
-    const lines: string[] = [`${this.component.id}:`];
+    // Featured ids are synthetic (`featured.<board>.<local>`); preview the
+    // underlying component the block resolves to, matching the committed YAML.
+    const key = resolveFeaturedComponentId(this.component.id, this.board);
+    const lines: string[] = [`${key}:`];
     lines.push(...serializeYamlValues(this._values, "  "));
     return lines.join("\n");
   }

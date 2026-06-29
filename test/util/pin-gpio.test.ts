@@ -4,7 +4,7 @@
  * pin-selector renderer (current value + suggestions) and the YAML
  * used-pin scanner (cross-section conflict detection).
  *
- * Three exported functions, each with a load-bearing contract:
+ * Four exported functions, each with a load-bearing contract:
  *
  *  - ``parsePinGpio`` — strict, anchored parse of a *single* pin value
  *    (a field value or one suggestion entry). Returns ``null`` for
@@ -17,6 +17,8 @@
  *    raw lines from the used-pin scan), so the tests pin its known
  *    over-match behaviour on free-text P-tokens too — that's the
  *    contract its caller (``findUsedPins``) is written against.
+ *  - ``isPinFieldKey`` — whether a mapping key names a pin field, so the
+ *    used-pin scan can accept a bare-integer value the token scan misses.
  *
  * Platform pin forms covered (see the module header for the full
  * derivation):
@@ -28,7 +30,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { formatPinValue, parsePinGpio, scanPinGpios } from "../../src/util/pin-gpio.js";
+import {
+  formatPinValue,
+  isPinFieldKey,
+  LONG_FORM_PIN_KEYS,
+  parseBoardGpio,
+  parsePinGpio,
+  scanPinGpios,
+} from "../../src/util/pin-gpio.js";
 
 describe("parsePinGpio", () => {
   it("returns finite numbers verbatim", () => {
@@ -99,6 +108,38 @@ describe("parsePinGpio", () => {
     expect(parsePinGpio({ mode: { input: true } })).toBeNull();
   });
 
+  it("namespaces an I/O-expander pin so its channel never aliases a board GPIO", () => {
+    // The pcf8574 hub channel 0 must not collide with board GPIO 0.
+    expect(parsePinGpio({ pcf8574: "pcf8574_hub_in_1", number: 0, mode: "INPUT" })).toBe(
+      "pcf8574:pcf8574_hub_in_1:0"
+    );
+    expect(parsePinGpio({ mcp23017: "hub", number: 7 })).toBe("mcp23017:hub:7");
+    // The channel is parsed like any pin value, so a string `number` works.
+    expect(parsePinGpio({ pcf8574: "hub", number: "0" })).toBe("pcf8574:hub:0");
+    // Expander key present but no resolvable channel -> null, not a board pin.
+    expect(parsePinGpio({ pcf8574: "hub" })).toBeNull();
+    // Provider present but hub id empty (mid-edit) -> null, NOT board GPIO 0.
+    expect(parsePinGpio({ pcf8574: "", number: 0 })).toBeNull();
+    // A pin-level id is a board-GPIO key: an expander pin carrying one still
+    // resolves to its provider token, not the id.
+    expect(parsePinGpio({ pcf8574: "hub", number: 0, id: "relay1" })).toBe(
+      "pcf8574:hub:0"
+    );
+    // A board pin with id and the esp32-only validation key stays a board GPIO.
+    expect(
+      parsePinGpio({ number: 5, id: "btn", ignore_pin_validation_error: true })
+    ).toBe(5);
+  });
+
+  it("treats every long-form board-GPIO key as a board pin, never an expander provider", () => {
+    // Each member must round-trip a plain board GPIO to a number; guards the set
+    // against drift that would misclassify a board pin as an expander channel.
+    for (const key of LONG_FORM_PIN_KEYS) {
+      if (key === "number") continue;
+      expect(parsePinGpio({ number: 7, [key]: "x" }), key).toBe(7);
+    }
+  });
+
   it("returns null for unparseable or non-pin inputs", () => {
     expect(parsePinGpio("abc")).toBeNull();
     expect(parsePinGpio("")).toBeNull();
@@ -106,6 +147,15 @@ describe("parsePinGpio", () => {
     expect(parsePinGpio(undefined)).toBeNull();
     expect(parsePinGpio([1])).toBeNull(); // arrays are not pin-block objects
     expect(parsePinGpio(true)).toBeNull();
+  });
+});
+
+describe("parseBoardGpio", () => {
+  it("returns the board GPIO and drops expander tokens", () => {
+    expect(parseBoardGpio(12)).toBe(12);
+    expect(parseBoardGpio({ number: 5, mode: { input: true } })).toBe(5);
+    // An expander channel is not a board pin.
+    expect(parseBoardGpio({ pcf8574: "hub", number: 0 })).toBeNull();
   });
 });
 
@@ -189,5 +239,26 @@ describe("scanPinGpios", () => {
     expect(scanPinGpios("Pump P0.5 valve")).toEqual([5]); // P0.5 -> port0 pin5
     expect(scanPinGpios("P3.invalid")).toEqual([3]); // dotted alt fails, bare P3 wins
     expect(scanPinGpios("P0.5V")).toEqual([0]); // dotted \b fails on V, bare P0 wins
+  });
+});
+
+describe("isPinFieldKey", () => {
+  it("matches the _pin / _gpio suffix and the long-form pin / number keys", () => {
+    for (const key of ["pin", "tx_pin", "dir_pin", "led_gpio", "gpio", "number"]) {
+      expect(isPinFieldKey(key)).toBe(true);
+    }
+  });
+
+  it("rejects numeric config keys that aren't pins", () => {
+    for (const key of [
+      "baud_rate",
+      "phy_addr",
+      "data_bits",
+      "max_speed",
+      "id",
+      "pin_x",
+    ]) {
+      expect(isPinFieldKey(key)).toBe(false);
+    }
   });
 });

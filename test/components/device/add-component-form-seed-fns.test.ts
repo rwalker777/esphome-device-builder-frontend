@@ -121,15 +121,27 @@ describe("seedDefaults", () => {
     expect(seedDefaults(entries, "", localize)).toEqual({ update_interval: "60s" });
   });
 
-  it("seeds optional defaults too when seedAll is set (featured presets)", () => {
+  it("seeds an optional from_preset field when seedPresets is set (featured presets)", () => {
     const entries: ConfigEntry[] = [
       makeConfigEntry({
         key: "accuracy",
         type: ConfigEntryType.STRING,
         default_value: "0.1",
+        from_preset: true,
       }),
     ];
     expect(seedDefaults(entries, "", localize, true)).toEqual({ accuracy: "0.1" });
+  });
+
+  it("leaves a plain optional default unseeded even with seedPresets set", () => {
+    const entries: ConfigEntry[] = [
+      makeConfigEntry({
+        key: "clock_speed",
+        type: ConfigEntryType.STRING,
+        default_value: "26.67MHz",
+      }),
+    ];
+    expect(seedDefaults(entries, "", localize, true)).toEqual({});
   });
 
   it("wraps a multi_value default in an array", () => {
@@ -239,6 +251,7 @@ describe("buildInitialValues", () => {
       yaml: "sensor:\n  - platform: bme280\n    id: sensor_bme280_1\n",
       prefillReference: null,
       prefillFields: null,
+      restoredValues: null,
       localize,
     });
     // _1 is taken in the YAML, so the generator skips to _2.
@@ -263,6 +276,7 @@ describe("buildInitialValues", () => {
       yaml: "",
       prefillReference: null,
       prefillFields: null,
+      restoredValues: null,
       localize,
     });
     expect(values.id).toBe("preset_id");
@@ -286,6 +300,7 @@ describe("buildInitialValues", () => {
       yaml: "",
       prefillReference: null,
       prefillFields: { baud_rate: "2400" },
+      restoredValues: null,
       localize,
     });
     expect(values.baud_rate).toBe("2400");
@@ -302,8 +317,32 @@ describe("buildInitialValues", () => {
       yaml: "",
       prefillReference: { domain: "i2c", id: "bus_a" },
       prefillFields: null,
+      restoredValues: null,
       localize,
     });
+    expect(values.i2c_id).toBe("bus_a");
+  });
+
+  it("restores pre-detour values but lets prefillReference win for the ref field", () => {
+    const component = makeComponent({
+      config_entries: [
+        makeConfigEntry({ key: "cs_pin", type: ConfigEntryType.PIN }),
+        makeConfigEntry({ key: "i2c_id", references_component: "i2c" }),
+      ],
+    });
+    const values = buildInitialValues({
+      entries: component.config_entries,
+      component,
+      board: null,
+      yaml: "",
+      prefillReference: { domain: "i2c", id: "bus_a" },
+      prefillFields: null,
+      restoredValues: { cs_pin: "GPIO5", i2c_id: "stale" },
+      localize,
+    });
+    // The pin the user picked before the "+ Add i2c" detour is preserved.
+    expect(values.cs_pin).toBe("GPIO5");
+    // The just-added bus id still wins over the restored (empty) reference.
     expect(values.i2c_id).toBe("bus_a");
   });
 
@@ -326,6 +365,7 @@ describe("buildInitialValues", () => {
       yaml: "",
       prefillReference: null,
       prefillFields: null,
+      restoredValues: null,
       localize,
     });
     // Board's i2c_scl/i2c_sda feature tags win over the symbolic
