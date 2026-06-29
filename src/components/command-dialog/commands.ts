@@ -1,5 +1,4 @@
 import { APIError } from "../../api/api-error.js";
-import { DeviceState } from "../../api/types/devices.js";
 import { type FirmwareJob, JobStatus, JobType } from "../../api/types/firmware-jobs.js";
 import { ErrorCode } from "../../api/types/protocol.js";
 import { isTerminalJobStatus } from "../../util/firmware-job-status.js";
@@ -172,13 +171,26 @@ export function followJob(host: ESPHomeCommandDialog, jobId: string): void {
     onResult: (data) => {
       host._streamId = "";
       host._flushPendingLines();
-      const result = data as unknown as { status: string; exit_code: number | null };
+      const result = data as unknown as {
+        status: string;
+        exit_code: number | null;
+        is_deferred_install?: boolean;
+      };
       const success = result.status === JobStatus.COMPLETED;
 
       // On a successful install COMPILE, follow its dependent UPLOAD so success
       // reflects the flash (#1131). Gate on the finished job being the COMPILE
       // so the upload's own completion falls straight through to success.
       const finished = host._jobs.get(jobId);
+      // Temp debug
+      console.log("[DEBUG onResult]", {
+        jobId,
+        success,
+        result,
+        finishedJobType: finished?.job_type,
+        commandType: host._commandType,
+      });
+      // End temp debug
       if (
         success &&
         host._commandType === "install" &&
@@ -198,14 +210,7 @@ export function followJob(host: ESPHomeCommandDialog, jobId: string): void {
           primeAndFollow(host, upload);
           return;
         }
-        // A network OTA install with the device offline never gets an UPLOAD job —
-        // the backend queues against the device's queued_update flag instead of
-        // pushing now. Server-serial has no such queuing path, so a missing upload
-        // there is still a real backend gap and falls through to the warning below.
-        const device = (host._devices || []).find(
-          (d) => d.configuration === host.configuration
-        );
-        if (host._port === "OTA" && device?.state === DeviceState.OFFLINE) {
+        if (result.is_deferred_install) {
           host._state = "success";
           host._statusMessage =
             host._localize("dashboard.queued_successfully") ||

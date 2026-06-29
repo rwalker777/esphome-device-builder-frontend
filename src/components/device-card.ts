@@ -132,6 +132,10 @@ export class ESPHomeDeviceCard extends LitElement {
     // + actions row already stopPropagation so this only fires on body.
     this.addEventListener("click", this._onClick);
     this.addEventListener("contextmenu", this._onHostContextMenu);
+    this.addEventListener(
+      "show-queued-update-confirm",
+      this._onShowQueuedUpdateConfirm as EventListener
+    );
   }
 
   disconnectedCallback() {
@@ -139,6 +143,10 @@ export class ESPHomeDeviceCard extends LitElement {
     this.removeEventListener("keyup", this._onKeyup);
     this.removeEventListener("click", this._onClick);
     this.removeEventListener("contextmenu", this._onHostContextMenu);
+    this.removeEventListener(
+      "show-queued-update-confirm",
+      this._onShowQueuedUpdateConfirm as EventListener
+    );
     super.disconnectedCallback();
   }
 
@@ -199,6 +207,10 @@ export class ESPHomeDeviceCard extends LitElement {
           </div>
           ${renderStatusBadge(this)}
         </div>
+        <esphome-confirm-queued-update-dialog
+          .configuration=${this.configuration}
+          @confirm=${this._onConfirmClearQueue}
+        ></esphome-confirm-queued-update-dialog>
         ${renderLabels(this)}
         ${!this.selectMode
           ? html`
@@ -255,6 +267,16 @@ export class ESPHomeDeviceCard extends LitElement {
     if (e.detail.configuration === this.configuration) {
       this._queuedUpdateConfirmDialog.open = true;
     }
+  };
+
+  private _onConfirmClearQueue = (e: CustomEvent<{ configuration: string }>) => {
+    this.dispatchEvent(
+      new CustomEvent("clear-queued-update", {
+        detail: e.detail,
+        bubbles: true,
+        composed: true,
+      })
+    );
   };
 
   // Update / Install accent: icon-only so only Edit keeps a label.
